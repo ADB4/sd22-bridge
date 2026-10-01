@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+
+# Python environments (each machine makes its own)
+.venv/
+venv/
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code per-machine state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Copies set aside by tools/link_install.py
+.link-backups/
