@@ -225,9 +225,9 @@ def _graph(name=None):
     # Several open packages have a graph with this identifier. Take the one shown in the
     # Graph view. Wrappers of the same graph have different handles, so compare URLs.
     cur = _try(lambda: _ui().getCurrentGraph())
-    cur_url = _try(cur.getUrl) if cur is not None else None
+    cur_url = _try(lambda: cur.getUrl()) if cur is not None else None
     for g, _ in found:
-        if cur_url and _try(g.getUrl) == cur_url:
+        if cur_url and _try(lambda: g.getUrl()) == cur_url:
             return g
     paths = [p for _, p in found]
     names = [os.path.basename(p).lower() for p in paths]
@@ -286,7 +286,7 @@ def _summary(node):
         d["pos"] = [round(pos.x, 1), round(pos.y, 1)]
     res = _try(node.getReferencedResource)
     if res is not None:
-        d["instance_of"] = _try(res.getUrl) or _try(res.getIdentifier)
+        d["instance_of"] = _try(lambda: res.getUrl()) or _try(res.getIdentifier)
     short = (d.get("definition") or "").split("::")[-1]
     if short == "output" or short.startswith("input"):
         ident = _try(lambda: node.getAnnotationPropertyValueFromId("identifier"))
@@ -491,7 +491,7 @@ _TAGS = re.compile(r"<\s*(?:/\s*)?[A-Za-z][^>]*>")
 
 def _description(prop, label=None):
     """Designer's description of a property as plain text (it's HTML), or None."""
-    text = _try(prop.getDescription)
+    text = _try(lambda: prop.getDescription())
     if not text:
         return None
     text = " ".join(html.unescape(_TAGS.sub("", _BREAKS.sub(" ", str(text)))).split())
@@ -511,7 +511,7 @@ def _inherited_unchanged(owner, prop, method):
     of 0 (its getDefaultValue is 8, the default for Absolute), the default for the others."""
     if not method or method == "Absolute":
         return False
-    neutral = [0, 0] if prop.getId() == "$outputsize" else _js(_try(prop.getDefaultValue))
+    neutral = [0, 0] if prop.getId() == "$outputsize" else _js(_try(lambda: prop.getDefaultValue()))
     value = _js(_try(lambda: owner.getPropertyValue(prop)))
     return neutral is not None and value == neutral
 
@@ -708,7 +708,7 @@ def cmd_info(args):
         "run_python_enabled": ALLOW_PYTHON,
         "undo_groups": _has_undo(),
     }
-    ver = _try(app.getVersion)
+    ver = _try(lambda: app.getVersion())
     if ver is not None:
         d["designer_version"] = str(ver)
     grid = _try(lambda: importlib.import_module("sd.ui.graphgrid").GraphGrid.sGetFirstLevelSize())
@@ -1155,15 +1155,15 @@ def cmd_set_parameter(args):
         raise RuntimeError("No parameter %r on %s. Parameters: %s" % (pid, nid, sorted(_params(n))))
     # Image and function slots are connectable and read-only. MDL and Model graph inputs
     # (roughness, width, ...) are connectable too but hold values that can be set.
-    if _try(p.isConnectable, False) and _try(p.isReadOnly, False):
+    if _try(p.isConnectable, False) and _try(lambda: p.isReadOnly(), False):
         raise RuntimeError("%r on %s is an input slot, not a parameter: wire it with connect_nodes." % (pid, nid))
-    if _try(p.isFunctionOnly, False):
+    if _try(lambda: p.isFunctionOnly(), False):
         raise RuntimeError(
             "%r on %s is function-only: a function graph computes it (like a Pixel Processor's "
             "per-pixel function), so there is no value to set. Edit the function with run_python "
             "(node.getPropertyGraph / newPropertyGraph)." % (pid, nid)
         )
-    if _try(p.isReadOnly, False):
+    if _try(lambda: p.isReadOnly(), False):
         raise RuntimeError("%r on %s is read-only." % (pid, nid))
     sdtype = p.getType()
     value = args.get("value")
@@ -1292,7 +1292,7 @@ def _texture(node, output_id=None):
 
 def _pixel_kind(tex):
     """("grayscale" or "color", pixel format name) of a texture, or (None, None)."""
-    fmt = _try(tex.getPixelFormat) if tex is not None else None
+    fmt = _try(lambda: tex.getPixelFormat()) if tex is not None else None
     name = getattr(fmt, "name", None)
     if not name or name == "Unknown":
         return None, None
@@ -1341,7 +1341,7 @@ def cmd_render(args):
     if args.get("node"):
         targets = [_node(g, args["node"])]
     else:
-        targets = _items(_try(g.getOutputNodes))
+        targets = _items(_try(lambda: g.getOutputNodes()))
         if not targets:
             raise RuntimeError("Graph has no Output nodes. Add one, or pass `node`.")
     images, notes = [], []
@@ -1362,7 +1362,7 @@ def cmd_render(args):
             path = os.path.join(out_dir, fname)
             tex.save(path)
             image = {"node": nid, "output": p.getId(), "label": str(label), "path": path}
-            size = _try(tex.getSize)
+            size = _try(lambda: tex.getSize())
             if size is not None:
                 image["size"] = [size.x, size.y]  # computed size; the PNG Claude sees is scaled
             images.append(image)

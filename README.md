@@ -1,6 +1,6 @@
 # Substance Designer bridge for Claude
 
-Lets Claude read and edit graphs in Adobe Substance 3D Designer 2022 (12.x) on Windows 10. It has two parts:
+Lets Claude read and edit graphs in Adobe Substance 3D Designer 2022 (12.x) on Windows 10/11 and macOS. It has two parts:
 
 - `designer_plugin/sd_claude_bridge` runs inside Designer. It opens a local socket on `127.0.0.1:9881` and executes commands on Designer's main thread. It needs nothing beyond Designer's own Python.
 - `mcp_server/sd_designer_mcp.py` runs outside Designer under Python 3.10+. Claude Desktop (or Claude Code) starts it and it forwards tool calls to the plugin.
@@ -11,14 +11,16 @@ Claude Desktop --stdio--> sd_designer_mcp.py --127.0.0.1:9881--> plugin inside D
 
 ## Requirements
 
-- Windows 10 or 11
+- Windows 10 or 11, or macOS
 - Substance 3D Designer 2022 (12.x). Later versions should work too, but 2022 is the target.
-- Python 3.10 or newer from [python.org](https://www.python.org/downloads/windows/). Use the 64-bit installer and tick "Add python.exe to PATH". This is separate from the Python inside Designer.
+- Python 3.10 or newer. This is separate from the Python inside Designer.
+  - Windows: [python.org](https://www.python.org/downloads/windows/). Use the 64-bit installer and tick "Add python.exe to PATH".
+  - macOS: [python.org](https://www.python.org/downloads/macos/) (the universal2 installer), or `brew install python@3.12`. The `python3` that comes with macOS is too old.
 - Claude Desktop, or Claude Code
 
-Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9), Windows 10 Pro 22H2, with Claude Code, 2026-09-30.
+Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9), Windows 10 Pro 22H2, with Claude Code, 2026-09-30. macOS: not yet tested with a real Designer install.
 
-## Install
+## Install on Windows
 
 1. Right-click the downloaded zip > Properties > tick **Unblock** > OK, then extract it anywhere.
 2. Double-click `install.bat`. If SmartScreen says "Windows protected your PC", click **More info > Run anyway**.
@@ -37,6 +39,26 @@ Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9)
 5. In Claude Desktop, check **Settings > Developer**: `substance-designer` should show as running. In a chat, the tools menu lists its tools.
 6. Open a graph in Designer, then ask Claude: "Check the Designer connection."
 
+## Install on macOS
+
+1. Double-click the downloaded zip to extract it.
+2. Run `install.command`. The reliable way is Terminal: type `sh ` (with the space), drag `install.command` from Finder into the Terminal window, and press Return.
+   - Double-clicking `install.command` also works, but macOS may refuse a script downloaded from the internet ("Apple could not verify..."). Use Terminal instead, or allow it under **System Settings > Privacy & Security > Open Anyway**.
+   - If macOS asks whether Terminal may access your Documents or Downloads folder, click **Allow**. The plugin goes into Documents.
+
+   The script:
+   - copies the plugin to Designer's user plugin folder, whichever of these exists:
+     - `~/Documents/Adobe/Adobe Substance 3D Designer/python/sduserplugins` (Adobe installs)
+     - `~/Documents/Allegorithmic/Substance Designer/python/sduserplugins` (Steam edition)
+   - creates a Python environment in `~/Library/Application Support/sd-claude-bridge` and installs `mcp` and `pillow`
+   - offers to add a `substance-designer` entry to Claude Desktop's config (backing up the old file)
+
+   Options: `--skip-claude-config` leaves Claude Desktop's config alone, and `--claude-desktop` adds the entry without asking (for running the installer from Claude Code, which can't answer the prompt).
+3. Start Substance Designer (restart it if it was open). Open **Windows > Console** and look for the `[Claude bridge] ... listening` line. If macOS asks whether Designer may accept incoming network connections, click **Allow**: the bridge only listens on 127.0.0.1.
+4. Quit Claude completely with **Cmd+Q** (closing the window isn't enough), then open it again.
+5. In Claude, check **Settings > Developer**: `substance-designer` should show as running.
+6. Open a graph in Designer, then ask Claude: "Check the Designer connection."
+
 ## Things to ask
 
 - "What's in the open graph? Explain how it works."
@@ -45,7 +67,7 @@ Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9)
 - "Set every node's output size to 2048."
 - "Rename all output identifiers to lowercase." (uses `run_python`)
 
-Each edit Claude makes is one Ctrl+Z step in Designer if your build supports undo groups (`designer_status` reports `undo_groups`). Claude won't save the package unless you ask.
+Each edit Claude makes is one undo step in Designer (Ctrl+Z, or Cmd+Z on a Mac) if your build supports undo groups (`designer_status` reports `undo_groups`). Claude won't save the package unless you ask.
 
 ## Tools
 
@@ -73,7 +95,9 @@ Each edit Claude makes is one Ctrl+Z step in Designer if your build supports und
 Use this if the installer can't edit the Claude Desktop config, or you'd rather do it yourself.
 
 1. In Claude Desktop, open **Settings > Developer > Edit Config**. This opens the folder with `claude_desktop_config.json`.
-2. Add the entry below inside `"mcpServers"` (create that object if it isn't there). Replace `YOU` with your Windows user folder name, and keep the doubled backslashes:
+2. Add the entry below inside `"mcpServers"` (create that object if it isn't there). Replace `YOU` with your user folder name.
+
+   Windows (keep the doubled backslashes):
    ```json
    {
      "mcpServers": {
@@ -84,12 +108,29 @@ Use this if the installer can't edit the Claude Desktop config, or you'd rather 
      }
    }
    ```
-3. Quit Claude Desktop from the tray icon and reopen it.
+   macOS:
+   ```json
+   {
+     "mcpServers": {
+       "substance-designer": {
+         "command": "/Users/YOU/Library/Application Support/sd-claude-bridge/venv/bin/python",
+         "args": ["/Users/YOU/Library/Application Support/sd-claude-bridge/sd_designer_mcp.py"]
+       }
+     }
+   }
+   ```
+3. Quit Claude Desktop (tray icon > Quit on Windows, Cmd+Q on a Mac) and reopen it.
 
-For Claude Code:
+For Claude Code on Windows:
 
 ```
 claude mcp add --scope user substance-designer -- "%LOCALAPPDATA%\sd-claude-bridge\venv\Scripts\python.exe" "%LOCALAPPDATA%\sd-claude-bridge\sd_designer_mcp.py"
+```
+
+For Claude Code on macOS:
+
+```
+claude mcp add --scope user substance-designer -- "$HOME/Library/Application Support/sd-claude-bridge/venv/bin/python" "$HOME/Library/Application Support/sd-claude-bridge/sd_designer_mcp.py"
 ```
 
 ## Troubleshooting
@@ -98,22 +139,31 @@ claude mcp add --scope user substance-designer -- "%LOCALAPPDATA%\sd-claude-brid
 
 No "listening" line in Designer's Console:
 
-1. Check that `sd_claude_bridge\__init__.py` exists in `Documents\Adobe\Adobe Substance 3D Designer\python\sduserplugins` (Adobe installs) or `Documents\Allegorithmic\Substance Designer\python\sduserplugins` (Steam edition). If your Documents folder is in OneDrive, look there. If Designer had never been started when you ran the installer, start it once, then run `install.bat` again.
+1. Check that `sd_claude_bridge/__init__.py` exists in the `sduserplugins` folder listed under your platform's install steps. On Windows, if your Documents folder is in OneDrive, look there. If Designer had never been started when you ran the installer, start it once, quit it, then run the installer again.
 2. In Designer, open **Tools > Plugin Manager**. If `sd_claude_bridge` is listed but unchecked, enable it. If it isn't listed, click **Browse** and pick `__init__.py` inside the `sd_claude_bridge` folder.
-3. To load it automatically every launch, add the `sduserplugins` folder as a plugin path: **Edit > Preferences > Projects**, select your project file, open the **Python** tab, click **+** and choose the `sduserplugins` folder. Restart Designer.
+3. To load it automatically every launch, add the `sduserplugins` folder as a plugin path: open **Preferences > Projects** (Edit > Preferences on Windows; on a Mac, Preferences is usually in the application menu next to the Apple menu), select your project file, open the **Python** tab, click **+** and choose the `sduserplugins` folder. Restart Designer.
 4. If the Console shows `[Claude bridge] failed to start` with a traceback, that text explains why. A port conflict is handled automatically (it tries 9881 to 9890).
+5. Designer's log has the same lines, plus any traceback that escapes the plugin:
+   - Windows: `%LOCALAPPDATA%\Adobe\Adobe Substance 3D Designer\log.txt`, or `%LOCALAPPDATA%\Allegorithmic\Substance Designer\log.txt` for the Steam edition
+   - macOS: `~/Library/Application Support/Adobe/Adobe Substance 3D Designer/log.txt`, or `~/Library/Application Support/Allegorithmic/Substance Designer/log.txt` for the Steam edition
 
 ### Claude says the bridge is not running
 
 - Designer must be open with the plugin loaded (step above).
-- The plugin writes `%USERPROFILE%\.sd_claude_bridge\session.json` when it starts. If that file exists but Claude still can't connect, Designer probably crashed: restart it.
+- The plugin writes `.sd_claude_bridge/session.json` in your home folder when it starts (`%USERPROFILE%` on Windows, `~` on a Mac). If that file exists but Claude still can't connect, Designer probably crashed: restart it.
 - Security software that blocks loopback connections can interfere. The bridge only listens on 127.0.0.1, so allowing it doesn't expose anything to the network.
 
 ### `substance-designer` doesn't appear in Claude Desktop
 
-- Quit from the tray icon, not the window close button.
-- **Settings > Developer** shows the server's error. Open the log there: a wrong path in the config is the usual cause.
-- Run the server by hand to check it: `"%LOCALAPPDATA%\sd-claude-bridge\venv\Scripts\python.exe" "%LOCALAPPDATA%\sd-claude-bridge\sd_designer_mcp.py" --check`. It should print `MCP server OK: 19 tools`.
+- Quit Claude completely (tray icon > Quit on Windows, Cmd+Q on a Mac), not just the window.
+- **Settings > Developer** shows the server's error. Open the log there: a wrong path in the config is the usual cause. On a Mac the logs are also in `~/Library/Logs/Claude/` (`mcp-server-substance-designer.log`).
+- Run the server by hand to check it. It should print `MCP server OK: 19 tools`.
+  - Windows: `"%LOCALAPPDATA%\sd-claude-bridge\venv\Scripts\python.exe" "%LOCALAPPDATA%\sd-claude-bridge\sd_designer_mcp.py" --check`
+  - macOS: `"$HOME/Library/Application Support/sd-claude-bridge/venv/bin/python" "$HOME/Library/Application Support/sd-claude-bridge/sd_designer_mcp.py" --check`
+
+### The Mac installer can't write to Documents
+
+macOS asked whether Terminal may access Documents and the answer was No. Allow it under **System Settings > Privacy & Security > Files and Folders > Terminal > Documents Folder**, then run the installer again.
 
 ### A tool fails on my Designer build
 
@@ -121,28 +171,36 @@ The plugin targets the 2022 Python API. If one structured tool fails, Claude can
 
 ### Previews are empty
 
-`render_preview` computes the graph and saves output textures to `%TEMP%\sd_claude_bridge\previews`. Designer only computes nodes that feed an Output node, so a node with nothing downstream has no preview. Connect it to an Output node and preview that.
+`render_preview` computes the graph and saves output textures to `sd_claude_bridge/previews` in the temp folder (`%TEMP%` on Windows, `$TMPDIR` on a Mac). Designer only computes nodes that feed an Output node, so a node with nothing downstream has no preview. Connect it to an Output node and preview that.
 
 ## Security
 
-- The plugin listens on `127.0.0.1` only, and every request must carry a random token that changes each time Designer starts. The token is in `%USERPROFILE%\.sd_claude_bridge\session.json`.
-- `run_python` executes arbitrary code inside Designer, so any program running as your Windows user that can read the session file could do the same. To turn it off, set a user environment variable `SD_CLAUDE_BRIDGE_ALLOW_PYTHON=0` and restart Designer.
-- Change the port with `SD_CLAUDE_BRIDGE_PORT` (Designer side). The MCP server finds the port from the session file.
+- The plugin listens on `127.0.0.1` only, and every request must carry a random token that changes each time Designer starts. The token is in `.sd_claude_bridge/session.json` in your home folder.
+- `run_python` executes arbitrary code inside Designer, so any program running as your user that can read the session file could do the same. To turn it off, set `SD_CLAUDE_BRIDGE_ALLOW_PYTHON=0` and restart Designer.
+  - Windows: add it as a user environment variable.
+  - macOS: apps opened from the Dock or Finder don't see shell variables. Run `launchctl setenv SD_CLAUDE_BRIDGE_ALLOW_PYTHON 0` in Terminal, then restart Designer. This lasts until you log out or restart the Mac.
+- Change the port with `SD_CLAUDE_BRIDGE_PORT` (Designer side, set the same way). The MCP server finds the port from the session file.
 
 ## Uninstall
 
-Close Designer and Claude Desktop, then double-click `uninstall.bat`. It removes the plugin, the Python environment, the session and preview files, and the Claude Desktop config entry (with a backup).
+Quit Designer and Claude Desktop, then run the uninstaller: `uninstall.bat` on Windows, or `sh uninstall.command` in Terminal on a Mac. It removes the plugin, the Python environment, the session and preview files, and the Claude Desktop config entry (with a backup). If you registered the server with Claude Code, also run `claude mcp remove --scope user substance-designer`.
 
 ## Development
 
-A Claude session keeps the MCP server it started with, so edits to `sd_designer_mcp.py` reach Claude only in a new session. `tools\tool_call.py` lets you try a tool call from a shell instead. It imports the server and runs the call in-process, with the same argument validation, over the bridge to Designer (which must be running with the plugin loaded). Run it with the server's Python:
+A Claude session keeps the MCP server it started with, so edits to `sd_designer_mcp.py` reach Claude only in a new session. `tools/tool_call.py` lets you try a tool call from a shell instead. It imports the server and runs the call in-process, with the same argument validation, over the bridge to Designer (which must be running with the plugin loaded). Run it with the server's Python:
 
 ```
 "%LOCALAPPDATA%\sd-claude-bridge\venv\Scripts\python.exe" tools\tool_call.py search_library query="color dodge"
 ```
 
+On a Mac:
+
+```
+"$HOME/Library/Application Support/sd-claude-bridge/venv/bin/python" tools/tool_call.py search_library query="color dodge"
+```
+
 - Arguments are `key=value` pairs. A value is read as JSON when it parses; node ids stay strings.
-- Or pass one JSON object: inline, as `@args.json`, or `-` for stdin. Windows drops unescaped double quotes from command-line arguments, so JSON with strings in it is safest in a file or on stdin.
-- `--list` lists the tools. `--source` loads `mcp_server\` from this folder instead of the installed copy, to try an edit before running `install.ps1`. `--raw` sends a bridge command (the plugin's command names) and skips the MCP layer.
+- Or pass one JSON object: inline, as `@args.json`, or `-` for stdin. Windows drops unescaped double quotes from command-line arguments, so on Windows JSON with strings in it is safest in a file or on stdin. A Mac shell keeps them inside single quotes.
+- `--list` lists the tools. `--source` loads `mcp_server/` from this folder instead of the installed copy, to try an edit before running the installer. `--raw` sends a bridge command (the plugin's command names) and skips the MCP layer.
 - Unknown parameter names are refused, since the server would quietly drop them, and so are empty names and paths such as `graph=` or `save_as=`. `--raw` has no schema to check against: there, a misspelled `save_as` is dropped and `save_package` overwrites the package's own file.
-- Images are saved to `%TEMP%\sd_claude_bridge\tool_call`.
+- Images are saved to `sd_claude_bridge/tool_call` in the temp folder.

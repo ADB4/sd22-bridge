@@ -1,8 +1,8 @@
 """Register the Substance Designer MCP server with Claude Desktop.
 
-Run with the Python that should launch the server (the installer uses the
-virtual environment's python.exe). Existing config is backed up first and
-other servers are left untouched.
+Run with the Python that should launch the server (the installers use the
+virtual environment's Python). Existing config is backed up first and
+other servers are left untouched. Works on Windows and macOS.
 """
 
 import glob
@@ -16,6 +16,11 @@ SERVER_NAME = "substance-designer"
 
 
 def config_paths():
+    """Claude Desktop config files, the standard location first."""
+    if sys.platform == "darwin":
+        return [os.path.expanduser("~/Library/Application Support/Claude/claude_desktop_config.json")]
+    if sys.platform != "win32":
+        return [os.path.expanduser("~/.config/Claude/claude_desktop_config.json")]
     paths = []
     appdata = os.environ.get("APPDATA")
     if appdata:
@@ -42,7 +47,12 @@ def merge(path, entry, remove=False):
         if not isinstance(config, dict):
             print("  ! %s does not contain a JSON object. Left unchanged." % path)
             return False
-        if remove and SERVER_NAME not in config.get("mcpServers", {}):
+        if not isinstance(config.get("mcpServers"), dict):
+            if "mcpServers" in config and config["mcpServers"] is not None:
+                print("  ! %s has an mcpServers value that isn't an object. Left unchanged." % path)
+                return False
+            config["mcpServers"] = {}
+        if remove and SERVER_NAME not in config["mcpServers"]:
             return False
         backup = path + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
         n = 1

@@ -28,9 +28,9 @@ SESSION_FILE = os.environ.get("SD_CLAUDE_BRIDGE_SESSION") or os.path.join(
 )
 
 NOT_RUNNING = (
-    "Substance Designer bridge is not running. Start Designer 2022 and check Windows > "
+    "Substance Designer bridge is not running. Start Substance Designer and check Windows > "
     "Console for '[Claude bridge] ... listening'. If that line is missing, load the plugin "
-    "with Tools > Plugin Manager > Browse and pick sd_claude_bridge\\__init__.py."
+    "with Tools > Plugin Manager > Browse and pick __init__.py inside the sd_claude_bridge folder."
 )
 
 # Claude Code cuts server instructions (and tool descriptions) after 2048 characters, so keep

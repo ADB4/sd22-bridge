@@ -16,6 +16,9 @@ Run it with the server's venv Python (it has the `mcp` package):
     type args.json | %PY% tools\\tool_call.py set_parameter -
     %PY% tools\\tool_call.py --raw get_graph graph=claude_smoke_test
 
+On macOS the server's Python is ~/Library/Application Support/sd-claude-bridge/venv/bin/python
+(quote the path: it has a space), and the shell keeps double quotes, so inline JSON works.
+
 Arguments are key=value pairs, or one JSON object: inline, @file.json, or - for stdin (UTF-8
 with or without a BOM, or UTF-16 as Windows PowerShell 5.1's > writes it). A key=value value is
 parsed as JSON unless the tool takes only a string there; node ids look like numbers but stay
@@ -26,10 +29,12 @@ or passed through a file or stdin. Unknown parameter names and empty values are 
 server would silently drop a misspelled key and run with its default. --raw has no schema, so
 it checks nothing.
 
-By default it loads the installed server (%LOCALAPPDATA%\\sd-claude-bridge). --source loads
+By default it loads the installed server (%LOCALAPPDATA%\\sd-claude-bridge, or on macOS
+~/Library/Application Support/sd-claude-bridge). --source loads
 mcp_server\\ from this repo instead, to try an edit before running install.ps1. --raw sends a
 bridge command (the plugin's command names: get_graph, connect, render, ...) through call(),
-skipping the MCP layer. Images are saved under %TEMP%\\sd_claude_bridge\\tool_call.
+skipping the MCP layer. Images are saved under sd_claude_bridge/tool_call in the temp folder
+(%TEMP% on Windows, $TMPDIR on macOS).
 """
 
 import argparse
@@ -44,8 +49,12 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_SERVER = os.path.join(os.path.dirname(HERE), "mcp_server")
-INSTALLED = os.path.join(os.environ.get("LOCALAPPDATA", ""), "sd-claude-bridge")
-VENV_PY = os.path.join(INSTALLED, "venv", "Scripts", "python.exe")
+if sys.platform == "win32":
+    INSTALLED = os.path.join(os.environ.get("LOCALAPPDATA", ""), "sd-claude-bridge")
+    VENV_PY = os.path.join(INSTALLED, "venv", "Scripts", "python.exe")
+else:  # where install.command puts it on macOS
+    INSTALLED = os.path.expanduser("~/Library/Application Support/sd-claude-bridge")
+    VENV_PY = os.path.join(INSTALLED, "venv", "bin", "python")
 OUT_DIR = os.path.join(tempfile.gettempdir(), "sd_claude_bridge", "tool_call")
 
 
@@ -180,7 +189,7 @@ def main():
     parser.add_argument("arguments", nargs="*", help="key=value pairs, or one JSON object / @file / -")
     parser.add_argument("--list", action="store_true", help="list the tools and their parameters")
     parser.add_argument("--raw", action="store_true", help="send a bridge command, skipping the MCP layer")
-    parser.add_argument("--source", action="store_true", help="load mcp_server\\ from this repo")
+    parser.add_argument("--source", action="store_true", help="load mcp_server/ from this repo")
     ns = parser.parse_args()
 
     # Descriptions can hold characters the console code page lacks.
