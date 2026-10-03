@@ -1,0 +1,100 @@
+{
+  "skill_name": "sd-material-research",
+  "mode": "spec dry run: interview -> research -> spec, no Designer. The agent cannot ask the user, so it writes the interview questions it would ask with recommended defaults, assumes the defaults, and proceeds. Outputs: spec.md and checks/<variant>.json per variant.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "asphalt-chip-seal-shoulder",
+      "prompt": "I want a tileable Substance Designer material for a worn chip-sealed shoulder on a rural two-lane road, a few years after the chip seal went down: chips missing in places, some bleeding where cars drift onto it, gravel and dirt collecting at the outer edge. It's for a game environment. Can you work out what it should be physically and write the spec before we build anything?",
+      "expected_output": "A spec for a chip-seal shoulder with a physical scale, a layer model (chips in a binder membrane over the old surface and base), process cards whose removals reveal the layer beneath (binder, then old surface), traffic-driven flushing, edge-driven debris, sourced numbers, invariants with enforcement and numeric checks, and valid checks JSON.",
+      "files": [],
+      "expectations": [
+        "States a physical tile size, 2048 px and the resulting mm/px, chosen so chips (a few mm) are at least 2-3 px wide or moved to a detail tile; every number that drives a target (chip size, embedment, albedo, depths) carries a source or an estimate tag",
+        "Layer model with depths: single-size chips in a binder membrane of stated thickness over an older surface; chip loss reveals black binder, and the older surface shows only where the binder has worn through (driven by depth or wear, not by an independent noise); never soil or base colour directly",
+        "Colour trend is physically right for chip seal: new chip seal shows the aggregate's colour (or is black if fog-sealed) and changes with age as binder shows or oxidises; it does not apply the dense-asphalt 'black when new, grey when old' curve unexamined",
+        "Each symptom has a stated mechanism that places it: flushing where traffic over-embeds chips (laid flat in the drift band), chip loss where chips are under-embedded or ploughed, edge debris by a stated transport process (runoff on the cross slope, ploughing, traffic); none is placed by uniform noise",
+        "Every wear process states which layer it acts on, whether it removes or adds material, and what it reveals beneath",
+        "Research cites at least two chip-seal-specific sources (e.g. a seal-coat handbook or chip-seal study), and the numbers that hard checks depend on are traced to a named source section or flagged as estimates",
+        "Invariants are stated with how the graph enforces them structurally and a numeric check for each",
+        "Tiling is a hard check with a target on every axis that should tile (a strip that repeats only along the road checks that axis)",
+        "A checks JSON file exists, parses, and every check uses a type and region that the validator accepts (no undefined regions, no empty-by-construction ring regions)",
+        "No hard check would fail a physically correct material (including the spec's own default), and every hard check measures the property in the rendered maps rather than the mask wiring: no deposit checked inside the mask it was multiplied by, no mask compared with a mask built from the same bands, no concentration whose driver is the deposit's own source mask"
+      ],
+      "expectations_iteration_1": [
+        "States a physical tile size, 2048 px and the resulting mm/px, and chooses it so the smallest key features (chips of a few mm) are at least 2-3 px wide or explicitly moved to a detail tile",
+        "Layer model: single-size chips partly embedded in a binder membrane over an older surface (or base); chip loss reveals the black binder membrane and then the older surface, never soil or base colour directly",
+        "Colour trend is physically right for chip seal: new chip seal shows the aggregate's colour (or is black if fog-sealed) and changes with age as binder shows or oxidises; it does not apply the dense-asphalt 'black when new, grey when old' curve unexamined",
+        "Bleeding/flushing is placed where tyres run (wheel tracks / the drift zone), and edge debris and dirt are placed by the edge, each driven by a stated physical driver rather than uniform noise",
+        "Every wear process states which layer it acts on, whether it removes or adds material, and what it reveals beneath",
+        "Numbers that drive targets (chip size, embedment, albedo, depths) carry sources or are marked as estimates",
+        "Research went beyond generic asphalt knowledge to chip-seal specifics, citing at least two chip-seal-specific sources (e.g. a seal-coat handbook or chip-seal study)",
+        "Invariants are stated with how the graph enforces them structurally and a numeric check for each",
+        "A checks JSON file exists, parses, and every check uses a type and region that the validator accepts (no undefined regions, no empty-by-construction ring regions)",
+        "No hard check would fail a physically correct material (e.g. no check that forbids dark sockets while requiring chip loss, no reversed coverage arguments)"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "concrete-board-formed-wall",
+      "prompt": "Can you plan a weathered board-formed concrete retaining wall material for Substance Designer? Think a 1970s highway retaining wall: board grain still printed in the concrete, white efflorescence coming out of the lift lines and tie holes, some rust staining, decades of weather. Tileable, for a game. I want the physics worked out and a spec before building.",
+      "expected_output": "A spec for a board-formed retaining wall with layout fixed by the formwork (boards, form seams, tie holes, lift joints), a layer model (paste skin, mortar, coarse aggregate, rebar at cover), efflorescence and rust as deposits sourced at defects and running downward, sourced numbers, invariants with checks, and valid checks JSON.",
+      "files": [],
+      "expectations": [
+        "States a physical tile size, 2048 px and mm/px, with whole layout repeats (board widths, tie spacing or lift height) or a stated way to avoid a lattice; every number that drives a target carries a source or an estimate tag, and concrete albedo is not taken uncritically as a single solar value",
+        "Board marks, form seams, tie holes and lift joints are fixed by the formwork and invariant under weathering, and per-board tone comes from the form and persists through decades of weathering (it is not only a removable surface skin)",
+        "Layer model for a formed face: paste skin over a mortar-rich zone over coarse aggregate, with reinforcement only at cover depth; weathering reveals sand then aggregate in the same wall, never a different material",
+        "Efflorescence is a deposit with a water source (lift lines, cracks, tie holes, joints) and rust originates at steel, both running downward; gravity is tested directly in the rendered maps (deposit below vs above its source), not by containment in the mask the deposit was multiplied by",
+        "Every wear process states which layer it acts on, whether it removes or adds material, and what it reveals beneath",
+        "Research cites at least two sources on formwork, tie holes, efflorescence or formed-surface finishes, and the numbers that hard checks depend on are traced to a named source section or flagged as estimates",
+        "Invariants are stated with how the graph enforces them structurally and a numeric check for each",
+        "Tiling is a hard check, and no singular feature (a crack, a seep, a stain) repeats at the tile size more densely than its real spacing allows",
+        "A checks JSON file exists, parses, and every check uses a type and region that the validator accepts (no undefined regions, no empty-by-construction ring regions)",
+        "No hard check would fail a physically correct material (including the spec's own default), and every hard check measures the property in the rendered maps rather than the mask wiring: no deposit checked inside the mask it was multiplied by, no mask compared with a mask built from the same bands, no concentration whose driver is the deposit's own source mask"
+      ],
+      "expectations_iteration_1": [
+        "States a physical tile size, 2048 px and mm/px, and the tile holds whole layout repeats (board widths, tie spacing or lift height) or explains how it avoids a visible lattice",
+        "Board marks, form seams, tie holes and lift joints are fixed by the layout (formwork) and are invariant under weathering; weathering never moves or widens them",
+        "Layer model for a formed face: paste skin over a mortar-rich zone over coarse aggregate, with reinforcement only at cover depth; weathering reveals sand then aggregate in the same wall, never a different material",
+        "Efflorescence is a deposit with a water source (lift lines, cracks, tie holes, joints) and it runs downward under gravity; rust stains originate at steel (ties or rebar) and run downward",
+        "Every wear process states which layer it acts on, whether it removes or adds material, and what it reveals beneath",
+        "Numbers that drive targets (tie spacing, board widths, cover, albedo, depths) carry sources or are marked as estimates; concrete albedo is not taken uncritically as a single solar value",
+        "Research went beyond generic concrete knowledge to board-formed or formed-wall specifics, citing at least two sources on formwork, tie holes, efflorescence or formed-surface finishes",
+        "Invariants are stated with how the graph enforces them structurally and a numeric check for each",
+        "A checks JSON file exists, parses, and every check uses a type and region that the validator accepts",
+        "No hard check would fail a physically correct material (e.g. no reversed coverage arguments, no deformation that breaks an envelope check)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "wood-cedar-deck-grey-and-oiled",
+      "prompt": "I'd like a weathered cedar decking material in Substance Designer: most boards have gone silver-grey, but a few have been re-oiled so there's a mix of grey and warm oiled boards. Screws, gaps between boards, a bit of checking. Tileable for a game. Please research it properly and write the spec first.",
+      "expected_output": "A spec for western redcedar decking with a layout (board widths, gaps, joist lines, fastener rows), a per-board finish state, a weathered layer model (grey skin over brown photodegraded wood over fresh wood), oil as a penetrating finish, sourced numbers, invariants with checks, and valid checks JSON.",
+      "files": [],
+      "expectations": [
+        "States a physical tile size, 2048 px and mm/px, with whole layout repeats (board width plus gap across, joist spacing along); every number that drives a target carries a source or an estimate tag; tiling is a hard check",
+        "The grey vs oiled state is a per-board property from the layout (board ID / a maintenance mask), and a hard check reads the rendered colour per board against that state, not only the exported mask",
+        "Weathered layer model: a grey leached surface over brown/photodegraded wood over fresh wood; erosion and wear reveal the same board's deeper wood, never the gap",
+        "Oil is a penetrating finish that darkens and warms the wood and slows greying, not a raised film with a step at worn edges; the direction that physics fixes (oiled more saturated than grey) is a hard check, with the magnitudes soft",
+        "Western redcedar specifics are right: fresh cedar is warm reddish-brown and darker or more saturated than the grey surface, so no check assumes fresh/damaged wood is lighter than grey; grey and oiled colour targets cite measured values or are tagged as estimates",
+        "Fasteners sit in straight rows on joist lines (two per board per joist or the stated hidden-fastener alternative); checks run along the grain and stay inside one board",
+        "Research cites at least two sources on western redcedar weathering or deck oils/finishes, and the numbers that hard checks depend on are traced to a named source section or flagged as estimates",
+        "Invariants are stated with how the graph enforces them structurally and a numeric check for each",
+        "A checks JSON file exists, parses, and every check uses a type and region that the validator accepts (no undefined regions, no empty-by-construction ring regions)",
+        "No hard check would fail a physically correct material (including the spec's own default), and every hard check measures the property in the rendered maps rather than the mask wiring: no deposit checked inside the mask it was multiplied by, no mask compared with a mask built from the same bands, no concentration whose driver is the deposit's own source mask"
+      ],
+      "expectations_iteration_1": [
+        "States a physical tile size, 2048 px and mm/px, and the tile holds whole layout repeats (board width plus gap across, joist spacing along) ",
+        "The grey vs oiled state is a per-board property from the layout (board ID / a maintenance mask), not a noise or blotch",
+        "Weathered layer model: a grey leached surface over brown/photodegraded wood over fresh wood; erosion and wear reveal the same board's deeper wood, never the gap",
+        "Oil is treated as a penetrating finish that darkens and warms the wood and slows greying, not as a raised film with a step at worn edges",
+        "Western redcedar specifics are right: fresh cedar is warm reddish-brown and darker or more saturated than the grey surface, so no check assumes fresh/damaged wood is lighter than grey",
+        "Fasteners sit in straight rows on joist lines (two per board per joist or the stated hidden-fastener alternative); checks run along the grain and stay inside one board",
+        "Numbers that drive targets (board and gap widths, erosion/relief depths, colours) carry sources or are marked as estimates",
+        "Research went beyond generic wood knowledge to cedar and deck-finish specifics, citing at least two sources on western redcedar weathering or deck oils/finishes",
+        "Invariants are stated with how the graph enforces them structurally and a numeric check for each",
+        "A checks JSON file exists, parses, and every check uses a type and region that the validator accepts"
+      ]
+    }
+  ],
+  "notes": "Iteration 2 expectations (revised 2026-10-03 after the iteration-1 review). Expectations that passed for both conditions in iteration 1 were merged or made harder; three now test the iteration-1 skill fixes directly (tiling as a hard check, hard checks that read rendered maps, certain colour order). Iteration-1 expectations are kept in each eval's 'expectations_iteration_1'. With one run per condition, a single expectation flip is noise; read pass counts with that in mind."
+}
