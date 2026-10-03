@@ -204,3 +204,26 @@ On a Mac:
 - `--list` lists the tools. `--source` loads `mcp_server/` from this folder instead of the installed copy, to try an edit before running the installer. `--raw` sends a bridge command (the plugin's command names) and skips the MCP layer.
 - Unknown parameter names are refused, since the server would quietly drop them, and so are empty names and paths such as `graph=` or `save_as=`. `--raw` has no schema to check against: there, a misspelled `save_as` is dropped and `save_package` overwrites the package's own file.
 - Images are saved to `sd_claude_bridge/tool_call` in the temp folder.
+
+### Working from the git repo
+
+This folder is a git repo (`git@github.com:ADB4/sd22-bridge.git`) shared between a Mac and a Windows PC. It also holds the `sd-material-research` Claude Code skill in `skills/`. The installers copy files, so after a pull the copies are stale, and an edit made in a copy never reaches the repo. `tools/link_install.py` replaces the copies with links into the repo:
+
+- `sduserplugins/sd_claude_bridge` links to `designer_plugin/sd_claude_bridge`
+- `sd_designer_mcp.py`, `configure_claude.py` and `requirements.txt` in the install folder link to `mcp_server/`
+- `~/.claude/skills/sd-material-research` links to `skills/sd-material-research`
+
+To set up a machine:
+
+1. Clone the repo. On the Mac it lives at `~/Documents/Allegorithmic/Substance Designer/python/sduserplugins/sd-claude-bridge`, but anywhere works: the script finds Designer's folders itself. On Windows, keep it out of a OneDrive-synced Documents folder, since OneDrive and `.git` don't mix (`C:\dev\sd-claude-bridge` is fine). If the machine has an older copy of this folder that isn't a git repo, rename it before cloning and compare it with the repo afterwards.
+2. Run the installer once. It makes the Python environment and the Claude config.
+3. Run `python3 tools/link_install.py` (Mac) or `py tools\link_install.py` (Windows).
+4. Restart Designer.
+
+After that, a `git pull` is the whole update. Restart Designer for plugin changes, and start a new Claude session for server and skill changes. Commit and push before you switch machines.
+
+- `--status` shows what each location is. `--unlink` turns the links back into plain copies of the repo.
+- A copy that differs from the repo is moved to `.link-backups/` in the repo, never deleted. Diff it against the repo and commit anything worth keeping.
+- Windows: folders become junctions, which need no special rights. The three server files need file symlinks: turn on Developer Mode (Settings > System > For developers) or run the script from an administrator prompt. If that fails, the script puts a plain copy back so the bridge keeps working.
+- The installers leave links alone, so running one again is safe.
+- With linked installs, `tool_call.py` already loads the repo's server, so `--source` isn't needed.

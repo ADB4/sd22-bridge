@@ -92,6 +92,11 @@ for d in $TARGETS; do
        System Settings > Privacy & Security > Files and Folders > Terminal > Documents Folder.
        Then run this installer again."
     fi
+    if [ -L "$dest" ]; then
+        # tools/link_install.py pointed it at a git checkout; a copy would undo that.
+        echo "   Linked to a git checkout, left as is: $dest"
+        continue
+    fi
     rm -rf "$dest"
     if ! cp -R "$PLUGIN_SRC" "$dest"; then
         IFS=$OLD_IFS
@@ -135,7 +140,12 @@ step "3/4  Installing the MCP server"
 APP_DIR="$HOME/Library/Application Support/sd-claude-bridge"
 mkdir -p "$APP_DIR" || fail "Could not create $APP_DIR"
 for f in "$HERE"/mcp_server/*; do
-    [ -f "$f" ] && cp -f "$f" "$APP_DIR/"
+    [ -f "$f" ] || continue
+    if [ -L "$APP_DIR/$(basename "$f")" ]; then
+        echo "   Linked to a git checkout, left as is: $APP_DIR/$(basename "$f")"
+        continue
+    fi
+    cp -f "$f" "$APP_DIR/"
 done
 
 VENV="$APP_DIR/venv"

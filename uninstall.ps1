@@ -23,9 +23,23 @@ $pluginDests = @(
 $sessionDir = Join-Path $env:USERPROFILE '.sd_claude_bridge'
 $previewDir = Join-Path $env:TEMP 'sd_claude_bridge'
 
+function Remove-LinksIn($dir) {
+    # Links made by tools\link_install.py point into a git checkout. Delete only the link:
+    # Windows PowerShell's Remove-Item -Recurse follows a junction and empties its target.
+    Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } |
+        ForEach-Object { $_.Delete() }
+}
+
 foreach ($p in ($pluginDests + @($installDir, $sessionDir, $previewDir))) {
-    if (Test-Path $p) {
-        Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
+    $item = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+    if ($item) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            $item.Delete()
+        } else {
+            Remove-LinksIn $p
+            Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
+        }
         if (Test-Path $p) {
             Write-Host "   Could not fully remove $p (close Designer / Claude Desktop and try again)." -ForegroundColor Yellow
         } else {

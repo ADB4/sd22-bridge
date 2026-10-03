@@ -52,6 +52,13 @@ foreach ($sdUserDir in $targets) {
     $pluginDest = Join-Path $pluginParent 'sd_claude_bridge'
 
     New-Item -ItemType Directory -Force -Path $pluginParent | Out-Null
+    # tools\link_install.py may have made it a junction into a git checkout. Leave that
+    # alone: Windows PowerShell's Remove-Item -Recurse would delete the checkout's files.
+    $existing = Get-Item -LiteralPath $pluginDest -Force -ErrorAction SilentlyContinue
+    if ($existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        Write-Host "   Linked to a git checkout, left as is: $pluginDest"
+        continue
+    }
     if (Test-Path $pluginDest) {
         Remove-Item -Recurse -Force $pluginDest
     }
@@ -114,7 +121,15 @@ Step "3/4  Installing the MCP server"
 
 $installDir = Join-Path $env:LOCALAPPDATA 'sd-claude-bridge'
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-Copy-Item -Force (Join-Path $here 'mcp_server\*') $installDir
+foreach ($f in Get-ChildItem -LiteralPath (Join-Path $here 'mcp_server') -File) {
+    $dest = Join-Path $installDir $f.Name
+    $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+    if ($existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        Write-Host "   Linked to a git checkout, left as is: $dest"
+        continue
+    }
+    Copy-Item -Force -LiteralPath $f.FullName -Destination $dest
+}
 
 $venv = Join-Path $installDir 'venv'
 $vpy = Join-Path $venv 'Scripts\python.exe'
