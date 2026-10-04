@@ -85,6 +85,8 @@ def merge(path, entry, remove=False):
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
+        if os.path.exists(real):
+            shutil.copymode(real, tmp)  # keep a config the user made private (0600) private
         os.replace(tmp, real)
     except OSError as e:
         print("  ! Could not write %s (%s). Left unchanged." % (path, e))
