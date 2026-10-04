@@ -12,6 +12,8 @@ Run by an MCP client (Claude Desktop, Claude Code) over stdio:
 # No `from __future__ import annotations`: mcp 1.7-1.13 call issubclass() on each tool parameter's
 # annotation and fail at import when it's a string.
 import collections
+import contextlib
+import functools
 import io
 import itertools
 import json
@@ -20,6 +22,7 @@ import socket
 import sys
 from typing import Union
 
+import anyio
 from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -177,22 +180,46 @@ def _clean(**kwargs):
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
+# Designer answers one request at a time, so tools run one at a time too. Each runs in a worker
+# thread: the server keeps answering pings and reading cancellations meanwhile, and a call the
+# client cancels while it waits here never reaches Designer.
+_designer = anyio.Lock()
+
+
+def _tool(annotations=None, wait=True):
+    """Register fn as a tool that runs in a worker thread behind _designer. wait=False skips the
+    lock, so designer_status can still report a busy Designer (its 15 s timeout)."""
+    def register(fn):
+        @functools.wraps(fn)  # FastMCP reads the parameters and docstring through __wrapped__
+        async def run(**kwargs):
+            async with _designer if wait else contextlib.nullcontext():
+                result = await anyio.to_thread.run_sync(functools.partial(fn, **kwargs))
+                # A running call can't be stopped, so one the client cancelled still gets here. mcp
+                # has already answered it, and a second answer fails an assertion that stops the
+                # whole server: end it as cancelled instead.
+                await anyio.lowlevel.checkpoint_if_cancelled()
+                return result
+        mcp.tool(annotations=annotations)(run)
+        return fn
+    return register
+
+
 # ------------------------------------------------------------------ status
-@mcp.tool(annotations=READS)
+@_tool(READS, wait=False)
 def designer_status():
     """Check the connection and report Designer/Python versions, the graph open in the
     Graph view, grid size and whether undo grouping and run_python are available."""
     return call("info", timeout=15)
 
 
-@mcp.tool(annotations=READS)
+@_tool(READS)
 def list_packages():
     """List open user packages (.sbs) and the graphs inside each."""
     return call("list_packages")
 
 
 # ------------------------------------------------------------------- read
-@mcp.tool(annotations=READS)
+@_tool(READS)
 def get_graph(graph: str | None = None, include_values: bool = False, limit: int = 400):
     """Read a graph: node ids, definitions, positions and connections.
 
@@ -204,7 +231,7 @@ def get_graph(graph: str | None = None, include_values: bool = False, limit: int
     return call("get_graph", _clean(graph=graph, include_values=include_values, limit=limit))
 
 
-@mcp.tool(annotations=READS)
+@_tool(READS)
 def get_node(node: str, graph: str | None = None, all_params: bool = False):
     """Full detail for one node: connectable inputs (and what feeds them), parameters with
     current values, descriptions and enum options, outputs, and annotations.
@@ -216,19 +243,19 @@ def get_node(node: str, graph: str | None = None, all_params: bool = False):
     return call("get_node", _clean(node=node, graph=graph, all_params=all_params))
 
 
-@mcp.tool(annotations=READS)
+@_tool(READS)
 def get_selection():
     """Nodes currently selected in Designer's Graph view."""
     return call("get_selection")
 
 
-@mcp.tool(annotations=READS)
+@_tool(READS)
 def list_node_definitions(query: str = ""):
     """Search atomic node definition ids (e.g. query "blend", "warp", "function")."""
     return call("list_node_definitions", {"query": query})
 
 
-@mcp.tool(annotations=READS)
+@_tool(READS)
 def search_library(query: str, limit: int = 25):
     """Search Designer's bundled library packages by file name or node label (noises, patterns,
     filters, generators). Returns package_path values for create_library_node, each with its
@@ -241,7 +268,7 @@ def search_library(query: str, limit: int = 25):
 
 
 # ------------------------------------------------------------------ write
-@mcp.tool(annotations=ADDS)
+@_tool(ADDS)
 def create_node(definition: str, x: float | None = None, y: float | None = None, graph: str | None = None):
     """Create an atomic node, e.g. "uniform", "blend", "levels", "blur", "hsl", "normal",
     "transformation", "warp", "directionalwarp", "gradient" (gradient map), "curve",
@@ -250,7 +277,7 @@ def create_node(definition: str, x: float | None = None, y: float | None = None,
     return call("create_node", _clean(definition=definition, x=x, y=y, graph=graph))
 
 
-@mcp.tool(annotations=ADDS)
+@_tool(ADDS)
 def create_library_node(
     package_path: str,
     graph_identifier: str | None = None,
@@ -265,7 +292,7 @@ def create_library_node(
     )
 
 
-@mcp.tool(annotations=ADDS)
+@_tool(ADDS)
 def create_output(
     identifier: str,
     usage: str | None = None,
@@ -279,7 +306,7 @@ def create_output(
     return call("create_output", _clean(identifier=identifier, usage=usage, x=x, y=y, label=label, graph=graph))
 
 
-@mcp.tool()
+@_tool()
 def connect_nodes(
     from_node: str,
     to_node: str,
@@ -295,13 +322,13 @@ def connect_nodes(
     )
 
 
-@mcp.tool()
+@_tool()
 def disconnect_input(node: str, input: str, graph: str | None = None):
     """Remove whatever is connected to one input of a node."""
     return call("disconnect", _clean(node=node, input=input, graph=graph))
 
 
-@mcp.tool()
+@_tool()
 def set_parameter(
     node: str,
     property: str,
@@ -325,26 +352,26 @@ class NodeMove(BaseModel):
     y: float
 
 
-@mcp.tool()
+@_tool()
 def move_nodes(moves: list[NodeMove], graph: str | None = None):
     """Reposition nodes (one undo step for the whole batch)."""
     return call("move_nodes", _clean(moves=[m.model_dump() for m in moves], graph=graph))
 
 
-@mcp.tool(annotations=DESTRUCTIVE)
+@_tool(DESTRUCTIVE)
 def delete_nodes(nodes: list[str], graph: str | None = None):
     """Delete nodes by id. Only when the user asked for it or the nodes were created by you."""
     return call("delete_nodes", _clean(nodes=nodes, graph=graph))
 
 
-@mcp.tool(annotations=ADDS)
+@_tool(ADDS)
 def create_graph(identifier: str, package_path: str | None = None):
     """Create a new Substance compositing graph, in a new unsaved package unless
     package_path names an open package."""
     return call("create_graph", _clean(identifier=identifier, package_path=package_path))
 
 
-@mcp.tool(annotations=DESTRUCTIVE)
+@_tool(DESTRUCTIVE)
 def save_package(graph: str | None = None, save_as: str | None = None):
     """Save the package that contains the graph. Overwrites its .sbs file unless save_as gives a
     new full path. Only call when the user asks to save."""
@@ -401,7 +428,7 @@ def _load_images(path: str, max_size: int) -> list[tuple[str | None, Image]]:
     ]
 
 
-@mcp.tool(annotations=READS)
+@_tool(READS)
 def render_preview(node: str | None = None, graph: str | None = None, max_size: int = 512):
     """Compute the graph and return images of its Output nodes (or of one node's outputs).
     Use after edits to check the result. Designer computes only nodes that feed an Output node,
@@ -442,7 +469,7 @@ def render_preview(node: str | None = None, graph: str | None = None, max_size: 
 
 
 # ----------------------------------------------------------------- escape
-@mcp.tool(annotations=DESTRUCTIVE)
+@_tool(DESTRUCTIVE)
 def run_python(code: str):
     """Run Python inside Designer (its own interpreter, Python 3.9 in Designer 2022).
     In scope: sd, app (SDApplication), ui (QtForPythonUIMgr), pkg_mgr, graph (current graph or
@@ -454,8 +481,6 @@ def run_python(code: str):
 def main() -> None:
     if "--check" in sys.argv:
         # Used by the installer: proves the packages import and the tools register.
-        import anyio
-
         tools = anyio.run(mcp.list_tools)
         too_long = [("instructions", len(INSTRUCTIONS))] if len(INSTRUCTIONS) > MAX_TEXT else []
         too_long += [(t.name, len(t.description or "")) for t in tools if len(t.description or "") > MAX_TEXT]
