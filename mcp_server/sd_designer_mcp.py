@@ -21,6 +21,7 @@ import sys
 from typing import Union
 
 from mcp.server.fastmcp import FastMCP, Image
+from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 SESSION_FILE = os.environ.get("SD_CLAUDE_BRIDGE_SESSION") or os.path.join(
@@ -65,7 +66,21 @@ Tools for Adobe Substance 3D Designer 2022 (12.x) via a local bridge plugin.
   undo_groups=true. run_python covers anything the other tools don't.
 """
 
-mcp = FastMCP("substance-designer", instructions=INSTRUCTIONS)
+class _Server(FastMCP):
+    async def call_tool(self, name, arguments):
+        # FastMCP drops argument names it doesn't know and runs the tool with its defaults, so a
+        # save_package with "saveAs" would overwrite the package's own file. Refuse them instead.
+        tool = self._tool_manager.get_tool(name)
+        if tool is not None:
+            known = list(tool.parameters.get("properties") or {})
+            unknown = sorted(set(arguments or {}) - set(known))
+            if unknown:
+                raise ToolError("Unknown parameter %s for %s; nothing was sent to Designer. Parameters: %s"
+                                % (", ".join(map(repr, unknown)), name, ", ".join(known) or "none"))
+        return await super().call_tool(name, arguments)
+
+
+mcp = _Server("substance-designer", instructions=INSTRUCTIONS)
 _ids = itertools.count(1)
 
 

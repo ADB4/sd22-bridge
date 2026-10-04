@@ -205,7 +205,7 @@ On a Mac:
 - Arguments are `key=value` pairs. A value is read as JSON when it parses; node ids stay strings.
 - Or pass one JSON object: inline, as `@args.json`, or `-` for stdin. Windows drops unescaped double quotes from command-line arguments, so on Windows JSON with strings in it is safest in a file or on stdin. A Mac shell keeps them inside single quotes.
 - `--list` lists the tools. `--source` loads `mcp_server/` from this folder instead of the installed copy, to try an edit before running the installer. `--raw` sends a bridge command (the plugin's command names) and skips the MCP layer.
-- Unknown parameter names are refused, since the server would quietly drop them, and so are empty names and paths such as `graph=` or `save_as=`. `--raw` has no schema to check against: there, a misspelled `save_as` is dropped and `save_package` overwrites the package's own file.
+- Unknown parameter names are refused, as the MCP server refuses them too, and so are empty names and paths such as `graph=` or `save_as=`. `--raw` skips the MCP layer and has no schema to check against: there, a misspelled `save_as` is dropped and `save_package` overwrites the package's own file.
 - Images are saved to `sd_claude_bridge/tool_call` in the temp folder.
 
 ### Working from the git repo

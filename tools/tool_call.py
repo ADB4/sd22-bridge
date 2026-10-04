@@ -25,9 +25,9 @@ parsed as JSON unless the tool takes only a string there; node ids look like num
 strings, also in lists (nodes=[1582876907,1582876909]). Windows argument parsing (cmd.exe and
 Windows PowerShell 5.1) removes unescaped double quotes, so query="color dodge" works, but JSON
 with quoted strings in it (the inline object form, gradient keys) must be escaped as \\" in cmd
-or passed through a file or stdin. Unknown parameter names and empty values are refused: the
-server would silently drop a misspelled key and run with its default. --raw has no schema, so
-it checks nothing.
+or passed through a file or stdin. Unknown parameter names and empty values are refused before
+anything is sent (the server refuses unknown names too). --raw has no schema, so it checks
+nothing: the plugin ignores a misspelled key and runs with its default.
 
 By default it loads the installed server (%LOCALAPPDATA%\\sd-claude-bridge, or on macOS
 ~/Library/Application Support/sd-claude-bridge). --source loads
@@ -129,9 +129,9 @@ def parse_arguments(items, schema=None):
 
 
 def check_arguments(args, schema, tool):
-    """Refuse what pydantic would let through quietly: unknown keys are dropped (a misspelled
-    save_as would then overwrite the package), and an empty name or path (save_as=, graph=)
-    is a mistake. A parameter value can still be "" (set_parameter on a string)."""
+    """Refuse unknown keys (the server refuses them too: a misspelled save_as would otherwise
+    overwrite the package) and an empty name or path (save_as=, graph=), which is a mistake.
+    A parameter value can still be "" (set_parameter on a string)."""
     props = (schema or {}).get("properties") or {}
     for key, value in args.items():
         if key not in props:
