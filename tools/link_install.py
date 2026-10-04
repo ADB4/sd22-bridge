@@ -23,6 +23,7 @@ For developers) or from an administrator prompt.
 """
 
 import argparse
+import base64
 import os
 import shutil
 import stat
@@ -39,15 +40,17 @@ IGNORED = {"__pycache__", ".DS_Store", "Thumbs.db", "desktop.ini"}
 
 def documents():
     if WINDOWS:
-        # Follows OneDrive redirection, the same lookup install.ps1 uses.
+        # Follows OneDrive redirection, the same lookup install.ps1 uses. The path comes back as
+        # base64 of its UTF-8 bytes: PowerShell writes plain text in the console's OEM code page.
+        cmd = ("[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("
+               "[Environment]::GetFolderPath('MyDocuments')))")
         try:
             out = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('MyDocuments')"],
-                capture_output=True, text=True, timeout=60,
+                ["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=60,
             ).stdout.strip()
             if out:
-                return out
-        except (OSError, subprocess.SubprocessError):
+                return base64.b64decode(out).decode("utf-8")
+        except (OSError, subprocess.SubprocessError, ValueError):
             pass
     return os.path.join(os.path.expanduser("~"), "Documents")
 
@@ -98,6 +101,15 @@ def links_to(path, target):
         return os.path.samefile(path, target)
     except OSError:
         return False
+
+
+def in_repo(path):
+    """True when path, with its parent folders' links resolved, is the repo or inside it. Then the
+    location reaches the repo through a linked parent folder (or is the checkout itself), and
+    deleting it would delete repo files."""
+    real = os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+    real, repo = os.path.normcase(real), os.path.normcase(os.path.realpath(REPO))
+    return real == repo or real.startswith(repo + os.sep)
 
 
 def tree(root):
@@ -157,6 +169,10 @@ def copy_from_repo(path, target):
 
 
 def describe(path, target):
+    if in_repo(path):
+        if links_to(path, target):
+            return "linked to this repo (by a parent folder)"
+        return "inside this repo (by a parent folder link)"
     if is_link(path):
         if links_to(path, target):
             return "linked to this repo"
@@ -170,6 +186,13 @@ def describe(path, target):
 
 
 def link(path, target, label, backups):
+    if in_repo(path):
+        if links_to(path, target):
+            print("  ok       %s (a parent folder links into the repo)" % path)
+            return True
+        print("  FAILED   %s is inside this repo (a parent folder links into it, or the repo was cloned"
+              " here). Left as is; fix that by hand." % path)
+        return False
     if is_link(path):
         if links_to(path, target):
             print("  ok       %s" % path)

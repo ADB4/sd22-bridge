@@ -8,6 +8,7 @@
 # Written for /bin/sh (POSIX), so it runs on the bash 3.2 that macOS ships.
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+HERE_REAL=$(cd "$HERE" && pwd -P)
 SKIP_CONFIG=0
 FORCE_CONFIG=0
 for arg in "$@"; do
@@ -34,6 +35,16 @@ finish() {
         read -r _ignored
     fi
     exit "$1"
+}
+
+# True when $1 is the folder this script runs from, or inside it, after resolving links.
+# Used to never delete the source (a checkout cloned or linked at the plugin path).
+inside_here() {
+    real=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+    case "$real/" in
+        "$HERE_REAL"/*) return 0 ;;
+    esac
+    return 1
 }
 
 fail() {
@@ -95,6 +106,10 @@ for d in $TARGETS; do
     if [ -L "$dest" ]; then
         # tools/link_install.py pointed it at a git checkout; a copy would undo that.
         echo "   Linked to a git checkout, left as is: $dest"
+        continue
+    fi
+    if [ -e "$dest/.git" ] || inside_here "$dest"; then
+        echo "   Left as is (a git checkout, or the folder this installer runs from): $dest"
         continue
     fi
     rm -rf "$dest"

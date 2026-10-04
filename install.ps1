@@ -59,6 +59,14 @@ foreach ($sdUserDir in $targets) {
         Write-Host "   Linked to a git checkout, left as is: $pluginDest"
         continue
     }
+    # Never delete the source: a checkout cloned as sduserplugins\sd_claude_bridge, or an
+    # sduserplugins folder that is itself a link (into a checkout, for example).
+    $parentItem = Get-Item -LiteralPath $pluginParent -Force -ErrorAction SilentlyContinue
+    $parentLinked = $parentItem -and ($parentItem.LinkType -in @('Junction', 'SymbolicLink'))
+    if ((Test-Path -LiteralPath (Join-Path $pluginDest '.git')) -or $parentLinked) {
+        Write-Host "   Left as is (a git checkout, or a linked sduserplugins folder): $pluginDest" -ForegroundColor Yellow
+        continue
+    }
     if (Test-Path $pluginDest) {
         Remove-Item -Recurse -Force $pluginDest
     }

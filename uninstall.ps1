@@ -31,11 +31,22 @@ function Remove-LinksIn($dir) {
         ForEach-Object { $_.Delete() }
 }
 
+function Test-InCheckout($path) {
+    # A git checkout cloned at the path, or a path whose parent folder is a link (into a checkout,
+    # for example): never delete those.
+    if (Test-Path -LiteralPath (Join-Path $path '.git')) { return $true }
+    $parent = Get-Item -LiteralPath (Split-Path -Parent $path) -Force -ErrorAction SilentlyContinue
+    return [bool]($parent -and ($parent.LinkType -in @('Junction', 'SymbolicLink')))
+}
+
 foreach ($p in ($pluginDests + @($installDir, $sessionDir, $previewDir))) {
     $item = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
     if ($item) {
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
             $item.Delete()
+        } elseif (($pluginDests -contains $p) -and (Test-InCheckout $p)) {
+            Write-Host "   Left as is (a git checkout, or inside a linked folder): $p" -ForegroundColor Yellow
+            continue
         } else {
             Remove-LinksIn $p
             Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
