@@ -178,7 +178,7 @@ The plugin targets the 2022 Python API. If one structured tool fails, Claude can
 ## Security
 
 - The plugin listens on `127.0.0.1` only, and every request must carry a random token that changes each time Designer starts. The token is in `.sd_claude_bridge/session.json` in your home folder.
-- `run_python` executes arbitrary code inside Designer, so any program running as your user that can read the session file could do the same. To turn it off, set `SD_CLAUDE_BRIDGE_ALLOW_PYTHON=0` and restart Designer.
+- `run_python` executes arbitrary code inside Designer, so any program running as your user that can read the session file could do the same. To turn it off, set `SD_CLAUDE_BRIDGE_ALLOW_PYTHON=0` (or `false`, `no`, `off`) and restart Designer.
   - Windows: add it as a user environment variable.
   - macOS: apps opened from the Dock or Finder don't see shell variables. Run `launchctl setenv SD_CLAUDE_BRIDGE_ALLOW_PYTHON 0` in Terminal, then restart Designer. This lasts until you log out or restart the Mac.
 - Change the port with `SD_CLAUDE_BRIDGE_PORT` (Designer side, set the same way). The MCP server finds the port from the session file.

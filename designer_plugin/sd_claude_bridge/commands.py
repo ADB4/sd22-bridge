@@ -35,7 +35,9 @@ except ImportError:
 # `except Exception` alone lets them through. Catch ERRORS instead.
 ERRORS = (Exception, APIException)
 
-ALLOW_PYTHON = os.environ.get("SD_CLAUDE_BRIDGE_ALLOW_PYTHON", "1") != "0"
+# 0, false, no or off (any case) turns run_python off.
+ALLOW_PYTHON_SETTING = os.environ.get("SD_CLAUDE_BRIDGE_ALLOW_PYTHON", "1").strip()
+ALLOW_PYTHON = ALLOW_PYTHON_SETTING.lower() not in ("0", "false", "no", "off")
 OUTPUT_TAIL = 20000
 MAX_ARRAY = 4096  # SDValueArray items _js reads (gradients in the library have up to 256 keys)
 _MISSING = object()
@@ -1447,7 +1449,7 @@ def cmd_render(args):
 
 def cmd_run_python(args):
     if not ALLOW_PYTHON:
-        raise PermissionError("run_python is disabled (SD_CLAUDE_BRIDGE_ALLOW_PYTHON=0)")
+        raise PermissionError("run_python is disabled (SD_CLAUDE_BRIDGE_ALLOW_PYTHON=%s)" % ALLOW_PYTHON_SETTING)
     code = str(args.get("code") or "")
     buf = io.StringIO()
     ns = {
