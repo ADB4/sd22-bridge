@@ -493,6 +493,8 @@ def _fn_node(fg, spec, depth, row):
     elif spec[0] == "get":
         n = fg.newNode("sbs::function::" + _GET[spec[2] if len(spec) > 2 else "float"])
         n.setInputPropertyValueFromId("__constant__", SDValueString.sNew(spec[1]))
+    elif spec[0] in _FN_EXTRA:
+        n = _fn_extra(fg, spec, depth, row)
     else:
         op, args = spec[0], spec[1:]
         table = {"vec2": ("vector2", ["componentsin", "componentslast"]),
@@ -509,6 +511,25 @@ def _fn_node(fg, spec, depth, row):
             _fn_node(fg, a, depth + 1, row).newPropertyConnectionFromId("unique_filter_output", n, port)
     row[0] += 1
     C._try(lambda: n.setPosition(float2(-170.0 * depth, 70.0 * row[0])))
+    return n
+
+
+_FN_EXTRA = ("int", "tofloat", "swz")
+
+
+def _fn_extra(fg, spec, depth, row):
+    """("int", n) an int constant, ("tofloat", x) int -> float, ("swz", vec, i) component i of a vector (from the
+    asphalt build: int seeds, int dropdowns as floats, $pos components)."""
+    if spec[0] == "int":
+        n = fg.newNode("sbs::function::const_int1")
+        n.setInputPropertyValueFromId("__constant__", SDValueInt.sNew(int(spec[1])))
+    elif spec[0] == "tofloat":
+        n = fg.newNode("sbs::function::tofloat")
+        _fn_node(fg, spec[1], depth + 1, row).newPropertyConnectionFromId("unique_filter_output", n, "value")
+    else:
+        n = fg.newNode("sbs::function::swizzle1")
+        n.setInputPropertyValueFromId("__constant__", SDValueInt.sNew(int(spec[2])))
+        _fn_node(fg, spec[1], depth + 1, row).newPropertyConnectionFromId("unique_filter_output", n, "vector")
     return n
 
 
@@ -619,6 +640,127 @@ def level_for(tile_mm, feature_mm):
     """Fractal Sum Base level whose cells are about feature_mm wide on a tile_mm tile."""
     import math
     return int(round(math.log2(tile_mm / float(feature_mm))))
+
+
+# ----------------------------------------------------------------------------- more recipes (from the asphalt build)
+
+def _add(a, b):
+    """a + b: a number when both are numbers, else a function spec."""
+    return a + b if isinstance(a, (int, float)) and isinstance(b, (int, float)) else ("add", a, b)
+
+
+def _sub(a, b):
+    return a - b if isinstance(a, (int, float)) and isinstance(b, (int, float)) else ("sub", a, b)
+
+
+def _v4(a):
+    return ("vec4", ("vec3", ("vec2", a, a), a), a)
+
+
+def pos_coord(name, axis=0):
+    """Exact pixel-centre coordinate (i + 0.5) / N along x (axis 0) or y (axis 1): a grayscale Pixel Processor reading
+    $pos. Gradient Linear 1 is a 256-px ramp upsampled with clamped edges (0.5/256 .. 1 - 0.5/256 within 4 px of the
+    border at 2048), so anything built from it steps at the wrap (asphalt: a line in the normal at U = 0)."""
+    atom(name, "pixelprocessor", colorswitch=False)
+    drive(name, "perpixel", ("swz", ("get", "$pos", "float2"), int(axis)))
+    return name
+
+
+def levels_fn(name, inp, in_lo=0.0, in_hi=1.0, out_lo=0.0, out_hi=1.0, mid=0.5, inp_out=None):
+    """levels() whose points may also be function specs (a spec drives that float4)."""
+    num = lambda v, d: v if isinstance(v, (int, float)) else d
+    levels(name, inp, num(in_lo, 0.0), num(in_hi, 1.0), num(out_lo, 0.0), num(out_hi, 1.0), num(mid, 0.5), inp_out)
+    for pid, v in (("levelinlow", in_lo), ("levelinhigh", in_hi), ("leveloutlow", out_lo), ("levelouthigh", out_hi),
+                   ("levelinmid", mid)):
+        if isinstance(v, tuple):
+            drive(name, pid, _v4(v))
+    return name
+
+
+def band(name, src, lo, hi, soft_lo=None, soft_hi=None, res=2048, inp_out=None):
+    """1 where lo <= src <= hi (coordinate units, numbers or specs), with 1-px AA edges at res px per tile or linear
+    ramps soft_lo / soft_hi wide outside. min() of a rising and a falling Levels: name_r, name_f, name."""
+    hp = 0.5 / res
+    a = (_sub(lo, soft_lo), lo) if soft_lo else (_sub(lo, hp), _add(lo, hp))
+    b = (hi, _add(hi, soft_hi)) if soft_hi else (_sub(hi, hp), _add(hi, hp))
+    levels_fn(name + "_r", src, a[0], a[1], inp_out=inp_out)
+    levels_fn(name + "_f", src, b[0], b[1], 1.0, 0.0, inp_out=inp_out)
+    return blend(name, "min", name + "_r", name + "_f")
+
+
+def tri(name, src, centre, half, inp_out=None):
+    """Triangle profile: 1 at src == centre, 0 at |src - centre| >= half (numbers or specs)."""
+    levels_fn(name + "_r", src, _sub(centre, half), centre, inp_out=inp_out)
+    levels_fn(name + "_f", src, centre, _add(centre, half), 1.0, 0.0, inp_out=inp_out)
+    return blend(name, "min", name + "_r", name + "_f")
+
+
+def piecewise(x, pts):
+    """Piecewise-linear f(x) through [(x0, y0), (x1, y1), ...] (x_i rising, flat beyond the ends), written as
+    y0 + sum k_i * clamp(x - x_i, 0, dx_i): a function spec, or a float when x is a number (same table, both sides)."""
+    if any(b[0] <= a[0] for a, b in zip(pts[:-1], pts[1:])):
+        raise ValueError("piecewise needs strictly rising x, got %s" % [p[0] for p in pts])
+    if isinstance(x, (int, float)):
+        y = float(pts[0][1])
+        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+            y += (y1 - y0) / (x1 - x0) * min(max(x - x0, 0.0), x1 - x0)
+        return y
+    expr = float(pts[0][1])
+    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        k = (y1 - y0) / (x1 - x0)
+        expr = ("add", expr, ("mul", k, ("clamp", ("sub", x, float(x0)), 0.0, float(x1 - x0))))
+    return expr
+
+
+def seeded(name, ident, k=0):
+    """Drive name's $randomseed from the int graph input ident (+ k), so one input re-rolls a whole set of nodes."""
+    drive(name, "$randomseed", ("add", ("get", ident, "int"), ("int", k)))
+    return name
+
+
+def gmap(name, gray, keys, gray_out=None):
+    """Gradient Map: grayscale -> colour through keys [[pos, "#rrggbb"], ...]."""
+    atom(name, "gradient")
+    wire(gray, name, "input1", gray_out)
+    P(name, {"gradientrgba": keys})
+    return name
+
+
+def to_color(name, gray, gray_out=None):
+    """Grayscale -> colour, black..white, so a colour Blend can take it as source (it skips a grayscale one)."""
+    return gmap(name, gray, [[0.0, "#000000"], [1.0, "#ffffff"]], gray_out)
+
+
+def flat(name, hexcol):
+    """Flat colour (Uniform Color in colour mode)."""
+    atom(name, "uniform", colorswitch=True)
+    P(name, {"outputcolor": hexcol})
+    return name
+
+
+def ensure_output(ident, src, group=None, usage=None, src_port=None, label=None, prefix="o_"):
+    """Output <prefix><ident>: created on the first run, only re-wired to src afterwards, so a re-run stage script keeps
+    the Output node (and whatever links to it)."""
+    name = prefix + ident
+    if name in reg():
+        try:
+            node(name)
+            wire(src, name, "inputNodeOutput", src_port)
+            return name
+        except LookupError:
+            reg().pop(name, None)
+    output(name, ident, src=src, src_port=src_port, usage=usage, label=label, group=group)
+    return name
+
+
+def reset(*prefixes):
+    """Delete the registered nodes whose names start with one of prefixes (a stage's own), so the stage script can be
+    re-run from scratch. Returns how many went."""
+    if "" in prefixes:
+        raise ValueError("an empty prefix would delete every registered node")
+    gone = [n for n in list(reg()) if n.startswith(prefixes)]
+    delete(*gone)
+    return len(gone)
 
 
 # ----------------------------------------------------------------------------- probing and export
