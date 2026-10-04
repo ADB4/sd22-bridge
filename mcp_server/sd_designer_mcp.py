@@ -9,8 +9,8 @@ Run by an MCP client (Claude Desktop, Claude Code) over stdio:
     python sd_designer_mcp.py
 """
 
-from __future__ import annotations
-
+# No `from __future__ import annotations`: mcp 1.7-1.13 call issubclass() on each tool parameter's
+# annotation and fail at import when it's a string.
 import collections
 import io
 import itertools
