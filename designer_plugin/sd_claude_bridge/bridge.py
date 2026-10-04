@@ -35,6 +35,7 @@ MAX_CLIENTS = 16
 MAX_READ_PER_POLL = 4 * 1024 * 1024
 MAX_LINES_PER_POLL = 8
 IDLE_SECONDS = 60
+SESSION_CHECK_SECONDS = 5
 BAD_TOKEN = "bad token (the session file doesn't match this Designer; restart Designer)"
 # A reply to a client that already closed must raise EPIPE, not kill Designer with SIGPIPE (macOS).
 SEND_FLAGS = getattr(socket, "MSG_NOSIGNAL", 0)
@@ -79,6 +80,8 @@ class BridgeServer(object):
         self._timer = None
         self._busy = False
         self._authed = False
+        self._session_check = time.monotonic()  # its zero point is undefined
+        self._session_error = None
         self.port = None
         self.token = secrets.token_hex(16)
 
@@ -156,6 +159,25 @@ class BridgeServer(object):
             json.dump(data, f, indent=2)
         os.replace(tmp, path)
 
+    def _restore_session(self):
+        # A second Designer takes the session file over, and removes it when it quits. Write it
+        # again once it's gone, so this Designer is reachable again without a restart.
+        now = time.monotonic()
+        if now - self._session_check < SESSION_CHECK_SECONDS:
+            return
+        self._session_check = now
+        if os.path.exists(session_path()):
+            return
+        try:
+            self._write_session()
+        except Exception as e:
+            if str(e) != self._session_error:  # once, not every few seconds
+                print("%s could not write the session file again: %s" % (LOG, e))
+            self._session_error = str(e)
+            return
+        self._session_error = None
+        print("%s the session file was gone; wrote it again (port %d)" % (LOG, self.port))
+
     def _remove_session(self):
         path = session_path()
         try:
@@ -174,6 +196,7 @@ class BridgeServer(object):
             return
         self._busy = True
         try:
+            self._restore_session()
             self._accept()
             for c in list(self._clients):
                 self._service(c)

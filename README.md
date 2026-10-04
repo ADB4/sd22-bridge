@@ -152,7 +152,7 @@ No "listening" line in Designer's Console:
 ### Claude says the bridge is not running
 
 - Designer must be open with the plugin loaded (step above).
-- The plugin writes `.sd_claude_bridge/session.json` in your home folder when it starts (`%USERPROFILE%` on Windows, `~` on a Mac). If that file exists but Claude still can't connect, Designer probably crashed: restart it.
+- The plugin writes `.sd_claude_bridge/session.json` in your home folder when it starts (`%USERPROFILE%` on Windows, `~` on a Mac). If that file exists but Claude still can't connect, Designer probably crashed: restart it. With two Designers open, Claude talks to the one started last; when that one quits, the other takes over again within a few seconds.
 - Security software that blocks loopback connections can interfere. The bridge only listens on 127.0.0.1, so allowing it doesn't expose anything to the network.
 
 ### `substance-designer` doesn't appear in Claude Desktop
