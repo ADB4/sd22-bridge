@@ -30,7 +30,7 @@ Write-Host "Substance Designer <-> Claude bridge installer"
 Step "1/4  Installing the Designer plugin"
 
 $pluginSrc = Join-Path $here 'designer_plugin\sd_claude_bridge'
-if (-not (Test-Path $pluginSrc)) {
+if (-not (Test-Path -LiteralPath $pluginSrc)) {
     Fail "Can't find $pluginSrc. Unzip the whole folder first, then run install.bat from inside it."
 }
 
@@ -42,7 +42,7 @@ $sdUserDirs = @(
     (Join-Path $docs 'Adobe\Adobe Substance 3D Designer'),
     (Join-Path $docs 'Allegorithmic\Substance Designer')
 )
-$targets = @($sdUserDirs | Where-Object { Test-Path $_ })
+$targets = @($sdUserDirs | Where-Object { Test-Path -LiteralPath $_ })
 if ($targets.Count -eq 0) {
     Write-Host "   Note: no Designer user folder found yet (Designer creates one on first launch). Using $($sdUserDirs[0])." -ForegroundColor Yellow
     Write-Host "   Steam edition: start Designer once, then run this installer again." -ForegroundColor Yellow
@@ -82,9 +82,16 @@ foreach ($sdUserDir in $targets) {
         Remove-Item -LiteralPath $pluginDest -Recurse -Force -ErrorAction SilentlyContinue
         # Windows PowerShell can't delete OneDrive cloud files; cmd's rmdir can, and doesn't follow junctions.
         if (Test-Path -LiteralPath $pluginDest) { cmd /c rmdir /s /q "$pluginDest" 2>$null }
+        # Copying onto what's left would nest the new plugin inside the old one.
+        if (Test-Path -LiteralPath $pluginDest) {
+            Fail "Could not remove the old plugin at $pluginDest. Quit Designer, which keeps its files open, and run install.bat again."
+        }
     }
-    Copy-Item -Recurse -Force $pluginSrc $pluginDest
-    Get-ChildItem -Path $pluginDest -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+    Copy-Item -LiteralPath $pluginSrc -Destination $pluginDest -Recurse -Force -ErrorVariable copyErrors
+    if ($copyErrors -or -not (Test-Path -LiteralPath (Join-Path $pluginDest '__init__.py'))) {
+        Fail "Could not copy the plugin to $pluginDest (see the messages above)."
+    }
+    Get-ChildItem -LiteralPath $pluginDest -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force
     Write-Host "   Plugin copied to: $pluginDest"
 }
@@ -153,27 +160,33 @@ foreach ($f in Get-ChildItem -LiteralPath (Join-Path $here 'mcp_server') -File) 
         }
         $existing.Delete()  # its checkout is gone: copy the file instead
     }
-    Copy-Item -Force -LiteralPath $f.FullName -Destination $dest
+    Copy-Item -Force -LiteralPath $f.FullName -Destination $dest -ErrorVariable copyErrors
+    if ($copyErrors) {
+        Fail "Could not copy $($f.Name) to $installDir (see the messages above)."
+    }
 }
 
 $venv = Join-Path $installDir 'venv'
 $vpy = Join-Path $venv 'Scripts\python.exe'
 
 # Rebuild the venv if it's broken (e.g. the Python it was made from was removed).
-if (Test-Path $vpy) {
+if (Test-Path -LiteralPath $vpy) {
     & $vpy -c 'pass' 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "   Existing virtual environment is broken; recreating it." -ForegroundColor Yellow
-        Remove-Item -Recurse -Force $venv
+        Remove-Item -LiteralPath $venv -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $venv) {
+            Fail "Could not remove the broken virtual environment in $venv. Quit Claude Desktop, which runs the server from it, and run install.bat again."
+        }
     }
 }
-if (-not (Test-Path $vpy)) {
+if (-not (Test-Path -LiteralPath $vpy)) {
     $pyExe = $py.Exe
     $venvArgs = @()
     if ($py.Extra) { $venvArgs += $py.Extra }
     $venvArgs += @('-m', 'venv', $venv)
     & $pyExe @venvArgs
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $vpy)) {
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $vpy)) {
         Fail "Could not create the virtual environment in $venv"
     }
 }

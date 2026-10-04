@@ -9,7 +9,7 @@ $vpy = Join-Path $installDir 'venv\Scripts\python.exe'
 $cfgScript = Join-Path $installDir 'configure_claude.py'
 
 Write-Host "Removing the Claude Desktop config entry..."
-if ((Test-Path $vpy) -and (Test-Path $cfgScript)) {
+if ((Test-Path -LiteralPath $vpy) -and (Test-Path -LiteralPath $cfgScript)) {
     & $vpy $cfgScript --remove
 } else {
     Write-Host "   Python environment not found; remove 'substance-designer' from claude_desktop_config.json by hand if present."
