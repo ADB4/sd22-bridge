@@ -3,9 +3,11 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 # Options:
 #   -SkipClaudeConfig   don't touch Claude Desktop's config file
+#   -ClaudeDesktop      add the Claude Desktop entry without asking
 
 param(
-    [switch]$SkipClaudeConfig
+    [switch]$SkipClaudeConfig,
+    [switch]$ClaudeDesktop
 )
 
 $ErrorActionPreference = 'Continue'
@@ -192,15 +194,26 @@ Write-Host "   Installed to: $installDir"
 # --------------------------------------------------------------------------
 Step "4/4  Connecting Claude"
 
-if (-not $SkipClaudeConfig) {
+$configure = $false
+if ($SkipClaudeConfig) {
+    $configure = $false
+} elseif ($ClaudeDesktop) {
+    $configure = $true
+} elseif (-not [Console]::IsInputRedirected) {
     $answer = Read-Host "   Add 'substance-designer' to Claude Desktop's config now? [Y/n]"
     if ($answer -eq '' -or $answer -match '^[Yy]') {
-        & $vpy (Join-Path $installDir 'configure_claude.py')
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "   Config was not updated automatically; follow 'Manual setup' in README.md." -ForegroundColor Yellow
-        }
+        $configure = $true
     } else {
         Write-Host "   Skipped. See 'Manual setup' in README.md."
+    }
+} else {
+    # Input from a pipe (a script, Claude Code): Read-Host would wait for an answer that never comes.
+    Write-Host "   Not asked (no console input). Run install.ps1 -ClaudeDesktop to add the Claude Desktop entry."
+}
+if ($configure) {
+    & $vpy (Join-Path $installDir 'configure_claude.py')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "   Config was not updated automatically; follow 'Manual setup' in README.md." -ForegroundColor Yellow
     }
 }
 

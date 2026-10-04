@@ -32,6 +32,7 @@ Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9)
    - offers to add a `substance-designer` entry to Claude Desktop's config (backing up the old file)
 
    To leave Claude Desktop's config alone, run `powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -SkipClaudeConfig` instead.
+   `-ClaudeDesktop` adds the entry without asking, for running the installer from Claude Code or a script, which can't answer the prompt.
 3. Start Substance Designer (restart it if it was open). Open **Windows > Console**. You should see:
    ```
    [Claude bridge] v1.0.0 listening on 127.0.0.1:9881
