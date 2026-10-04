@@ -23,7 +23,9 @@ def main(argv=None):
     ap.add_argument("job")
     ap.add_argument("--timeout", type=float, default=900.0)
     ap.add_argument("--out")
-    ap.add_argument("--session", default=os.path.expanduser("~/.sd_claude_bridge/session.json"))
+    ap.add_argument("--session", help="the bridge's session file (default: %(default)s; set by SD_CLAUDE_BRIDGE_SESSION)",
+                    default=os.environ.get("SD_CLAUDE_BRIDGE_SESSION")
+                    or os.path.expanduser("~/.sd_claude_bridge/session.json"))
     a = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):  # Designer's text may not fit a Windows console code page
         sys.stdout.reconfigure(errors="replace")
