@@ -953,8 +953,12 @@ def _upstream(g):
     return nodes, up
 
 
-def prune_dead(dry_run=True):
-    """Nodes that feed no Output (Designer never computes them). Deletes them unless dry_run."""
+def prune_dead(dry_run=True, include_unregistered=False):
+    """Nodes that feed no Output (Designer never computes them). Unless dry_run, deletes the ones sdkit named, and
+    with include_unregistered=True the others too (the user's, or made by hand). Graph input nodes are never deleted:
+    that would remove the input from the graph and from every node that instances it.
+    Returns {"delete": names (or uids) deleted, or to delete with dry_run, "unregistered": "uid (definition)" left
+    alone, "inputs": the same for input nodes}."""
     g = graph()
     nodes, up = _upstream(g)
     keep, stack = set(), [o.getIdentifier() for o in C._items(g.getOutputNodes())]
@@ -964,13 +968,21 @@ def prune_dead(dry_run=True):
             keep.add(n)
             stack.extend(up.get(n, ()))
     inv = {v: k for k, v in reg().items()}
-    dead = [nid for nid in nodes if nid not in keep]
-    if not dry_run:
-        for nid in dead:
-            g.deleteNode(nodes[nid])
-            if nid in inv:
-                reg().pop(inv[nid], None)
-    return [inv.get(n, n) for n in dead]
+    out = {"delete": [], "unregistered": [], "inputs": []}
+    for nid, n in nodes.items():
+        if nid in keep:
+            continue
+        definition = C._try(lambda n=n: n.getDefinition().getId()) or "?"
+        if definition.startswith("sbs::compositing::input_"):
+            out["inputs"].append("%s (%s)" % (nid, definition))
+        elif nid in inv or include_unregistered:
+            if not dry_run:
+                g.deleteNode(n)
+                reg().pop(inv.get(nid), None)
+            out["delete"].append(inv.get(nid, nid))
+        else:
+            out["unregistered"].append("%s (%s)" % (nid, definition))
+    return out
 
 
 def layout(dx=190.0, dy=125.0, pad=90.0, frame_tag="sdkit"):

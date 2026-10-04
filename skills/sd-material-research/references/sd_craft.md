@@ -64,7 +64,8 @@ sk.nowear("concrete_materials.sbs::concrete_weathered", ["scaling", "spalling", 
 - Recipes: `blend`, `levels`, `hscan`, `blur`, `nblur`, `gconst`, `flood_random`, `fractal`, `level_for`.
 - Inputs and functions: `expose`, `list_inputs`, `drive`, `undrive`.
 - Variants and export: `probe`, `export_outputs` (+ manifest), `make_variant`, `render_variant`, `nowear`.
-- Hygiene: `prune_dead`, `layout`, `lint`, `status`, `snapshot`, `save_registry`.
+- Hygiene: `prune_dead` (a dry run by default; `prune_dead(False)` deletes only dead nodes sdkit named, never graph
+  inputs, and lists the others), `layout`, `lint`, `status`, `snapshot`, `save_registry`.
 
 **Function specs** for `drive`, and for any value argument that takes a tuple:
 - numbers; `("get", id[, "float"|"int"|"color"|"bool"])`
