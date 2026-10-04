@@ -18,18 +18,20 @@ Claude Desktop --stdio--> sd_designer_mcp.py --127.0.0.1:9881--> plugin inside D
   - macOS: [python.org](https://www.python.org/downloads/macos/) (the universal2 installer), or `brew install python@3.12`. The `python3` that comes with macOS is too old.
 - Claude Desktop, or Claude Code
 
-Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9), Windows 10 Pro 22H2, with Claude Code, 2026-09-30. macOS: not yet tested with a real Designer install.
+Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9), Windows 10 Pro 22H2, with Claude Code, 2026-09-30. macOS: the same Designer build on macOS 15.7 with Claude Code, 2026-10-02.
 
 ## Install on Windows
 
 1. Right-click the downloaded zip > Properties > tick **Unblock** > OK, then extract it anywhere.
 2. Double-click `install.bat`. If SmartScreen says "Windows protected your PC", click **More info > Run anyway**.
    The script:
-   - copies the plugin to Designer's user plugin folder, whichever of these exists:
+   - copies the plugin to Designer's user plugin folder, into each of these that exists:
      - `Documents\Adobe\Adobe Substance 3D Designer\python\sduserplugins` (Adobe installs)
      - `Documents\Allegorithmic\Substance Designer\python\sduserplugins` (Steam edition)
    - creates a Python environment in `%LOCALAPPDATA%\sd-claude-bridge` and installs `mcp` and `pillow`
    - offers to add a `substance-designer` entry to Claude Desktop's config (backing up the old file)
+
+   To leave Claude Desktop's config alone, run `powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -SkipClaudeConfig` instead.
 3. Start Substance Designer (restart it if it was open). Open **Windows > Console**. You should see:
    ```
    [Claude bridge] v1.0.0 listening on 127.0.0.1:9881
@@ -47,7 +49,7 @@ Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9)
    - If macOS asks whether Terminal may access your Documents or Downloads folder, click **Allow**. The plugin goes into Documents.
 
    The script:
-   - copies the plugin to Designer's user plugin folder, whichever of these exists:
+   - copies the plugin to Designer's user plugin folder, into each of these that exists:
      - `~/Documents/Adobe/Adobe Substance 3D Designer/python/sduserplugins` (Adobe installs)
      - `~/Documents/Allegorithmic/Substance Designer/python/sduserplugins` (Steam edition)
    - creates a Python environment in `~/Library/Application Support/sd-claude-bridge` and installs `mcp` and `pillow`
@@ -67,7 +69,7 @@ Tested on: Substance 3D Designer 12.4.1 build 6587 (Steam edition, Python 3.9.9)
 - "Set every node's output size to 2048."
 - "Rename all output identifiers to lowercase." (uses `run_python`)
 
-Each edit Claude makes is one undo step in Designer (Ctrl+Z, or Cmd+Z on a Mac) if your build supports undo groups (`designer_status` reports `undo_groups`). Claude won't save the package unless you ask.
+Each edit Claude makes, except creating a graph, is one undo step in Designer (Ctrl+Z, or Cmd+Z on a Mac) if your build supports undo groups (`designer_status` reports `undo_groups`). Claude won't save the package unless you ask.
 
 ## Tools
 
@@ -180,6 +182,7 @@ The plugin targets the 2022 Python API. If one structured tool fails, Claude can
   - Windows: add it as a user environment variable.
   - macOS: apps opened from the Dock or Finder don't see shell variables. Run `launchctl setenv SD_CLAUDE_BRIDGE_ALLOW_PYTHON 0` in Terminal, then restart Designer. This lasts until you log out or restart the Mac.
 - Change the port with `SD_CLAUDE_BRIDGE_PORT` (Designer side, set the same way). The MCP server finds the port from the session file.
+- `SD_CLAUDE_BRIDGE_SESSION` moves the session file. Set it the same way for Designer and for the MCP server (Claude Desktop's `env` for the entry); `sdcall.py` takes `--session`.
 
 ## Uninstall
 
@@ -216,7 +219,7 @@ This folder is a git repo (`git@github.com:ADB4/sd22-bridge.git`) shared between
 To set up a machine:
 
 1. Clone the repo. On the Mac it lives at `~/Documents/Allegorithmic/Substance Designer/python/sduserplugins/sd-claude-bridge`, but anywhere works: the script finds Designer's folders itself. On Windows, keep it out of a OneDrive-synced Documents folder, since OneDrive and `.git` don't mix (`C:\dev\sd-claude-bridge` is fine). If the machine has an older copy of this folder that isn't a git repo, rename it before cloning and compare it with the repo afterwards.
-2. Run the installer once. It makes the Python environment and the Claude config.
+2. Run the installer once. It makes the Python environment and the Claude config. If the machine already has an install, run step 3 first: the installer replaces installed copies without a backup, while `link_install.py` sets aside any copy that differs from the repo.
 3. Run `python3 tools/link_install.py` (Mac) or `py tools\link_install.py` (Windows).
 4. Restart Designer.
 
@@ -224,6 +227,6 @@ After that, a `git pull` is the whole update. Restart Designer for plugin change
 
 - `--status` shows what each location is. `--unlink` turns the links back into plain copies of the repo.
 - A copy that differs from the repo is moved to `.link-backups/` in the repo, never deleted. Diff it against the repo and commit anything worth keeping.
-- Windows: folders become junctions, which need no special rights. The three server files need file symlinks: turn on Developer Mode (Settings > System > For developers) or run the script from an administrator prompt. If that fails, the script puts a plain copy back so the bridge keeps working.
+- Windows: folders become junctions, which need no special rights. The three server files need file symlinks: turn on Developer Mode (Settings > System > For developers) or run the script from an administrator prompt. If that fails and nothing is left at that path, the script puts a plain copy back so the bridge keeps working.
 - The installers leave links alone, so running one again is safe.
 - With linked installs, `tool_call.py` already loads the repo's server, so `--source` isn't needed.

@@ -61,8 +61,8 @@ Tools for Adobe Substance 3D Designer 2022 (12.x) via a local bridge plugin.
 - Layout: x grows to the right. Leave 160-200 px between columns and 130 px between rows.
 - Check your work with render_preview. Designer computes only nodes that feed an Output node.
   A varying alpha comes as a second image (a Normal node puts the height there by default).
-- Each edit is one Ctrl+Z step when designer_status reports undo_groups=true. run_python
-  covers anything the other tools don't.
+- Each edit (except create_graph) is one Ctrl+Z step when designer_status reports
+  undo_groups=true. run_python covers anything the other tools don't.
 """
 
 mcp = FastMCP("substance-designer", instructions=INSTRUCTIONS)

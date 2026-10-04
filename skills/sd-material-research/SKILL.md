@@ -84,7 +84,7 @@ ladder, what's estimated) and wait for the go-ahead. Skip this only if they said
 ### 4. Build
 Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2):
 - Script each stage as `build/NN_<stage>.py`. Run it with `run_python`; anything over ~45 s goes through
-  `python3 <skill>/scripts/sdcall.py build/NN.py` from a background shell.
+  `python3 <skill>/scripts/sdcall.py build/NN.py` (`py -3` on Windows) from a background shell.
 - Make the graph 16-bit at creation. Use only cheap noises (`sk.lib` refuses the FX-map noises that stall the engine).
   Save right after creating the package and after each stage.
 - **Render `nowear` from the first height stage on** (`sk.nowear`), and run `mask_invariance` and `envelope` after
