@@ -2,6 +2,7 @@
 # Run uninstall.bat, or: powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1
 
 $ErrorActionPreference = 'Continue'
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $installDir = Join-Path $env:LOCALAPPDATA 'sd-claude-bridge'
 $vpy = Join-Path $installDir 'venv\Scripts\python.exe'
@@ -59,6 +60,19 @@ foreach ($p in ($pluginDests + @($installDir, $sessionDir, $previewDir))) {
         } else {
             Write-Host "   Removed $p"
         }
+    }
+}
+
+# tools\link_install.py links the skill into this folder; without the bridge it would keep loading.
+$skillLink = Join-Path $env:USERPROFILE '.claude\skills\sd-material-research'
+$skill = Get-Item -LiteralPath $skillLink -Force -ErrorAction SilentlyContinue
+if ($skill -and ($skill.LinkType -in @('Junction', 'SymbolicLink'))) {
+    $target = [string]($skill.Target | Select-Object -First 1)
+    if ($target.StartsWith('\??\')) { $target = $target.Substring(4) }
+    $inside = [IO.Path]::GetFullPath($here).TrimEnd('\') + '\'
+    if ($target -and [IO.Path]::GetFullPath($target).StartsWith($inside, [StringComparison]::OrdinalIgnoreCase)) {
+        $skill.Delete()
+        Write-Host "   Removed $skillLink"
     }
 }
 

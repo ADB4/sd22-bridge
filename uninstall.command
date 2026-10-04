@@ -39,19 +39,25 @@ for p in \
     "$APP_DIR" \
     "$HOME/.sd_claude_bridge" \
     "${TMP_ROOT%/}/sd_claude_bridge"; do
-    if [ -e "$p" ]; then
+    if [ -e "$p" ] || [ -L "$p" ]; then  # -L: also a link whose checkout is gone
         if [ ! -L "$p" ] && { [ -e "$p/.git" ] || inside_here "$p"; }; then
             echo "   Left as is (a git checkout, or the folder this uninstaller runs from): $p"
             continue
         fi
         rm -rf "$p" 2>/dev/null
-        if [ -e "$p" ]; then
+        if [ -e "$p" ] || [ -L "$p" ]; then
             echo "   Could not fully remove $p (quit Designer and Claude, then try again)."
         else
             echo "   Removed $p"
         fi
     fi
 done
+
+# tools/link_install.py links the skill into this folder; without the bridge it would keep loading.
+SKILL_LINK="$HOME/.claude/skills/sd-material-research"
+if [ -L "$SKILL_LINK" ] && inside_here "$SKILL_LINK"; then
+    rm -f "$SKILL_LINK" && echo "   Removed $SKILL_LINK"
+fi
 
 echo ""
 echo "If you registered it with Claude Code, also run:"

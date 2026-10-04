@@ -57,8 +57,12 @@ foreach ($sdUserDir in $targets) {
     # Test the link type, not the ReparsePoint attribute: OneDrive placeholders have that too.
     $existing = Get-Item -LiteralPath $pluginDest -Force -ErrorAction SilentlyContinue
     if ($existing -and ($existing.LinkType -in @('Junction', 'SymbolicLink'))) {
-        Write-Host "   Linked to a git checkout, left as is: $pluginDest"
-        continue
+        if (Test-Path -LiteralPath (Join-Path $pluginDest '__init__.py')) {
+            Write-Host "   Linked to a git checkout, left as is: $pluginDest"
+            continue
+        }
+        $existing.Delete()  # deletes only the link
+        Write-Host "   Removed a link to a checkout that is gone: $pluginDest"
     }
     # Never delete the source: a checkout cloned as sduserplugins\sd_claude_bridge, or an
     # sduserplugins folder that is itself a link (into a checkout, for example).
@@ -136,8 +140,12 @@ foreach ($f in Get-ChildItem -LiteralPath (Join-Path $here 'mcp_server') -File) 
     $dest = Join-Path $installDir $f.Name
     $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
     if ($existing -and ($existing.LinkType -eq 'SymbolicLink')) {
-        Write-Host "   Linked to a git checkout, left as is: $dest"
-        continue
+        $target = [string]($existing.Target | Select-Object -First 1)
+        if ($target -and (Test-Path -LiteralPath $target)) {
+            Write-Host "   Linked to a git checkout, left as is: $dest"
+            continue
+        }
+        $existing.Delete()  # its checkout is gone: copy the file instead
     }
     Copy-Item -Force -LiteralPath $f.FullName -Destination $dest
 }
