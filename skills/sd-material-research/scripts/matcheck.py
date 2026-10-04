@@ -400,6 +400,8 @@ class Render:
                                   % (name, a.shape[1], a.shape[0], self.size[1], self.size[0]))
             if a.ndim == 3 and cv2 is None and "color maps read at 8 bits" not in self.notes:
                 self.notes.append("color maps read at 8 bits")
+            if name == "height" and a.ndim == 3 and "height map has colour channels; read as gray" not in self.notes:
+                self.notes.append("height map has colour channels; read as gray")
             self._maps[name] = a
             self.files[name] = p
         return self._maps[name]
@@ -578,6 +580,9 @@ class Ctx:
             if channel in LAB_CHANNELS:
                 rgb = a[..., :3] if a.ndim == 3 else np.repeat(a[..., None], 3, axis=2)
                 v = lab_channel(rgb, channel)
+            elif name == "height" and space == "mm":
+                # An RGB(A) height reads as gray, the same way region min_mm/max_mm read it.
+                v = to_gray(a) * np.float32(self.depth_mm)
             elif a.ndim == 3:
                 rgb = a[..., :3]
                 if space == "linear":
@@ -585,8 +590,6 @@ class Ctx:
                 elif space == "srgb255":
                     rgb = rgb * np.float32(255.0)
                 v = rgb[..., "rgb".index(channel)] if channel in ("r", "g", "b") else rgb @ LUMA
-            elif name == "height" and space == "mm":
-                v = a * np.float32(self.depth_mm)
             elif space == "srgb255":
                 v = a * np.float32(255.0)
             elif space == "linear":
@@ -616,13 +619,16 @@ class Ctx:
             key = np.round(a * 65535).astype(np.int64)
         uniq, inv = np.unique(key, return_inverse=True)
         lab = inv.reshape(key.shape) + 1
-        if not src.get("split_components", True):
-            return lab, len(uniq)
-        # one ID value can cover several separate units (random IDs collide); split each into its own elements
         keep = np.bincount(lab.ravel(), minlength=len(uniq) + 1) >= min_px  # ID values with >= min_px pixels
         keep[0] = False
         if src.get("ignore_zero", True):
             keep[1:] &= uniq != 0
+        if not src.get("split_components", True):
+            # Same filter as below (ID 0 and IDs under min_px are not elements), then number them 1..n.
+            remap = np.zeros(keep.size, np.int64)
+            remap[keep] = np.arange(1, int(keep.sum()) + 1)
+            return remap[lab], int(keep.sum())
+        # one ID value can cover several separate units (random IDs collide); split each into its own elements
         return split_values(lab, keep[lab], src.get("connectivity", 4))
 
 
@@ -1126,6 +1132,12 @@ def ck_spacing(ctx, c):
         return float("nan"), det
     seg = ac[lo:hi]
     k = int(np.argmax(seg)) + lo
+    # Take the first local peak within 10 % of the highest. When the period isn't a whole number of px,
+    # a multiple of it can land nearer a whole px and score higher than the period itself.
+    for i in range(lo, hi):
+        if ac[i] >= 0.9 * ac[k] and ac[i] >= ac[i - 1] and ac[i] >= ac[min(i + 1, ac.size - 1)]:
+            k = i
+            break
     det.update(autocorr_peak=round(float(ac[k]), 4), search_mm=[round(lo * mm, 2), round(hi * mm, 2)])
     return float(k * mm), det
 

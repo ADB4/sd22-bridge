@@ -478,7 +478,8 @@ def render_variant(path, out, n_sites, shadows, ref=None, taken=None):
         taken.add(v)
     hmm = ctx.height_mm()
     H, W = hmm.shape
-    bc = ctx.main.map("basecolor")[..., :3]
+    bc = ctx.main.map("basecolor")
+    bc = np.repeat(bc[..., None], 3, axis=2) if bc.ndim == 2 else bc[..., :3]
     d = {"hmm": hmm, "luma": ctx.map_values("basecolor", "linear", "luma"),  # shared with per_element luma
          "rough": optional_gray(ctx, ("roughness",), 0.5),
          "masks": {m: np.asarray(ctx.main.gray(m), np.float32) for m in cfg["maps"].get("masks", {})}}
@@ -684,6 +685,9 @@ def main(argv=None):
     os.makedirs(a.out, exist_ok=True)
     infos, fronts, crops, ref, ref_px, taken = [], [], [], None, None, set()
     for path in a.configs:
+        if os.path.basename(path).startswith("scorecard_"):  # matcheck output that checks/*.json picks up
+            print("skipped %s: a matcheck scorecard, not a config" % path, file=sys.stderr)
+            continue
         try:
             info, front, cc, r, rpx = render_variant(path, a.out, max(1, a.sites), not a.no_shadows, ref, taken)
         except (mc.ConfigError, KeyError, ValueError, OSError) as e:
