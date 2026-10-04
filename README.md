@@ -182,7 +182,7 @@ The plugin targets the 2022 Python API. If one structured tool fails, Claude can
   - Windows: add it as a user environment variable.
   - macOS: apps opened from the Dock or Finder don't see shell variables. Run `launchctl setenv SD_CLAUDE_BRIDGE_ALLOW_PYTHON 0` in Terminal, then restart Designer. This lasts until you log out or restart the Mac.
 - Change the port with `SD_CLAUDE_BRIDGE_PORT` (Designer side, set the same way). The MCP server finds the port from the session file.
-- `SD_CLAUDE_BRIDGE_SESSION` moves the session file. Set it the same way for Designer and for the MCP server (Claude Desktop's `env` for the entry); `sdcall.py` takes `--session`.
+- `SD_CLAUDE_BRIDGE_SESSION` moves the session file. Set it the same way for Designer and for the MCP server (Claude Desktop's `env` for the entry, which reinstalling keeps); `sdcall.py` takes `--session`.
 
 ## Uninstall
 

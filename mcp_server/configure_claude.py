@@ -77,6 +77,11 @@ def merge(path, entry, remove=False):
     if remove:
         servers.pop(SERVER_NAME, None)
     else:
+        old = servers.get(SERVER_NAME)
+        if isinstance(old, dict) and isinstance(old.get("env"), dict) and old["env"]:
+            # An env the user added (SD_CLAUDE_BRIDGE_SESSION, ...) survives a reinstall.
+            entry = dict(entry, env=old["env"])
+            print("  kept the entry's env: %s" % ", ".join(sorted(old["env"])))
         servers[SERVER_NAME] = entry
     # Write a temporary file and swap it in, so an interrupted write can't leave a truncated config.
     # realpath keeps a symlinked config file a symlink.
