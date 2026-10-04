@@ -94,8 +94,19 @@ def save_registry():
 
 
 def use(graph_key):
-    """Select the graph later calls act on. Accepts "file.sbs::id", a full path "::id", or a bare id."""
+    """Select the graph later calls act on. Accepts "file.sbs::id", a full path "::id", or a bare id. If the registry
+    has names for this graph under another of these keys, that key is used, so the names are found."""
     g = C._graph(graph_key)
+    if not S["reg"].get(graph_key):
+        url = C._try(g.getUrl)
+        for known, m in list(S["reg"].items()):
+            other = C._try(lambda k=known: C._graph(k)) if m and known != graph_key and url else None
+            if other is not None and C._try(other.getUrl) == url:
+                if S["reg"].get(graph_key) == {} and not S["sections"].get(graph_key):
+                    S["reg"].pop(graph_key)  # an empty map left by an earlier use() of this spelling
+                    S["sections"].pop(graph_key, None)
+                graph_key = known
+                break
     S["graph"] = graph_key
     S["reg"].setdefault(graph_key, {})
     S["sections"].setdefault(graph_key, {})
