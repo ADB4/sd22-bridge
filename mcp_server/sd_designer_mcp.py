@@ -262,9 +262,10 @@ def search_library(query: str, limit: int = 25):
     label. A match with graph_identifier is one node in a package of several (blend.sbs holds
     Color Dodge, Difference, ...): pass both. A match with `graphs` names every node in its
     package: the label is the default one, and another id passed as graph_identifier picks that
-    node instead (noise_voronoi.sbs: voronoi, 3d_voronoi, ...). Matches marked
-    hidden_in_library are legacy versions or helpers; they are listed last. Atomic nodes (Levels,
-    Blur, Emboss, ...) are not packages: matching ones come under `atomic`, for create_node.
+    node instead (noise_voronoi.sbs: voronoi, 3d_voronoi, ...). Exact matches come first, then
+    those that start with the query. Matches marked hidden_in_library are legacy versions or
+    helpers; they are listed last. Atomic nodes (Levels, Blur, Emboss, ...) are not packages:
+    matching ones come under `atomic`, for create_node.
     Examples: "perlin", "tile generator", "clouds", "bevel", "slope blur", "color dodge"."""
     return call("search_library", {"query": query, "limit": limit})
 

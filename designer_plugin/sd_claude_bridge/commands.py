@@ -944,6 +944,21 @@ def _atomic_nodes():
     return _ATOMIC or [(i.split("::")[-1], "") for i in COMMON_ATOMIC if not i.endswith("::output")]
 
 
+def _words(text):
+    return " ".join(t for t in re.split(r"[\s_\-]+", (text or "").lower()) if t)
+
+
+def _search_rank(hit, phrase):
+    """0 when the label, graph id or file name (also without noise_/pattern_) is the query, 1 when
+    one of them starts with it as whole words, else 2."""
+    names = {_words(hit.get("label")), _words(hit.get("graph_identifier")), _words(hit["name"]),
+             _words(re.sub(r"^(noise|pattern)_", "", hit["name"]))}
+    names.discard("")
+    if phrase in names:
+        return 0
+    return 1 if any(n.startswith(phrase + " ") for n in names) else 2
+
+
 def cmd_search_library(args):
     SDApplicationPath = _api("sdapplication", "SDApplicationPath")
     res_dir = _app().getPath(SDApplicationPath.DefaultResourcesDir)
@@ -985,6 +1000,10 @@ def cmd_search_library(args):
     shown_hits = [h for h in hits if not h.get("hidden_in_library")]
     hidden_hits = [h for h in hits if h.get("hidden_in_library")]
     hits = shown_hits + by_label + hidden_hits
+    # Then exact matches first, and ones that start with the query next: "perlin" lists Perlin
+    # Noise before 3D Perlin Noise. Hidden ones stay last; the sort keeps the order within a rank.
+    phrase = " ".join(tokens)
+    hits.sort(key=lambda h: (bool(h.get("hidden_in_library")), _search_rank(h, phrase)))
     # Levels, Blur, Emboss, ... aren't packages but atomic nodes: point to create_node for them.
     atomic = [
         {"definition": short, "label": label}
