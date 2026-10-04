@@ -14,7 +14,19 @@ which is what the wrong build often gives. 3 means none failed but a hard check 
 was vacuous (the header names it). 2 means a config error. Before running, matcheck rejects a hard check without a
 target (it could never fail), a severity other than hard or soft, an unknown type, space, axis or normal_format, a
 target that isn't `[low, high]`, a missing or non-numeric `scale.tile_m` or `scale.height_depth_mm`, and `--only` ids
-that match no check. A full run at 2048 takes about 30 s.
+that match no check. A 2048 config of about 60 checks takes about 5.5 s, a 1024 one about 2 s. The scorecard JSON
+lists `hard_failed`, `hard_unmeasured`, `soft_failed`, `vacuous` and `errors`.
+
+Schema card. Every key a config can hold; each type's own parameters are under "Types". Don't read matcheck's source
+for these.
+
+| Part | Keys |
+|---|---|
+| config | `scale` {`tile_m` (m, or [x, y]), `height_depth_mm`, `resolution`, `normal_format` directx/opengl}, `maps` {`dir`, `prefix`, logical name → file stem, `masks` {name → stem}, `id`}, `compare` {render → {`dir`, `prefix`}}, `regions` {name → region}, `checks` [...], `out_dir`, `previews` |
+| check | `id`, `type`, `severity` hard/soft (default soft), `why`, `min_px`, `skip`, and a target: `target` [min, max] with `null` for an open end, or `target_mm`, `target_deg`, `max_violation_frac`, `max_changed_frac`, `max_frac`. Without a target a check reports `info` |
+| shared | `region`, `within`, `map`, `stat` (median mean min max std cv count sum pNN), `channel` (luma r g b lab_l lab_a lab_b chroma hue), `space` (raw linear srgb255 mm), `axis` (x y both) |
+| region | one base (`mask` + `threshold` or `range`, `map` + `min`/`max`, `height_split`, `below_local`, `rel_below`, `boundary`, `sweep`, or none), then `or` → `and` → `not` → `erode_mm` / `dilate_mm` |
+| types | run_length components coverage concentration height_diff order mask_invariance envelope per_element slope edge_profile boundary_profile dispersion step lowfreq seam value_range value_order orientation spacing ridge normal_valid height_usage |
 
 Units: lengths in **mm**, converted with `scale.tile_m` and the map size. Heights are in **mm** too: the height
 map's 0-1 range spans `height_depth_mm`. All filters, morphology and connected components wrap around the tile
@@ -77,12 +89,9 @@ lives in the dev folder, `sd-material-research-dev/tests/matcheck/`.
   masks as 16-bit greyscale.
 - **Every check** has `id` and `type`, plus optional `why` (the invariant or spec section it enforces) and
   `severity` (`hard` = an invariant whose failure fails the material; default `soft` = a tuning target).
-- **Targets.** `target: [min, max]`, with `null` for an open end. Shortcuts: `target_mm`, `target_deg`,
-  `max_violation_frac`, `max_changed_frac`, `max_frac`. A check without a target is reported as `info`.
-- **Stats** (`stat`): `median`, `mean`, `min`, `max`, `std`, `cv`, `count`, `sum`, and `pNN` (e.g. `p95`).
-- **Channels** (`channel`, wherever a check reads a map's value): `luma` (Rec.709, the default), `r`, `g`, `b`, and
-  CIELAB (D65) from the sRGB values: `lab_l` (L*), `lab_a`, `lab_b`, `chroma` (C*ab) and `hue` (h_ab in degrees).
-  `space` applies to luma and r/g/b only. An unknown channel is a config error. Use `chroma` to tell weathered grey
+- **Channels** (`channel`, wherever a check reads a map's value): `luma` is Rec.709 and the default; `lab_l` (L*),
+  `lab_a`, `lab_b`, `chroma` (C*ab) and `hue` (h_ab in degrees) are CIELAB (D65) from the sRGB values. `space`
+  applies to luma and r/g/b only. An unknown channel is a config error. Use `chroma` to tell weathered grey
   (C* about 0-8) from fresh or sheltered wood, rust or warm stone without per-species RGB targets; `hue` is circular,
   so compare it with `value_range` only inside a range that doesn't cross 0/360.
 - **Vacuity guard.** Each check reports `n_key`, the size of the set its value rests on (pixels, or elements,

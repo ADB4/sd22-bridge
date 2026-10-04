@@ -8,16 +8,17 @@ only on material that already passes its numeric checks.
 
 ## 1. Before a round (preflight)
 
-1. Export every variant and the `nowear` reference at 2048 (`sk.export_outputs`, `sk.nowear`). Use `sdcall.py` when
-   the exports take more than ~40 s.
+1. Export every variant and the `nowear` reference at 2048 (`sk.export_outputs`, `sk.nowear`). Run them as one
+   foreground `sdcall.py` job when they take more than ~40 s.
 2. `matcheck.py checks/<v>.json` for every variant. **Fix every hard failure first.**
 3. `previews.py checks/*.json --out review/round<N>`.
 4. Fill the fix ledger `review/round<N>/ledger.json`: for every planned fix, record the implemented change (node names,
-   params, script), its acceptance checks with the measured before/after values, and anything not done and why. The
-   ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick build, 2 of 10 and 1 of 8
-   fixes had fully landed when the next round started.
+   params, script), its acceptance checks with the measured before/after values, and anything not done and why. One
+   row per plan item, even when one batch applied several; a row without a measured after value counts as
+   `not_landed`. The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick build,
+   2 of 10 and 1 of 8 fixes had fully landed when the next round started.
 5. Write or append `review/BRIEF.md` (§2).
-6. Leave Designer idle. Reviewers work from files only.
+6. Leave Designer idle until the plan gate. Reviewers work from files only.
 
 ## 2. Brief template (`review/BRIEF.md`, append one section per round)
 
@@ -147,7 +148,9 @@ calibration from the verifier, not a high rejection rate.
   - `INV: pass|fail | INV-id | values`
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
   - FIXSTATUS, REJECTED, DEFERRED
-- Show the user the scorecard and the plan before building the fixes, unless they said not to stop.
+- Show the user the scorecard and the plan before building the fixes, and ask every design call in the plan there,
+  in one batch (`SKILL.md` stage 7); none during the apply. If they said not to stop, take each call's recommended
+  option and list it in the report.
 
 **Stop when:**
 - all hard checks pass in every variant;
@@ -163,8 +166,9 @@ calibration from the verifier, not a high rejection rate.
 When more than half the ledger is partial, run a cheap fixcheck-only round (checks plus one agent) instead of the full
 panel.
 
-**Final gate.** The last change is followed by a full `matcheck.py` run on every variant. The report says what was
-verified after the last change. Don't say "three review rounds confirmed it" when the final fixes were never reviewed.
+**Final gate.** The last change is followed by a 2048 export of every variant and its `nowear`, then a full
+`matcheck.py` run on every variant. The report says what was verified after the last change. Don't say "three review
+rounds confirmed it" when the final fixes were never reviewed.
 
 ## 6. Running it
 
@@ -176,5 +180,18 @@ verified after the last change. Don't say "three review rounds confirmed it" whe
      the workflow file, and ask for raw JSON, also saved to `review/round<N>/<lens>.json`.
   2. In a second message, spawn one verifier per non-empty lens.
   3. Run the lead in a fresh Agent, or in the main context when it's small.
-- **While the panel runs,** prepare the next fix batch from the numeric results. Never edit the maps the panel is
-  reading, and never call Designer from a subagent.
+- **While the panel runs,** prepare the next fix batch from the numeric results you already have. Run no suite or
+  numpy jobs beside it (its agents measure too), never edit the maps the panel is reading, and never call Designer
+  from a subagent.
+
+## 7. Catch ledger
+
+Every trade of rigor for speed in this workflow gets a row: what it still catches, what it could miss, with the source,
+and the signal that shows it failing. Check the signals at each plan gate and tell the user when one fires. A new
+trade adds its row before it is used.
+
+| Trade | Still caught | Could be missed | Signal |
+|---|---|---|---|
+| One build-measure batch per graph (`SKILL.md` stage 7) | fixes that didn't land: each ledger row keeps its measured before/after values, and a full run follows the last change | which fix in a batch caused a regression; brick's ledger found 2 of 10 and 1 of 8 fixes fully landed (§1) | more `partial`, `not_landed` or `regressed` fix_status rows next round |
+| High effort for scripted stages (`SKILL.md`, Effort) | design turns stay at xhigh (spec, panel); no past catch is tied to xhigh (round-3 speed review) | reasoning depth in check-fix and fix turns | a lower share of hard checks passing at the first 1K export, more fix cycles, wrong builds regressing, or the developer's eval re-run below 30/30 |
+| Section-scoped sheet reads (`SKILL.md` stage 2) | invariants (§5) and targets (§9) are read in full | an interaction held in a skipped process card (asphalt I10: sealant only on cracks) | a §5 invariant of a chosen process missing from `spec.md` |

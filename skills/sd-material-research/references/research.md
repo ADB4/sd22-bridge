@@ -7,7 +7,9 @@ values, each with a source. Its output feeds the spec. The goal is better decisi
 
 Bundled sheets: `references/materials/*.md` (brick, asphalt, concrete, wood_planks, and any added later).
 
-1. Read the sheet in full. Note its date and its stated scope.
+1. Read the sheet by section: §0-3 and §5-10 in full; from §4, only the cards of the processes the interview chose
+   and any card they name; from Sources, only the entries step 4 needs (`grep -n '^##'` the sheet, then Read by line
+   range). Note its date and its stated scope.
 2. List what this request needs that the sheet doesn't settle: a regional standard, a sub-type, a process the user
    emphasised, a colour family, a finish.
 3. Close those gaps with targeted searches, usually 5-15 (WebSearch/WebFetch; load them with ToolSearch
@@ -17,8 +19,10 @@ Bundled sheets: `references/materials/*.md` (brick, asphalt, concrete, wood_plan
    - the facts specific to this request, with sources
    - which sheet values you are using, by section
    - decisions the user should own (ask them in a short follow-up interview round)
-6. If you found something that's wrong or missing in the sheet itself, fix the sheet. Add a line to its header saying
-   what changed and when. The sheet is shared knowledge, and the next material benefits.
+6. If you found something that's wrong or missing in the sheet itself, fix the sheet. First grep the whole sheet for
+   the value or term you change, and fix every place it appears, read or not. Grep Sources for the URL before you add
+   a source, and number a new one after the last entry. Add a line to its header saying what changed and when. The
+   sheet is shared knowledge, and the next material benefits.
 
 ## B. Material without a sheet
 

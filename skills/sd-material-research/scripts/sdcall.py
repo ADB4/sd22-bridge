@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a Python file inside Designer through the sd_claude_bridge socket, without the MCP client's ~60 s limit.
 
-Usage (from a shell, ideally as a background command):
+Usage (from a shell: in the foreground for a job under ~8 min, otherwise or with other work to do in the background):
     python3 sdcall.py job.py [--timeout 900] [--out job.result.json]
 
 Sends the file's code as one run_python command (same namespace and undo group as the MCP tool) and writes the reply

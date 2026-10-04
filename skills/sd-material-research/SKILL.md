@@ -18,16 +18,29 @@ into a method that works for any material.
 
 ## Stages
 
-| # | Stage | Read | Produces | Gate |
-|---|---|---|---|---|
-| 0 | Orient | this file | tools folder, environment | — |
-| 1 | Interview | `references/interview.md`, the sheet's §8 | answers | user answers |
-| 2 | Research | `references/research.md`, `references/materials/<m>.md` | `research/notes.md`, or a new sheet | — |
-| 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | user approves |
-| 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass |
-| 5 | Measure | `references/checks.md` | scorecards, previews | hard checks pass |
-| 6 | Review | `references/review.md` | `review/round<N>/findings.md` | — |
-| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied |
+| # | Stage | Read | Produces | Gate | Effort |
+|---|---|---|---|---|---|
+| 0 | Orient | this file | tools folder, environment | — | xhigh |
+| 1 | Interview | `references/interview.md`, the sheet's §8 | answers | user answers | xhigh |
+| 2 | Research | `references/research.md`, `references/materials/<m>.md` by section | `research/notes.md`, or a new sheet | — | xhigh |
+| 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | user approves | xhigh |
+| 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass | high (trial) |
+| 5 | Measure | `references/checks.md` | scorecards, previews | hard checks pass | high (trial) |
+| 6 | Review | `references/review.md` | `review/round<N>/findings.md` | user approves the plan | xhigh |
+| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied | high (trial) |
+
+Effort: xhigh for judgement (interview, research, spec, panel), high for scripting a settled spec. High is on trial.
+On the next material, build the first graph at high and the second at xhigh, run every other stage at xhigh, and note
+per graph in `CONTEXT_PROMPT.md` its share of hard checks passing at the first 1K export, its fix cycles and the wrong
+builds its hard checks catch. With one core graph (wrappers only instance it), keep every stage at xhigh, note in
+`CONTEXT_PROMPT.md` that the trial was skipped, and run it on the next material with two built graphs. Stop rule: back
+to xhigh everywhere if the high graph does worse on any of these or the evals (re-run by the developer,
+`evals/README.md`) drop below 30/30; if both arms are recorded and the high graph does no worse, stages 4, 5 and 7 go
+to high. The user switches with `/effort`: ask at the spec gate (high, for the first graph) and before the second
+graph (back to xhigh), and confirm each switch on this session's next records (the JSONL under `~/.claude/projects/`
+that holds your last AskUserQuestion text, not the newest file). If they said not to stop, skip the trial and stay at
+xhigh. Launch no lens or verifier until those records show xhigh; if they don't, ask and wait. A new semantics probe,
+or a fix that failed twice, goes back to xhigh.
 
 Other entry points:
 - **Existing material** (critique, extend or fix it): research, then write a spec from the sheet plus the user's
@@ -45,7 +58,10 @@ Other entry points:
 - Run `PY=$(bash <skill>/scripts/setup_env.sh)` (numpy, scipy, Pillow, OpenCV).
 
 ### 1. Interview
-Ask before starting; the user wants to be asked. Follow `references/interview.md`:
+Ask before starting; the user wants to be asked. Send round 1 after reading this file alone (sub-type and setting,
+layout, look, variants, wear words), and Read `references/interview.md` and `references/research.md` and print the
+sheet's §0 and §8 (`sed -n '/^## 0\./,/^## 1\./p;/^## 8\./,/^## 9\./p' <sheet>`) in the same message, so they load
+while the user answers. Round 2 follows `interview.md`. In both rounds:
 - 4-8 questions in AskUserQuestion rounds.
 - Recommended option first.
 - Each option states its physical consequence.
@@ -53,8 +69,10 @@ Ask before starting; the user wants to be asked. Follow `references/interview.md
 - Ask what any wear words mean (rounding, chipping, spalling...) and how much damage each variant gets.
 
 ### 2. Research
-- **With a bundled sheet:** read all of it, close the request's gaps with targeted searches, and re-verify the numbers
-  that hard checks depend on.
+- **With a bundled sheet:** read §0-3 and §5-10 in full and, from §4, only the cards of the processes the interview
+  chose and any card they name (`grep -n '^##'` the sheet, then Read by line range). Every §5 invariant of a chosen
+  process goes into the spec. Close the request's gaps with targeted searches, and re-verify the numbers that hard
+  checks depend on.
 - **Without one:** run the research team in `references/research.md`. It writes a new sheet for next time.
 - The brick build skipped this stage, and its acceptance targets were invented reactively after reviews. Research
   first is the main fix.
@@ -72,19 +90,22 @@ Fill `assets/spec_template.md` into `<tools>/spec.md`:
 - acceptance targets
 - graph architecture
 
-Then generate `checks/<variant>.json` from the acceptance table. Include perceptual checks, such as the visible joint
-at half depth, not only mask-level ones. Before the gate, put every hard check through `references/checks.md`, "Hard
-checks that can fail": tiling is hard, a direction the physics fixes is hard, and each hard check reads the rendered
-maps and names the wrong build it catches. In the dry runs, every spec's weakest hard checks proved only the mask
-wiring.
+Then generate `checks/<variant>.json` from the acceptance table, using the schema card at the top of
+`references/checks.md`, not matcheck's source. Include perceptual checks, such as the visible joint at half depth, not
+only mask-level ones. Before the gate, put every hard check through `references/checks.md`, "Hard checks that can
+fail": tiling is hard, a direction the physics fixes is hard, and each hard check reads the rendered maps and names the
+wrong build it catches. In the dry runs, every spec's weakest hard checks proved only the mask wiring.
 
 **Gate:** show the user a short summary (scale, layer model, the 3-6 key invariants in plain words, the variant
 ladder, what's estimated) and wait for the go-ahead. Skip this only if they said not to stop.
 
 ### 4. Build
-Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2):
-- Script each stage as `build/NN_<stage>.py`. Run it with `run_python`; anything over ~45 s goes through
-  `python3 <skill>/scripts/sdcall.py build/NN.py` (`py -3` on Windows) from a background shell.
+Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2; grep `sdkit.py`
+only for what §2 lacks):
+- Script each stage as `build/NN_<stage>.py`. Run it with `run_python` (under 45 s); a longer job goes through
+  `python3 <skill>/scripts/sdcall.py build/NN.py` (`py -3` on Windows): in the foreground (Bash timeout 600000 ms)
+  when it should take under ~8 min, otherwise from a background shell. A rebuild runs the changed stage and every
+  later one, plus the 1K exports, as one job: it takes seconds.
 - Make the graph 16-bit at creation. Use only cheap noises (`sk.lib` refuses the FX-map noises that stall the engine).
   Save right after creating the package and after each stage.
 - **Render `nowear` from the first height stage on** (`sk.nowear`), and run `mask_invariance` and `envelope` after
@@ -94,7 +115,8 @@ Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (q
 - Keep one Flood Fill random per visual feature. Shared randoms made "hero bricks" that printed a lattice.
 
 ### 5. Measure
-- Export every variant plus its `nowear` at 2048 (`sk.export_outputs` / `sk.nowear`; batch them through `sdcall.py`).
+- Export every variant plus its `nowear` at 2048 (`sk.export_outputs` / `sk.nowear`) in one foreground `sdcall.py`
+  job. 28 renders take under 2 min.
 - Run `$PY <skill>/scripts/matcheck.py checks/<v>.json`, which writes scorecards. Exit 0: every hard check passed;
   1: one failed; 3: one measured nothing (expected for damage checks in a `nowear` run, otherwise read the header);
   2: config error.
@@ -113,22 +135,42 @@ Follow `references/review.md`:
 
 Use a Workflow (`assets/workflows/review_round.js`) only when the user has opted into workflows (ultracode is on, or
 they asked). Otherwise run the same agents with the Agent tool. Reviewers never call Designer. While the panel runs,
-prepare the next fixes from the numbers.
+prepare the next fixes from the numbers you have.
 
 ### 7. Iterate and hand off
-- Apply the plan in dependency order, fill the ledger with measured acceptance, re-measure, and review again with
-  fewer lenses. Three rounds is typical. The stopping rule is in `references/review.md` §5.
-- **Final gate:** the last change is followed by a full matcheck run on every variant. The report states what was
-  verified after the last change, in physical terms ("joint 10.5 mm at half depth; 0 damaged pixels below the mortar;
-  damage 4.3 %"). Send the comparison images (SendUserFile).
+- At the plan gate, show the user the scorecard and the plan, and ask every design call in it (a choice between
+  looks, a requirement trade, a deviation) in one AskUserQuestion batch, recommended option first. Ask nothing during
+  the apply: a call that comes up there leaves its fix undone, noted in the ledger, for the next gate.
+- Apply one build-measure batch per graph: edit the graph's plan items into their stage scripts in dependency order,
+  run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
+  (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
+  that an edited node or preset parameter feeds (an edit to a shared node touches every preset). Then run the targeted
+  set: the checks the items touch and the wrong builds of the touched hard checks. Items that miss their acceptance
+  go into a second batch for that graph.
+- Give each plan item its own ledger row with measured before and after values, never one row per batch. Then review
+  again with fewer lenses. Three rounds is typical. The stopping rule is in `references/review.md` §5.
+- **Final gate:** after the last change, export every variant plus its `nowear` at 2048 in one foreground `sdcall.py`
+  job (stage 5), then run the full matcheck on every variant in the background and draft the report meanwhile;
+  finalize it only when every exit code and scorecard JSON (`hard_failed`, `hard_unmeasured`) reads green as in
+  stage 5. The report states what was verified after the last change, in physical terms ("joint 10.5 mm at half
+  depth; 0 damaged pixels below the mortar; damage 4.3 %"). Send the comparison images (SendUserFile).
 - Write `<tools>/CONTEXT_PROMPT.md` from the template: requirements, architecture, how to edit, a measured-state
   table, open items, and the invariants to re-check. Also save a project memory note with the requirements as
   acceptance criteria.
 
 ## Designer rules that save hours
-- **One Designer call at a time.** Parallel agents never call substance-designer tools; they read exported files.
+- **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. Who
+  calls Designer and who owns the CPU:
+
+| Phase | Calls Designer | Owns the CPU |
+|---|---|---|
+| 4 build, 7 apply | main, one call at a time | Designer, plus at most 4 measure jobs (the previous graph's checks) |
+| 5 measure, final gate | main for the exports, then nobody | the suite (matcheck, previews) |
+| 6 panel, until the plan gate | nobody | the panel's agents; no suite or numpy jobs beside them |
+
 - **A timeout (~60 s) usually means Designer is still computing.** Don't retry. Wait (poll `designer_status`, or
-  sample the process), then check. Long jobs go through `sdcall.py`.
+  sample the process), then check. Long jobs go through `sdcall.py`. A Mac job several times slower than
+  `sd_craft.md` §6: check App Nap (§1 there).
 - **Watch for FX-map noises at high scale.** They stall the GL engine for minutes (Gaussian above ~200, BnW Spots 3
   near 96, Cells 4 near 110). For fine detail, use Fractal Sum Base levels (`sk.fractal`, `sk.level_for`).
 - **Histogram Scan centre = 1 − Position. Blend divide = destination ÷ source.** Both have caused wrong fixes; the
@@ -139,7 +181,7 @@ prepare the next fixes from the numbers.
 ## Bundled files
 - `references/method.md`: the physical reasoning (layout, layers, envelope, process cards, invariants, scale).
 - `references/interview.md`, `research.md`, `review.md`: how to run those stages.
-- `references/checks.md`: the check vocabulary, matcheck and previews usage.
+- `references/checks.md`: the schema card, the check vocabulary, matcheck and previews usage.
 - `references/sd_craft.md`: bridge operation, sdkit, graph skeleton, recipes R1-R14, node cheat sheet, engine costs,
   transfer table.
 - `references/materials/`: reference sheets (`_TEMPLATE.md` plus brick, asphalt, concrete, wood_planks, and any added

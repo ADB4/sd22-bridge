@@ -14,12 +14,21 @@ material. Material-specific build notes live in each sheet's section 10. This fi
 - **~60 s client limit per MCP call.** Designer keeps computing after the client gives up, and later calls queue
   behind it.
   - Never retry a mutation that timed out: it would run twice.
-  - Wait instead: poll `designer_status` (it answers in ~1 s when idle and fails after 15 s when busy), or sample the
-    process: `sample <pid> 1 | grep -q SDSBSCompGraph_compute` in a background until-loop. The pid is in
-    `~/.sd_claude_bridge/session.json`.
+  - Wait instead: poll `designer_status` (an idle Designer answers in about 20 ms, `mac-loaded`; a busy one fails it
+    after 15 s), or sample the process: `sample <pid> 1 | grep -q SDSBSCompGraph_compute` in a background
+    until-loop. The pid is in `~/.sd_claude_bridge/session.json`.
   - Keep each run_python under ~45 s.
-- **Long jobs** (cold computes, several 2048 exports, nowear batches) go through `scripts/sdcall.py job.py` from a
-  background shell. It is the same run_python, but with a 15 min socket timeout.
+- **Longer jobs** (several 2048 exports, nowear batches) go through `scripts/sdcall.py job.py`: the same run_python
+  with a 15 min socket timeout. Run it in the foreground with the Bash timeout at 600000 ms when the job should take
+  under ~8 min, which covers every rebuild and a full 2K export (§6); use a background shell for a job that may pass
+  ~8 min (the foreground Bash cap is 10 min; pass `--timeout` above 900 past 15 min) or when other work can run
+  meanwhile. A rebuild runs the changed stage and every later one, plus the 1K exports, as one job: no per-stage
+  jobs and no partial-rebuild tricks.
+- **On macOS a hidden Designer naps** at scheduler priority 4. The bridge holds an App Nap activity for each command,
+  so `ps -o pri= -p <pid>` reads 46 while a command runs and 4 again about 0.2 s after the reply. Without it the same
+  job ran about 4.5× slower (26 s vs 5.8 s). If a job runs several times slower than §6 and the priority reads 4
+  during the command, the activity isn't held (an older plugin, `SD_CLAUDE_BRIDGE_NO_ACTIVITY` set, or the activity
+  failed to start, which Designer's console says once): bring Designer to the front meanwhile and tell the user.
 - **render_preview is for eyeballing only.** It returns at most 8 textures at ≤512 px, 8-bit, and computes every
   output. Numbers come from `sdkit.export_outputs` plus `matcheck.py`.
 - **search_library is slower the first time** (~3 s, it parses ~485 packages). For a package you already know,
@@ -184,7 +193,8 @@ unpick after the colour stage is built on top of it.
   2. Run `python calibrate.py input.png <coverage> --region <mask>`.
   3. Set Position, or an affine `--map param p1:c1 p2:c2` spec.
   4. Re-measure the coverage.
-- Re-calibrate after **any** upstream change: a noise swap, facets or a cap shifted coverage 5-30×.
+- Re-calibrate after **any** upstream change (in an apply batch, once, after the batch's rebuild): a noise swap,
+  facets or a cap shifted coverage 5-30×.
 - Stretch a compressed input with Levels before scanning.
 - Threshold the pattern alone, then multiply by a smooth zone. Scanning after the multiply makes plateaus.
 - Gate a parameter's zero explicitly: `opacitymult = min(1, p*10)`.
@@ -276,10 +286,14 @@ unpick after the colour stage is built on top of it.
   them, including a function-driven scale.
 - **Safe:** Cells 4 at 48, Crystal 1 at ~40, Clouds 2 / Perlin at 3-50, Tile Sampler 96×96 (~1-2 s), Fractal Sum
   Base at any level.
-- **Typical times:**
-  - brick graph (321 nodes): 1.5 s at 1024, 6 s at 2048
-  - warm 2048 export of a 9-output wrapper: 4-5 s
-  - cold export: ~110 s (use sdcall.py)
+- **Typical times** (asphalt; Designer hidden on an M1 Pro, bridge with the lookup and App Nap fixes; load 2.4-4.7,
+  `mac-loaded`):
+  - rebuild of the lane's stages 02-06 (610 nodes): 4.2 s; stages 05-06 plus a 1K export and its nowear: 5.8 s
+  - one 2048 render: ~5 s for the lane, ~3 s for the detail graph (117 nodes); all 28 (5 + 9 presets, each with its
+    nowear): 1.7 min
+  - calibration cycle (probe 2 nodes at 2048, set Position, 1K export): 7.4 s
+  - package load after a restart: 2 s; first `search_library`: 3.2 s
+  - a change of output size recomputes the whole graph
 - **First compute after new node types** can be slow once (shader compilation).
 
 ## 7. Transfer table
