@@ -11,7 +11,10 @@ $PY <skill>/scripts/matcheck.py <tools>/checks/weathered.json --only joint_half_
 ```
 Exit code 0 means every hard check passed. 1 means a hard check failed, including one whose value is undefined (NaN),
 which is what the wrong build often gives. 3 means none failed but a hard check measured nothing: it raised an error or
-was vacuous (the header names it). 2 means a config error. A full run at 2048 takes about 30 s.
+was vacuous (the header names it). 2 means a config error. Before running, matcheck rejects a hard check without a
+target (it could never fail), a severity other than hard or soft, an unknown type, space, axis or normal_format, a
+target that isn't `[low, high]`, a missing or non-numeric `scale.tile_m` or `scale.height_depth_mm`, and `--only` ids
+that match no check. A full run at 2048 takes about 30 s.
 
 Units: lengths in **mm**, converted with `scale.tile_m` and the map size. Heights are in **mm** too: the height
 map's 0-1 range spans `height_depth_mm`. All filters, morphology and connected components wrap around the tile

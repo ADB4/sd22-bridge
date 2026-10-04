@@ -1394,7 +1394,7 @@ def ck_normal_valid(ctx, c):
     cx = float(np.corrcoef(n[..., 0][sel], gx[sel])[0, 1]) if sel.sum() > 10 else float("nan")
     cy = float(np.corrcoef(n[..., 1][sel], gy[sel])[0, 1]) if sel.sum() > 10 else float("nan")
     detected = "opengl" if cy > 0 else "directx"
-    expect = c.get("normal_format", ctx.normal_format)
+    expect = str(c.get("normal_format", ctx.normal_format)).lower()
     zneg = float((n[..., 2] < 0).mean())
     # slope scale: tangent of the normal's tilt over the height map's slope, on sloped pixels
     nz = np.maximum(n[..., 2], 1e-3)
@@ -1586,6 +1586,86 @@ def run_check(ctx, c):
     return row
 
 
+SPACES = ("raw", "linear", "srgb255", "mm")
+AXES = {"run_length": ("x", "y", "both"), "seam": ("x", "y", "both"), "step": ("x", "y", "both"), "spacing": ("x", "y")}
+NORMAL_FORMATS = ("directx", "opengl")
+
+
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _spaces(node, where):
+    """(where, value) for every "space" key in a config subtree."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "space":
+                yield where, v
+            else:
+                yield from _spaces(v, "%s.%s" % (where, k))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _spaces(v, "%s[%d]" % (where, i))
+
+
+def validate_config(cfg, only=None):
+    """Raise ConfigError (exit 2) for config mistakes that would otherwise switch a hard gate off without a word or
+    crash mid-run: a hard check that can never fail, an unknown severity, space, axis or normal_format, a malformed
+    check or scale, and --only ids that match nothing."""
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("maps"), dict):
+        raise ConfigError("the config must be a JSON object with a 'maps' object")
+    sc = cfg.get("scale", {})
+    tm = sc.get("tile_m")
+    tms = tm if isinstance(tm, (list, tuple)) else [tm]
+    if not 1 <= len(tms) <= 2 or not all(_number(t) and t > 0 for t in tms):
+        raise ConfigError("scale.tile_m must be the tile size in metres, a positive number or [x, y], not %r" % (tm,))
+    depth = sc.get("height_depth_mm")
+    if not (_number(depth) and depth > 0):
+        raise ConfigError("scale.height_depth_mm must be the depth in mm that the height map's 0-1 range spans, not %r"
+                          % (depth,))
+    checks = cfg.get("checks", [])
+    if not isinstance(checks, list):
+        raise ConfigError("'checks' must be a list")
+    formats = [("scale.normal_format", sc.get("normal_format", "directx"))]
+    ids = set()
+    for i, c in enumerate(checks):
+        where = "check #%d" % (i + 1)
+        if not isinstance(c, dict):
+            raise ConfigError("%s is not an object" % where)
+        if c.get("id") is not None:
+            where = "check '%s'" % c["id"]
+            ids.add(c["id"])
+        if c.get("type") not in CHECKS:
+            raise ConfigError("%s: unknown type %r (use %s)" % (where, c.get("type"), ", ".join(sorted(CHECKS))))
+        severity = c.get("severity", "soft")
+        if severity not in ("hard", "soft"):
+            raise ConfigError("%s: severity must be hard or soft, not %r" % (where, severity))
+        if not isinstance(c.get("why", ""), str):
+            raise ConfigError("%s: why must be a string" % where)
+        t = target_of(c)
+        if t is not None and not (isinstance(t, (list, tuple)) and len(t) == 2
+                                  and all(v is None or _number(v) for v in t)):
+            raise ConfigError("%s: a target is [low, high], with null for an open end, not %r" % (where, t))
+        if severity == "hard" and (t is None or (t[0] is None and t[1] is None)):
+            raise ConfigError("%s: a hard check needs a target (target, target_mm, target_deg or %s), or it can never "
+                              "fail" % (where, ", ".join(sorted(TARGET_KEYS))))
+        axes = AXES.get(c["type"])
+        if axes and "axis" in c and c["axis"] not in axes:
+            raise ConfigError("%s: axis must be %s or %s, not %r" % (where, ", ".join(axes[:-1]), axes[-1], c["axis"]))
+        if "normal_format" in c:
+            formats.append(("%s: normal_format" % where, c["normal_format"]))
+    for where, v in formats:
+        if not (isinstance(v, str) and v.lower() in NORMAL_FORMATS):
+            raise ConfigError("%s is %r: use directx or opengl" % (where, v))
+    for where, v in list(_spaces(cfg.get("regions", {}), "regions")) + list(_spaces(checks, "checks")):
+        if v not in SPACES:
+            raise ConfigError("%s: unknown space %r (use %s)" % (where, v, ", ".join(SPACES)))
+    if only:
+        missing = sorted(set(only) - ids)
+        if missing:
+            raise ConfigError("--only: no check has the id %s" % ", ".join(map(repr, missing)))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("config")
@@ -1597,12 +1677,13 @@ def main(argv=None):
     try:
         with open(a.config) as fh:
             cfg = json.load(fh)
+        only = set(a.only.split(",")) if a.only else None
+        validate_config(cfg, only)
         base = os.path.dirname(os.path.abspath(a.config))
         ctx = Ctx(cfg, base)
-    except (ConfigError, KeyError, ValueError, OSError) as e:
+    except (ConfigError, KeyError, ValueError, TypeError, OSError) as e:
         print("config error: %s" % e, file=sys.stderr)
         return 2
-    only = set(a.only.split(",")) if a.only else None
     results = [run_check(ctx, c) for c in cfg.get("checks", [])
                if not c.get("skip") and not (only and c.get("id") not in only)]
     manifest, warnings = manifest_report(ctx)
