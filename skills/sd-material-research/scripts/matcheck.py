@@ -700,10 +700,22 @@ def ck_components(ctx, c):
     area_mm2 = sizes * ctx.mmx * ctx.mmy
     eq_d = 2.0 * np.sqrt(area_mm2 / math.pi)
     keep = eq_d >= float(c.get("min_mm", 0.0))
+    if c.get("border_px") is not None and n:
+        # opt-in: only the components that reach within border_px of the tile border (wrap artefacts of a warped
+        # coordinate show up there as specks)
+        b = max(1, int(c["border_px"]))
+        band = np.zeros(R.shape, bool)
+        band[:b, :] = band[-b:, :] = True
+        band[:, :b] = band[:, -b:] = True
+        touch = np.zeros(n + 1, bool)
+        touch[np.unique(lab[band])] = True
+        keep &= touch[1:]
     eq_k, area_k = eq_d[keep], area_mm2[keep]
     metric = c.get("metric", "count_per_m2")
     det = {"components": int(keep.sum()), "eq_diameter_mm": summary(eq_k, "mm"),
            "n_key": int(Wn.sum()) if Wn is not None else int(R.size)}
+    if c.get("border_px") is not None:
+        det["border_px"] = int(c["border_px"])
     if metric == "count":
         val = float(keep.sum())
     elif metric == "count_per_m2":
@@ -983,27 +995,65 @@ def ck_lowfreq(ctx, c):
     return worst, out
 
 
+def seam_rowmedian_z(a, axis, floor):
+    """Row-median seam statistic of one map (HxWxC) along one axis: for every adjacent pair i, the median over the rows
+    (columns) of the signed second difference e = d_i - (d_(i-1) + d_(i+1)) / 2, with d_i = x_(i+1) - x_i. A step at
+    the border adds the same amount to e in every row, so the border pair's median moves with it; sparse features
+    (a crack or a hole that reaches the border) touch few rows and barely move a median. z = (m_border - median(m_inner))
+    / max(1.4826 MAD(m_inner), floor), worst channel, signed."""
+    best = 0.0
+    for ch in range(a.shape[2]):
+        x = a[..., ch].astype(np.float64)
+        if axis == 0:
+            x = x.T                      # the top|bottom pairs become columns
+        d = np.roll(x, -1, axis=1) - x   # d[:, i] = x[:, i+1] - x[:, i]; i = W-1 is the wrapped border pair
+        e = d - 0.5 * (np.roll(d, 1, axis=1) + np.roll(d, -1, axis=1))
+        m = np.median(e, axis=0)
+        inner = m[:-1]
+        med = float(np.median(inner))
+        sc = max(1.4826 * float(np.median(np.abs(inner - med))), float(floor))
+        z = (float(m[-1]) - med) / sc if sc > 0 else (0.0 if m[-1] == med else float("inf"))
+        if abs(z) > abs(best):
+            best = z
+    return best
+
+
 def ck_seam(ctx, c):
     """Max |z| of the wrapped border pair's mean absolute difference among all adjacent column (row) pairs.
-    axis x tests the left|right border (the tile repeats along x), y the top|bottom border, both (default) both."""
+    axis x tests the left|right border (the tile repeats along x), y the top|bottom border, both (default) both.
+    method rowmedian (opt-in) scores the border pair's row-median signed second difference instead (seam_rowmedian_z):
+    it keeps its power on busy maps, where a crack or a hole crossing the border inflates the mean statistic's spread.
+    Its scale has an absolute floor in map units: `floor_mm` for the height (default 0.005 mm), `floor` for the other
+    maps (default 0.5/255)."""
     two_sided = c.get("two_sided", True)
     axes = {"both": ((1, "x"), (0, "y")), "x": ((1, "x"),), "y": ((0, "y"),)}
     if c.get("axis", "both") not in axes:
         raise ConfigError("seam axis must be x, y or both")
+    method = c.get("method", "mean_abs")
+    if method not in ("mean_abs", "rowmedian"):
+        raise ConfigError("seam method must be mean_abs or rowmedian")
     zs, det = [], {}
     for name in listify(c.get("maps", ["height", "basecolor"])):
         a = ctx.main.map(name)
         a = a[..., :3] if a.ndim == 3 else a[..., None]
         d = {}
         for axis, key in axes[c.get("axis", "both")]:
-            diff = np.abs(np.roll(a, -1, axis=axis) - a)  # pair (i, i+1); the last pair is the wrapped border
-            prof = diff.mean(axis=(0, 2)) if axis == 1 else diff.mean(axis=(1, 2))
-            seam, inner = float(prof[-1]), prof[:-1].astype(np.float64)
-            sd = inner.std()
-            z = (seam - inner.mean()) / sd if sd > 0 else (0.0 if seam == inner.mean() else float("inf"))
-            d[key + "_z"], d[key + "_ratio"] = round(float(z), 3), round(seam / max(inner.mean(), 1e-12), 3)
+            if method == "rowmedian":
+                floor = (float(c.get("floor_mm", 0.005)) / ctx.depth_mm if name == "height"
+                         else float(c.get("floor", 0.5 / 255.0)))
+                z = seam_rowmedian_z(a, axis, floor)
+                d[key + "_z"] = round(float(z), 3)
+            else:
+                diff = np.abs(np.roll(a, -1, axis=axis) - a)  # pair (i, i+1); the last pair is the wrapped border
+                prof = diff.mean(axis=(0, 2)) if axis == 1 else diff.mean(axis=(1, 2))
+                seam, inner = float(prof[-1]), prof[:-1].astype(np.float64)
+                sd = inner.std()
+                z = (seam - inner.mean()) / sd if sd > 0 else (0.0 if seam == inner.mean() else float("inf"))
+                d[key + "_z"], d[key + "_ratio"] = round(float(z), 3), round(seam / max(inner.mean(), 1e-12), 3)
             zs.append(abs(z) if two_sided else z)
         det[name] = d
+    if method == "rowmedian":
+        det["method"] = method
     return (float(max(zs)) if zs else float("nan")), det
 
 
@@ -1081,7 +1131,12 @@ def ck_spacing(ctx, c):
 
 
 def ck_ridge(ctx, c):
+    """Fins: band pixels higher than both sides by > threshold_mm. With `against` (opt-in, e.g. nowear) the test runs
+    on the height minus that render's height, so relief both renders share (a rut flank, the as-built texture) cancels
+    and only what the process added or removed can form a fin."""
     h = ctx.height_mm()
+    if c.get("against"):
+        h = h - ctx.height_mm(c["against"])
     a, b = c["between"]
     band = ctx.px(c.get("band_mm", 3 * ctx.mm))
     ra, rb = ctx.region(a), ctx.region(b)
@@ -1095,8 +1150,10 @@ def ck_ridge(ctx, c):
         fin |= (h - hi_side > thr) & (h - lo > thr)
     fin &= sel
     n = sel.sum()
-    return (float(fin.sum() / n) if n else 0.0), {"fin_px": int(fin.sum()), "band_px": int(n), "threshold_mm": thr,
-                                                   "n_key": int(n)}
+    det = {"fin_px": int(fin.sum()), "band_px": int(n), "threshold_mm": thr, "n_key": int(n)}
+    if c.get("against"):
+        det["against"] = c["against"]
+    return (float(fin.sum() / n) if n else 0.0), det
 
 
 ORIENTATIONS = ("top", "bottom", "left", "right")
