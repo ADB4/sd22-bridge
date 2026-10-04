@@ -22,7 +22,7 @@ material. Material-specific build notes live in each sheet's section 10. This fi
   background shell. It is the same run_python, but with a 15 min socket timeout.
 - **render_preview is for eyeballing only.** It returns at most 8 textures at ≤512 px, 8-bit, and computes every
   output. Numbers come from `sdkit.export_outputs` plus `matcheck.py`.
-- **search_library is slow the first time** (~60 s, it parses ~485 packages). For a package you already know,
+- **search_library is slower the first time** (~3 s, it parses ~485 packages). For a package you already know,
   `sk.find_lib("noise_perlin_noise")` is instant.
 - **Designer's Python is 3.9 with no numpy or PIL.** Analysis runs outside, on exported 16-bit PNGs (`scripts/`).
 - **Ctrl+Z is unreliable after big scripts** (nested undo groups). Checkpoint with `sk.snapshot("before_fix3")`.
@@ -271,7 +271,8 @@ unpick after the colour stage is built on top of it.
 ## 6. Engine costs
 
 - **Stalls:** FX-map noises at high scale stalled the GL engine. Gaussian Noise above ~200, BnW Spots 3 at 96 and
-  Cells 4 at 110 took **354 s** at 1024 (~9 min at 2048). `sk.lib` refuses these, and `sk.lint` flags them.
+  Cells 4 at 110 took **354 s** at 1024 (~9 min at 2048). `sk.lib` and `sk.P` refuse these, and `sk.lint` flags
+  them, including a function-driven scale.
 - **Safe:** Cells 4 at 48, Crystal 1 at ~40, Clouds 2 / Perlin at 3-50, Tile Sampler 96×96 (~1-2 s), Fractal Sum
   Base at any level.
 - **Typical times:**

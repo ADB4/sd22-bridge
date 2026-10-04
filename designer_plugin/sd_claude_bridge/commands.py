@@ -15,6 +15,7 @@ import html
 import importlib
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -36,6 +37,7 @@ ERRORS = (Exception, APIException)
 
 ALLOW_PYTHON = os.environ.get("SD_CLAUDE_BRIDGE_ALLOW_PYTHON", "1") != "0"
 OUTPUT_TAIL = 20000
+MAX_ARRAY = 4096  # SDValueArray items _js reads (gradients in the library have up to 256 keys)
 _MISSING = object()
 
 # Fallback list, used only if the module manager can't be queried.
@@ -166,8 +168,12 @@ def _js(v, depth=0):
         return fields
     if name.startswith("SDValue"):
         if hasattr(v, "getSize") and hasattr(v, "getItem"):
+            # Read every item: a cut gradient sent back through set_parameter would lose its keys.
             size = _try(v.getSize, 0) or 0
-            return [_js(_try(lambda i=i: v.getItem(i)), depth + 1) for i in range(min(size, 64))]
+            items = [_js(_try(lambda i=i: v.getItem(i)), depth + 1) for i in range(min(size, MAX_ARRAY))]
+            if size > MAX_ARRAY:
+                items.append("(%d more items not shown)" % (size - MAX_ARRAY))
+            return items
         if hasattr(v, "get"):
             inner = _try(v.get, _MISSING)
             if inner is not _MISSING:
@@ -344,7 +350,10 @@ def _auto_pos(graph, x, y):
 
 def _set_pos(node, pos):
     float2 = _api("sdbasetypes", "float2")
-    node.setPosition(float2(float(pos[0]), float(pos[1])))
+    x, y = float(pos[0]), float(pos[1])
+    if not (math.isfinite(x) and math.isfinite(y)):
+        raise ValueError("node positions must be finite numbers, not %r" % (list(pos),))
+    node.setPosition(float2(x, y))
 
 
 def _find_loaded_package(path):
@@ -593,7 +602,10 @@ def _make_value(sdtype, value):
     m = re.match(r"^(float|int)([234])$", low)
     if m:
         kind, n = m.group(1), int(m.group(2))
-        if kind == "float":
+        if kind == "float" and n >= 3 and isinstance(value, str) and value.strip().startswith("#"):
+            # Library graphs expose colors as float3/float4, not ColorRGBA.
+            comps = _color(value)[:n]
+        elif kind == "float":
             comps = [float(x) for x in _vec(value, n)]
         else:
             comps = [int(round(float(x))) for x in _vec(value, n)]
@@ -619,7 +631,7 @@ def _make_value(sdtype, value):
             # ids are the dropdown labels, some of them numbers ("90" has the value 1), so
             # match labels only.
             for opt, v in _enumerators(sdtype) or []:
-                if opt == want and isinstance(v, int):
+                if str(opt).strip() == want and isinstance(v, int):  # some labels end in a space
                     return _api("sdvalueint", "SDValueInt").sNew(v)
         raise ValueError(
             "property type %s is an enum: pass one of these option ids as a string: %s"
@@ -900,8 +912,12 @@ def cmd_list_node_definitions(args):
         ids = set(COMMON_ATOMIC)
         source = "built-in fallback list"
     q = str(args.get("query") or "").lower()
-    found = sorted(i for i in ids if q in i.lower())
-    return {"source": source, "count": len(found), "definitions": found[:300]}
+    # sbs:: ids (what create_node builds) first; otherwise ~2600 mdl:: ids fill the list.
+    found = sorted((i for i in ids if q in i.lower()), key=lambda i: (not i.startswith("sbs::"), i))
+    res = {"source": source, "count": len(found), "definitions": found[:300]}
+    if len(found) > 300:
+        res["note"] = "Showing 300 of %d. Narrow the query, e.g. 'sbs::compositing' or 'sbs::function'." % len(found)
+    return res
 
 
 _ATOMIC = []  # [(definition id without "sbs::compositing::", label)], read once
@@ -925,7 +941,7 @@ def cmd_search_library(args):
     SDApplicationPath = _api("sdapplication", "SDApplicationPath")
     res_dir = _app().getPath(SDApplicationPath.DefaultResourcesDir)
     pkg_dir = os.path.normpath(os.path.join(res_dir, "packages"))
-    files = sorted(glob.glob(os.path.join(pkg_dir, "**", "*.sbs"), recursive=True))
+    files = sorted(glob.glob(os.path.join(glob.escape(pkg_dir), "**", "*.sbs"), recursive=True))
     tokens = [t for t in re.split(r"[\s_\-]+", str(args.get("query") or "").lower()) if t]
     limit = int(args.get("limit") or 25)
     hits, by_label = [], []
@@ -1104,6 +1120,23 @@ def cmd_create_output(args):
     return d
 
 
+def _feeds(graph, start, target_id):
+    """True when node target_id is downstream of start."""
+    seen, todo = set(), [start]
+    while todo:
+        nxt = []
+        for t in _connections(todo):
+            if t[2] == target_id:
+                return True
+            if t[2] not in seen:
+                seen.add(t[2])
+                n = _try(lambda i=t[2]: graph.getNodeFromId(i))
+                if n is not None:
+                    nxt.append(n)
+        todo = nxt
+    return False
+
+
 def cmd_connect(args):
     g = _graph(args.get("graph"))
     a = _node(g, args["from_node"])
@@ -1115,6 +1148,13 @@ def cmd_connect(args):
             raise RuntimeError("Node %s has no connectable outputs" % a.getIdentifier())
         fo = outs[0]
     ti = str(args["to_input"])
+    if a.getIdentifier() == b.getIdentifier():
+        raise RuntimeError("Can't connect node %s to itself." % a.getIdentifier())
+    if _feeds(g, b, a.getIdentifier()):
+        raise RuntimeError(
+            "Connecting %s to %s would make a loop: %s already feeds %s."
+            % (a.getIdentifier(), b.getIdentifier(), b.getIdentifier(), a.getIdentifier())
+        )
     with _undo("connect"):
         try:
             a.newPropertyConnectionFromId(str(fo), b, ti)
@@ -1173,15 +1213,20 @@ def cmd_set_parameter(args):
         value = next((k for k, v in labels.items() if v.lower() == value.strip().lower()), value)
     sdv = _make_value(sdtype, value)
     with _undo("set " + pid):
+        old_method = None
         if pid.startswith("$"):
             # Base parameters inherit from the input or the parent by default; make the value
             # stick. Nodes and graphs both have setPropertyInheritanceMethod.
             method = _try(lambda: _api("sdproperty", "SDPropertyInheritanceMethod").Absolute)
             if method is not None:
+                old_method = _try(lambda: n.getPropertyInheritanceMethod(p))
                 _try(lambda: n.setPropertyInheritanceMethod(p, method))
         try:
             n.setInputPropertyValueFromId(pid, sdv)
         except APIException as e:
+            if old_method is not None:
+                # Don't leave the parameter switched to Absolute when the value wasn't set.
+                _try(lambda: n.setPropertyInheritanceMethod(p, old_method))
             raise RuntimeError(
                 "Could not set %r on %s (type %s): %s." % (pid, nid, _try(sdtype.getId), _api_reason(e))
             )
@@ -1201,18 +1246,20 @@ def cmd_set_parameter(args):
 
 def cmd_move_nodes(args):
     g = _graph(args.get("graph"))
+    # Resolve every node and position first, so a bad entry moves nothing.
+    plan = [(_node(g, m["node"]), [float(m["x"]), float(m["y"])]) for m in args.get("moves") or []]
     moved = []
     with _undo("move nodes"):
-        for m in args.get("moves") or []:
-            n = _node(g, m["node"])
-            _set_pos(n, [m["x"], m["y"]])
+        for n, pos in plan:
+            _set_pos(n, pos)
             moved.append(n.getIdentifier())
     return {"moved": moved}
 
 
 def cmd_delete_nodes(args):
     g = _graph(args.get("graph"))
-    ids = [str(i) for i in (args.get("nodes") or [])]
+    # A repeated id would delete the node, then fail on its stale handle.
+    ids = list(dict.fromkeys(str(i) for i in (args.get("nodes") or [])))
     if not ids:
         raise ValueError("nodes is empty")
     targets = [_node(g, i) for i in ids]  # resolve all first so nothing is half-deleted
@@ -1270,11 +1317,25 @@ def cmd_save_package(args):
     path = save_as if save_as is not None else _try(pkg.getFilePath)
     if not path:
         raise RuntimeError("This package has never been saved. Pass save_as with a full .sbs path.")
-    path = os.path.normpath(str(path))
+    path = str(path)
+    if "\x00" in path:
+        # Designer's C side would stop at the NUL and write to a different file.
+        raise ValueError("save path contains a NUL character")
+    path = os.path.normpath(path)
     if not path.lower().endswith(".sbs"):
         raise ValueError("save path must end in .sbs")
+    if not os.path.isabs(path):
+        raise ValueError("save path must be a full path, not %r" % path)
     if not os.path.isdir(os.path.dirname(path)):
         raise ValueError("folder does not exist: %s" % os.path.dirname(path))
+    res_dir = _try(lambda: _app().getPath(_api("sdapplication", "SDApplicationPath").DefaultResourcesDir))
+    if res_dir:
+        lib = os.path.normcase(os.path.normpath(os.path.join(res_dir, "packages"))) + os.sep
+        if os.path.normcase(path).startswith(lib):
+            raise ValueError(
+                "%s is in Designer's own library folder, which this won't write to. Pass save_as "
+                "with a path outside it." % path
+            )
     _pm().savePackageAs(pkg, path)
     return {"saved": path}
 
@@ -1390,7 +1451,8 @@ def cmd_run_python(args):
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             try:
                 exec(compile(code, "<claude>", "exec"), ns)
-            except ERRORS + (SystemExit,):
+            except BaseException:
+                # Includes SystemExit and KeyboardInterrupt, so the captured output still comes back.
                 err = traceback.format_exc()
     out = {"stdout": _tail(buf.getvalue())}
     if err:

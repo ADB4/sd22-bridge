@@ -16,7 +16,6 @@
 import contextlib
 import json
 import os
-import re
 import time
 import zlib
 import importlib
@@ -48,18 +47,30 @@ BLEND_MODES = {"copy": "copy", "add": "add", "subtract": "substract", "substract
 # ----------------------------------------------------------------------------- config, registry, handles
 
 def configure(tools_dir, registry="registry.json", dump="dump"):
-    """Point sdkit at a material's tools folder and load its registry (merged into memory)."""
+    """Point sdkit at a material's tools folder and load its registry (merged into memory; names already in memory
+    win, since they may be newer than the file). Switching to another tools folder starts from an empty registry."""
     tools_dir = os.path.abspath(os.path.expanduser(tools_dir))
     os.makedirs(tools_dir, exist_ok=True)
+    path = os.path.join(tools_dir, registry)
+    if S.get("registry_path") and S["registry_path"] != path:
+        # Another material: save this one's names, then don't let them leak into the new registry.
+        if S["reg"]:
+            C._try(save_registry)
+        S["reg"], S["sections"], S["graph"] = {}, {}, None
     S["tools"] = tools_dir
-    S["registry_path"] = os.path.join(tools_dir, registry)
+    S["registry_path"] = path
     S["dump"] = os.path.join(tools_dir, dump)
     if os.path.isfile(S["registry_path"]):
         with open(S["registry_path"]) as fh:
             data = json.load(fh)
         for g, m in data.get("graphs", data).items():
-            S["reg"].setdefault(g, {}).update(m)
-        S["sections"].update(data.get("sections", {}))
+            live = S["reg"].setdefault(g, {})
+            for k, v in m.items():
+                live.setdefault(k, v)
+        for g, m in data.get("sections", {}).items():
+            live = S["sections"].setdefault(g, {})
+            for k, v in m.items():
+                live.setdefault(k, v)
     return {"tools": tools_dir, "graphs": {g: len(m) for g, m in S["reg"].items()}}
 
 
@@ -96,7 +107,10 @@ def graph(key=None):
 
 
 def reg(key=None):
-    return S["reg"].setdefault(key or S["graph"], {})
+    key = key or S["graph"]
+    if key is None:
+        raise RuntimeError("no graph selected: call sk.use('<file.sbs>::<graph id>') first")
+    return S["reg"].setdefault(key, {})
 
 
 def uid(name):
@@ -117,20 +131,43 @@ def names():
     return sorted(reg())
 
 
-def _register(name, nid, replace):
+def _claim(name, replace):
+    """Check a name before its node is created, so a clash leaves nothing behind. Returns (old node, its consumers)
+    when replace=True will swap out a live node, else None."""
     r = reg()
-    if name in r and not replace:
-        old = C._try(lambda: graph().getNodeFromId(r[name]))
-        if old is not None:
-            raise ValueError("name %r is already used in %s; pass replace=True or delete() it first" % (name, S["graph"]))
-    if name in r and replace:
-        old = C._try(lambda: graph().getNodeFromId(r[name]))
-        if old is not None:
-            graph().deleteNode(old)
-    r[name] = nid
+    old = C._try(lambda: graph().getNodeFromId(r[name])) if name in r else None
+    if old is None:
+        return None
+    if not replace:
+        raise ValueError("name %r is already used in %s; pass replace=True or delete() it first" % (name, S["graph"]))
+    return old, C._connections([old])
+
+
+def _register(name, nid, claim=None):
+    """Map name -> nid. With a claim from _claim(), delete the old node and move its consumers to the new one.
+    Returns the consumers that couldn't be reconnected."""
+    lost = []
+    if claim is not None:
+        old, conns = claim
+        graph().deleteNode(old)
+        outs = _outs(graph().getNodeFromId(nid))
+        for t in conns:
+            try:
+                C.cmd_connect({"graph": S["graph"], "from_node": nid, "from_output": t[1] if t[1] in outs else None,
+                               "to_node": t[2], "to_input": t[3]})
+            except C.ERRORS:
+                lost.append("%s.%s" % (t[2], t[3]))
+    reg()[name] = nid
     sec = S.get("_section")
     if sec:
         S["sections"].setdefault(S["graph"], {})[name] = sec
+    return lost
+
+
+def _lost_note(d, lost):
+    if lost:
+        d["warning"] = "replace=True could not reconnect these consumers of the old node: %s" % lost
+    return d
 
 
 @contextlib.contextmanager
@@ -195,7 +232,10 @@ def snapshot(tag=None, key=None):
     pkg = graph(key).getPackage()
     path = pkg.getFilePath()
     stem = os.path.splitext(path)[0]
-    out = "%s.%s.sbs" % (stem, tag or time.strftime("%H%M%S"))
+    base = "%s.%s" % (stem, tag or time.strftime("%H%M%S"))
+    out, i = base + ".sbs", 2
+    while os.path.exists(out):  # never overwrite an earlier checkpoint (a re-run reusing its tag)
+        out, i = "%s_%d.sbs" % (base, i), i + 1
     app().getPackageMgr().saveCopyOfPackageAs(pkg, out)
     return out
 
@@ -258,15 +298,11 @@ def lib(name, package, graph_id=None, x=None, y=None, seed=None, replace=False, 
     """Instance a library graph: package is a bare name ("noise_perlin_noise") or a .sbs path.
     seed="auto" gives a stable per-name seed that stays relative to the graph seed."""
     path = package if package.endswith(".sbs") else os.path.join(lib_dir(), package + ".sbs")
-    base = os.path.splitext(os.path.basename(path))[0]
-    lim = HEAVY.get(base)
-    sc = params.get("scale")
-    if lim is not None and isinstance(sc, (int, float)) and sc > lim:
-        raise ValueError("%s at scale %s stalls Designer's GL engine for minutes; use fractal_sum_base_2 levels "
-                         "(level ~ log2(tile_mm / feature_mm)) or keep scale <= %s" % (base, sc, lim))
+    _check_heavy(os.path.splitext(os.path.basename(path))[0], params.get("scale"))
+    claim = _claim(name, replace)
     d = C.cmd_create_library_node({"graph": S["graph"], "package_path": path, "graph_identifier": graph_id,
                                    "x": 0 if x is None else x, "y": 0 if y is None else y})
-    _register(name, d["id"], replace)
+    _lost_note(d, _register(name, d["id"], claim))
     if seed is not None:
         set_seed(name, _auto_seed(name) if seed == "auto" else seed)
     if params:
@@ -276,9 +312,10 @@ def lib(name, package, graph_id=None, x=None, y=None, seed=None, replace=False, 
 
 def atom(name, definition, x=None, y=None, replace=False, **params):
     """Atomic node: "blend", "levels", "hsl", "uniform", "gradient", "warp", "transformation", "distance", ..."""
+    claim = _claim(name, replace)
     d = C.cmd_create_node({"graph": S["graph"], "definition": definition,
                            "x": 0 if x is None else x, "y": 0 if y is None else y})
-    _register(name, d["id"], replace)
+    _lost_note(d, _register(name, d["id"], claim))
     if params:
         P(name, params)
     return d
@@ -286,14 +323,37 @@ def atom(name, definition, x=None, y=None, replace=False, **params):
 
 def output(name, ident, src=None, src_port=None, usage=None, label=None, group=None, replace=False):
     """Output node; masks and IDs get no usage (engines ignore them) but a stable identifier for checks.json."""
+    claim = _claim(name, replace)
     d = C.cmd_create_output({"graph": S["graph"], "identifier": ident, "usage": usage, "x": 0, "y": 0,
                              "label": label or ident})
-    _register(name, d["id"], replace)
+    _lost_note(d, _register(name, d["id"], claim))
     if group:
         C._try(lambda: node(name).setAnnotationPropertyValueFromId("group", SDValueString.sNew(group)))
     if src:
         wire(src, name, "inputNodeOutput", src_port)
     return d
+
+
+def _lib_base(n):
+    """File name without .sbs of the package an instance node comes from ("" for atomic nodes)."""
+    path = C._try(lambda: n.getReferencedResource().getPackage().getFilePath(), "") or ""
+    return os.path.splitext(os.path.basename(path))[0]
+
+
+def _check_heavy(base, sc):
+    lim = HEAVY.get(base)
+    if lim is not None and isinstance(sc, (int, float)) and not isinstance(sc, bool) and sc > lim:
+        raise ValueError("%s at scale %s stalls Designer's GL engine for minutes; use fractal_sum_base_2 levels "
+                         "(level ~ log2(tile_mm / feature_mm)) or keep scale <= %s" % (base, sc, lim))
+
+
+def _outs(n):
+    return [p.getId() for p in n.getProperties(SDPropertyCategory.Output) if p.isConnectable()]
+
+
+def _check_out(name, n, out):
+    if out is not None and out not in _outs(n):
+        raise KeyError("%s has no output %r; outputs: %s" % (name, out, _outs(n)))
 
 
 def _prop(n, pid):
@@ -314,6 +374,8 @@ def P(name, params):
             continue
         if pid.startswith("$"):
             raise ValueError("%s: set base parameters with set_seed()/set_size(); set_parameter would make them Absolute" % pid)
+        if pid == "scale":
+            _check_heavy(_lib_base(n), v)
         p = _prop(n, pid)
         if isinstance(v, str) and v.startswith("#") and (C._try(p.getType().getId, "") or "").lower() in ("float4", "colorrgba"):
             v = C._color(v)
@@ -333,6 +395,8 @@ def set_seed(name, s):
 
 def wire(src, dst, port, out=None):
     """Connect src[out] -> dst[port], replacing whatever fed dst[port]."""
+    _check_out(src, node(src), out)  # check both names and the port before unwiring dst
+    node(dst)
     disconnect(dst, port)
     return C.cmd_connect({"graph": S["graph"], "from_node": uid(src), "from_output": out,
                           "to_node": uid(dst), "to_input": port})
@@ -372,14 +436,18 @@ def consumers(name):
     return [(inv.get(t[2], t[2]), t[3], t[1]) for t in C._connections([node(name)])]
 
 
-def move_consumers(old, new, new_out=None):
-    """Re-point every consumer of old (except new itself) to new[new_out]. Use after inserting a node."""
+def move_consumers(old, new, new_out=None, old_out=None):
+    """Re-point every consumer of old[old_out] (except new itself) to new[new_out]. Use after inserting a node.
+    old_out may be left out only when old's consumers all hang off one output port."""
     moved = []
     new_uid = uid(new)
-    for t in C._connections([node(old)]):
+    _check_out(new, node(new), new_out)  # before anything is disconnected
+    conns = [t for t in C._connections([node(old)]) if t[2] != new_uid and (old_out is None or t[1] == old_out)]
+    ports = sorted({t[1] for t in conns})
+    if old_out is None and len(ports) > 1:
+        raise ValueError("%s feeds consumers from several outputs %s; pass old_out to pick one" % (old, ports))
+    for t in conns:
         cuid, cport = t[2], t[3]
-        if cuid == new_uid:
-            continue
         C.cmd_disconnect({"graph": S["graph"], "node": cuid, "input": cport})
         C.cmd_connect({"graph": S["graph"], "from_node": new_uid, "from_output": new_out,
                        "to_node": cuid, "to_input": cport})
@@ -512,9 +580,28 @@ def _fn_node(fg, spec, depth, row):
     return n
 
 
+def _check_spec(spec):
+    """Validate a drive() spec in pure Python, before the old function graph is deleted."""
+    spec = _expand(spec)
+    if isinstance(spec, (bool, int, float)):
+        return
+    if not (isinstance(spec, tuple) and spec and isinstance(spec[0], str)):
+        raise ValueError("drive spec must be a number, a bool or a tuple (op, args...), not %r; read a graph input "
+                         "with ('get', input_id)" % (spec,))
+    if spec[0] == "get":
+        if not (2 <= len(spec) <= 3 and isinstance(spec[1], str)) or (len(spec) == 3 and spec[2] not in _GET):
+            raise ValueError("expected ('get', input_id[, kind]) with kind in %s, not %r" % (sorted(_GET), spec))
+        return
+    if spec[0] == "pow":
+        raise ValueError("Designer 12.4.1 function graphs have no pow node; use min/max of lines")
+    for a in spec[1:]:
+        _check_spec(a)
+
+
 def drive(name, pid, spec):
     """Drive a parameter with a function graph. spec: numbers, ("get", input_id[, kind]), ("add"|"sub"|"mul"|"div"|
     "min"|"max", a, b), ("lerp", a, b, x), ("vec2", a, b), ("clamp", x, lo, hi), ("neg", a), ("mm", mm_spec)."""
+    _check_spec(spec)
     n = node(name)
     p = _prop(n, pid)
     if n.getPropertyGraph(p) is not None:
@@ -532,8 +619,8 @@ def undrive(name, pid):
 
 
 def _value(name, pid, spec):
-    """Set a constant or drive a function, whichever spec is."""
-    if isinstance(spec, tuple):
+    """Set a constant or drive a function, whichever spec is. A tuple of numbers is a constant vector."""
+    if isinstance(spec, tuple) and spec and isinstance(spec[0], str):
         drive(name, pid, spec)
     else:
         P(name, {pid: spec})
@@ -636,15 +723,16 @@ def probe(names_, port=None, out_dir=None, tag="", size=None):
     out_dir = out_dir or S["dump"]
     os.makedirs(out_dir, exist_ok=True)
     g = graph()
-    temps, rows = [], []
-    for nm in names_:
-        src = node(nm)
-        o = g.newNode("sbs::compositing::output")
-        o.setAnnotationPropertyValueFromId("identifier", SDValueString.sNew("__sdk_probe_" + nm))
-        pt = port or [p.getId() for p in src.getProperties(SDPropertyCategory.Output) if p.isConnectable()][0]
-        src.newPropertyConnectionFromId(pt, o, "inputNodeOutput")
-        temps.append((nm, src, pt, o))
+    temps, rows, made = [], [], []
     try:
+        for nm in names_:
+            src = node(nm)
+            o = g.newNode("sbs::compositing::output")
+            made.append(o)  # deleted in finally, even if a later name or port fails
+            o.setAnnotationPropertyValueFromId("identifier", SDValueString.sNew("__sdk_probe_" + nm))
+            pt = port or [p.getId() for p in src.getProperties(SDPropertyCategory.Output) if p.isConnectable()][0]
+            src.newPropertyConnectionFromId(pt, o, "inputNodeOutput")
+            temps.append((nm, src, pt, o))
         t0 = time.time()
         with temp_size(g, size):
             g.compute()
@@ -656,7 +744,7 @@ def probe(names_, port=None, out_dir=None, tag="", size=None):
                 rows.append({"name": nm, "path": path, "size": [sz.x, sz.y], "format": str(tex.getPixelFormat())})
         secs = round(time.time() - t0, 2)
     finally:
-        for _, _, _, o in temps:
+        for o in made:
             g.deleteNode(o)
     for r in rows:
         r["seconds"] = secs
@@ -678,13 +766,18 @@ def export_outputs(key=None, out_dir=None, prefix=None, size=None, only=None, no
     prefix = gid + "_" if prefix is None else prefix
     out_dir = out_dir or S["dump"]
     os.makedirs(out_dir, exist_ok=True)
-    rows = []
+    if isinstance(only, str):
+        only = [only]
+    rows, unnamed = [], []
     t0 = time.time()
     with temp_size(g, size):
         g.compute()
         tc = time.time() - t0
         for o in g.getOutputNodes():
             ident = C._js(o.getAnnotationPropertyValueFromId("identifier"))
+            if not ident:
+                unnamed.append(o.getIdentifier())
+                continue
             if only and ident not in only:
                 continue
             prop = [p for p in o.getProperties(SDPropertyCategory.Output)][0]
@@ -699,20 +792,30 @@ def export_outputs(key=None, out_dir=None, prefix=None, size=None, only=None, no
                          "usage": _usage(o)})
     inst = {}
     for n in C._items(g.getNodes()):
-        if C._try(n.getReferencedResource) is not None:
-            ref = n.getReferencedResource()
-            if C._try(lambda: os.path.dirname(ref.getPackage().getFilePath())) != lib_dir():
-                inst[n.getIdentifier()] = {"of": C._gid(ref), "params": get_params(n)}
+        if C._try(n.getReferencedResource) is not None and not _is_library(n):
+            inst[n.getIdentifier()] = {"of": C._gid(n.getReferencedResource()), "params": get_params(n)}
     manifest = {"graph": gid, "package": C._try(g.getPackage().getFilePath), "prefix": prefix, "out_dir": out_dir,
                 "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "compute_s": round(tc, 2),
                 "total_s": round(time.time() - t0, 2), "outputs": rows, "instances": inst,
                 "graph_params": C._js(C._try(lambda: C._graph_params(g))), "note": note}
     with open(os.path.join(out_dir, prefix + "manifest.json"), "w") as fh:
         json.dump(manifest, fh, indent=1, default=str)
-    eight = [r["output"] for r in rows if r["output"] in ("height", "normal") and "16" not in r["format"]]
+    eight = [r["output"] for r in rows if r["output"] in ("height", "normal")
+             and "16" not in r["format"] and "32" not in r["format"]]
     if eight:
         manifest["warning"] = "8-bit %s: set the graph $format to 16_bits_per_channel" % eight
+    if unnamed:
+        manifest["skipped"] = "Output nodes without an identifier were not exported: %s" % unnamed
     return manifest
+
+
+def _is_library(n):
+    """True when an instance node comes from Designer's own library (compares normalized paths: on Windows instances
+    report "G:/..." while lib_dir() uses backslashes)."""
+    path = C._try(lambda: n.getReferencedResource().getPackage().getFilePath())
+    if not path:
+        return False
+    return os.path.normcase(os.path.normpath(os.path.dirname(path))) == os.path.normcase(os.path.normpath(lib_dir()))
 
 
 # ----------------------------------------------------------------------------- variants
@@ -767,7 +870,11 @@ def make_variant(core_key, variant_id, preset, outputs=None, size_log2=11):
     params = dict(preset)
     seed = params.pop("seed", None)
     if seed is not None:
-        C.cmd_set_parameter({"graph": key, "node": inst.getIdentifier(), "property": "$randomseed", "value": int(seed)})
+        # As in set_seed: keep the seed relative to the wrapper's own Random Seed. set_parameter would make it
+        # Absolute, and wrappers made that way get their default inheritance back here.
+        p = inst.getPropertyFromId("$randomseed", SDPropertyCategory.Input)
+        C._try(lambda: inst.setPropertyInheritanceMethod(p, SDPropertyInheritanceMethod.RelativeToParent))
+        inst.setInputPropertyValueFromId("$randomseed", SDValueInt.sNew(int(seed)))
     for pid, v in params.items():
         _set_on(inst, key, pid, v)
     have = {C._js(o.getAnnotationPropertyValueFromId("identifier")) for o in w.getOutputNodes()}
@@ -792,7 +899,7 @@ def render_variant(key, overrides, prefix, out_dir=None, size=None, only=None, i
         target = instance(instance_of, key)
     else:
         nodes = [n for n in C._items(g.getNodes()) if C._try(n.getReferencedResource) is not None
-                 and C._try(lambda n=n: os.path.dirname(n.getReferencedResource().getPackage().getFilePath())) != lib_dir()]
+                 and not _is_library(n)]
         target = nodes[0] if len(nodes) == 1 else None
     owner = target if target is not None else g
     saved = []
@@ -921,12 +1028,15 @@ def lint():
         r = C._try(n.getReferencedResource)
         if r is None:
             continue
-        base = os.path.splitext(os.path.basename(C._try(lambda: r.getPackage().getFilePath(), "") or ""))[0]
+        base = _lib_base(n)
         lim = HEAVY.get(base)
         if lim is not None:
             p = n.getPropertyFromId("scale", SDPropertyCategory.Input)
             v = C._try(lambda: n.getPropertyValue(p).get()) if p is not None else None
-            if isinstance(v, (int, float)) and v > lim:
+            if p is not None and C._try(lambda: n.getPropertyGraph(p)) is not None:
+                msgs.append("heavy noise %s on node %s has a function-driven scale: keep it <= %s"
+                            % (base, n.getIdentifier(), lim))
+            elif isinstance(v, (int, float)) and v > lim:
                 msgs.append("heavy noise %s at scale %s (> %s) on node %s" % (base, v, lim, n.getIdentifier()))
     fmt = C._try(lambda: C._param_value(g, g.getPropertyFromId("$format", SDPropertyCategory.Input)))
     if fmt is not None and str(fmt).startswith("8"):
