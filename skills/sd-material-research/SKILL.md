@@ -95,7 +95,9 @@ Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (q
 
 ### 5. Measure
 - Export every variant plus its `nowear` at 2048 (`sk.export_outputs` / `sk.nowear`; batch them through `sdcall.py`).
-- Run `$PY <skill>/scripts/matcheck.py checks/<v>.json`, which writes scorecards.
+- Run `$PY <skill>/scripts/matcheck.py checks/<v>.json`, which writes scorecards. Exit 0: every hard check passed;
+  1: one failed; 3: one measured nothing (expected for damage checks in a `nowear` run, otherwise read the header);
+  2: config error.
 - Run `$PY <skill>/scripts/previews.py checks/*.json --out review/round<N>`, which makes lit views with height
   shadows, a hillshade, tiling sheets, crops at typical and worst sites, and compare sheets.
 - Look at the previews yourself with Read, but treat your own verdict as provisional. In the brick build it was

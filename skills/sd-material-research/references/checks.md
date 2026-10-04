@@ -9,8 +9,9 @@ PY=$(bash <skill>/scripts/setup_env.sh)          # once; prints the venv python
 $PY <skill>/scripts/matcheck.py <tools>/checks/weathered.json            # all checks
 $PY <skill>/scripts/matcheck.py <tools>/checks/weathered.json --only joint_half_depth,no_damage_below_mortar
 ```
-Exit code 0 means every hard check passed, 1 means a hard check failed, 2 means a config error. A full run at 2048
-takes about 30 s.
+Exit code 0 means every hard check passed. 1 means a hard check failed, including one whose value is undefined (NaN),
+which is what the wrong build often gives. 3 means none failed but a hard check measured nothing: it raised an error or
+was vacuous (the header names it). 2 means a config error. A full run at 2048 takes about 30 s.
 
 Units: lengths in **mm**, converted with `scale.tile_m` and the map size. Heights are in **mm** too: the height
 map's 0-1 range spans `height_depth_mm`. All filters, morphology and connected components wrap around the tile
@@ -82,15 +83,16 @@ lives in the dev folder, `sd-material-research-dev/tests/matcheck/`.
   (C* about 0-8) from fresh or sheltered wood, rust or warm stone without per-species RGB targets; `hue` is circular,
   so compare it with `value_range` only inside a range that doesn't cross 0/360.
 - **Vacuity guard.** Each check reports `n_key`, the size of the set its value rests on (pixels, or elements,
-  profiles or features as `details.n_key_unit` says). Below `min_px` (default 1) the check is reported as
-  `vacuous` with `passed: null`: an invariant on an empty region must not count as a pass. Set `min_px` on every
-  hard check whose region can be empty in some variant, e.g. `"min_px": 500` on a damage-order check. A `min_px` on
-  a type that has no counted set (`seam`, `normal_valid`, `height_usage`) is a config error. What `n_key` counts:
-  `order` the checked upper pixels (and 0 when `lower` has fewer than `lower_min_px` pixels); `components` and
-  `coverage` the `within` set (the whole tile without it), not the region; `height_diff` the smaller of `a` and `b`;
-  `concentration` within ∩ driver; `slope` (between) and `ridge` the band; `orientation` on a region the mask dilated
-  1.5 px; `boundary_profile` the pixels in the in-range bins; `edge_profile` profiles; `dispersion` features;
-  `per_element` elements. So for `components`, put the guard on a `coverage` of the same region.
+  profiles or features as `details.n_key_unit` says). Below `min_px` (default 1) the check is reported as `vacuous`
+  with `passed: null`: an invariant on an empty region must not count as a pass (on a hard check the run exits 3
+  unless another hard check failed). Set `min_px` on every hard check whose region can be empty in some variant,
+  e.g. `"min_px": 500` on a damage-order check. A `min_px` on a type that has no counted set (`seam`,
+  `normal_valid`, `height_usage`) is a config error. What `n_key` counts: `order` the checked upper pixels (and 0
+  when `lower` has fewer than `lower_min_px` pixels); `components` and `coverage` the `within` set (the whole tile
+  without it), not the region; `height_diff` the smaller of `a` and `b`; `concentration` within ∩ driver; `slope`
+  (between) and `ridge` the band; `orientation` on a region the mask dilated 1.5 px; `boundary_profile` the pixels
+  in the in-range bins; `edge_profile` profiles; `dispersion` features; `per_element` elements. So for `components`,
+  put the guard on a `coverage` of the same region.
 - **Map sizes.** All maps of a run, and of its comparison renders, must have one size; a check that reads a map of
   another size reports a config error naming both sizes.
 - **Scorecard.** The header lists hard failures, soft misses, vacuous checks and errors. A check that raises is

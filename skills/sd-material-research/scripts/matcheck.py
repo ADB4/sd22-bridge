@@ -5,7 +5,8 @@ Usage:
     python matcheck.py checks/weathered.json [--out DIR] [--only id1,id2] [--quiet]
 
 The check vocabulary is documented in references/checks.md. Exit code: 0 when every hard check
-passes, 1 when a hard check fails, 2 on a configuration error.
+passes, 1 when a hard check fails (a NaN value on a hard check with a target counts as failing), 2 on a
+configuration error, 3 when none failed but a hard check errored or was vacuous.
 Needs numpy, Pillow and scipy, plus opencv-python-headless to read 16-bit colour PNGs at full precision
 (scripts/setup_env.sh creates an environment with them).
 """
@@ -1573,6 +1574,10 @@ def run_check(ctx, c):
             raise ConfigError("min_px: check type '%s' has no region to count" % c["type"])
         if n_key is not None and n_key < float(c.get("min_px", 1)):
             row.update(passed=None, note="vacuous: %d %s" % (n_key, det.get("n_key_unit", "px")))
+        elif (row["severity"] == "hard" and row["target"] is not None and isinstance(val, (float, np.floating))
+              and math.isnan(val)):
+            # An undefined value can't show the invariant holds (the wrong build often gives exactly this).
+            row.update(passed=False, note="FAIL: undefined (NaN)")
     except ConfigError as e:
         row.update(value=None, passed=None, error=str(e))
     except Exception as e:  # keep going: one broken check should not hide the rest
@@ -1604,11 +1609,13 @@ def main(argv=None):
     hard_fail = [r["id"] for r in results if r["severity"] == "hard" and r["passed"] is False]
     errors = [r["id"] for r in results if r.get("error")]
     soft_fail = [r["id"] for r in results if r["severity"] != "hard" and r["passed"] is False]
+    unmeasured = [r["id"] for r in results if r["severity"] == "hard" and r["passed"] is None]  # errored or vacuous
     vacuous = [r["id"] for r in results if r.get("note", "").startswith("vacuous")]
     card = {"material": cfg.get("material"), "variant": cfg.get("variant"), "config": os.path.abspath(a.config),
             "scale": {"mm_per_px": round(ctx.mm, 4), "height_depth_mm": ctx.depth_mm, "tile_m": ctx.tile_m},
             "manifest": manifest, "note": ctx.note, "notes": ctx.notes, "warnings": warnings,
-            "hard_failed": hard_fail, "soft_failed": soft_fail, "vacuous": vacuous, "errors": errors,
+            "hard_failed": hard_fail, "hard_unmeasured": unmeasured, "soft_failed": soft_fail, "vacuous": vacuous,
+            "errors": errors,
             "seconds": round(time.time() - t0, 1), "results": results}
     out = a.out or cfg.get("out_dir") or base
     out = out if os.path.isabs(out) else os.path.normpath(os.path.join(base, out))
@@ -1620,6 +1627,8 @@ def main(argv=None):
              "%.4f mm/px, height depth %g mm. Hard failures: %s. Soft misses: %s. Vacuous: %s. Errors: %s." % (
                  ctx.mm, ctx.depth_mm, ", ".join(hard_fail) or "none", ", ".join(soft_fail) or "none",
                  ", ".join(vacuous) or "none", ", ".join(errors) or "none"), ""]
+    if unmeasured and not hard_fail:
+        lines += ["No hard check failed, but %s measured nothing (error or vacuous): exit code 3." % ", ".join(unmeasured), ""]
     if manifest:
         lines += ["Export: graph `%s` at %s (%s). Params: `%s`" % (
             manifest["graph"], manifest["exported_at"], manifest["path"],
@@ -1641,7 +1650,7 @@ def main(argv=None):
     if not a.quiet:
         print(md)
         print("wrote %s/%s.{json,md}" % (out, name))
-    return 1 if hard_fail else 0
+    return 1 if hard_fail else 3 if unmeasured else 0
 
 
 if __name__ == "__main__":
