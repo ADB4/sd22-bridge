@@ -1505,7 +1505,8 @@ def image_size(path):
 
 def manifest_report(ctx):
     """Header info from <dir>/<prefix>manifest.json (graph, export time, params) and warnings for map files that
-    predate their export or whose sizes differ."""
+    predate their export or whose sizes differ, plus the export's own warnings (8-bit height or normal, skipped
+    Outputs)."""
     info, warn, sizes = None, [], {}
     for rname, R in [("", ctx.main)] + sorted(ctx.compare.items()):
         files = {k: R.path(k) for k in R.names()}
@@ -1528,6 +1529,9 @@ def manifest_report(ctx):
                     "exported_at": m.get("exported_at", m.get("export_time")),
                     "params": m.get("graph_params", m.get("params")), "instances": m.get("instances"),
                     "note": m.get("note")}
+        for key in ("warning", "skipped"):
+            if m.get(key):
+                warn.append("%sexport: %s" % (tag, m[key]))
         # sdkit writes the maps first and the manifest last; a map older than the export window is stale
         start = os.path.getmtime(mp) - float(m.get("total_s") or 60.0) - 2.0
         for k, p in sorted(files.items()):

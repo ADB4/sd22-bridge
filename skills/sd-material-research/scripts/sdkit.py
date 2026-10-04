@@ -809,14 +809,15 @@ def export_outputs(key=None, out_dir=None, prefix=None, size=None, only=None, no
                 "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "compute_s": round(tc, 2),
                 "total_s": round(time.time() - t0, 2), "outputs": rows, "instances": inst,
                 "graph_params": C._js(C._try(lambda: C._graph_params(g))), "note": note}
-    with open(os.path.join(out_dir, prefix + "manifest.json"), "w") as fh:
-        json.dump(manifest, fh, indent=1, default=str)
+    # In the file too, so matcheck's scorecard repeats them.
     eight = [r["output"] for r in rows if r["output"] in ("height", "normal")
              and "16" not in r["format"] and "32" not in r["format"]]
     if eight:
         manifest["warning"] = "8-bit %s: set the graph $format to 16_bits_per_channel" % eight
     if unnamed:
         manifest["skipped"] = "Output nodes without an identifier were not exported: %s" % unnamed
+    with open(os.path.join(out_dir, prefix + "manifest.json"), "w") as fh:
+        json.dump(manifest, fh, indent=1, default=str)
     return manifest
 
 

@@ -96,7 +96,8 @@ lives in the dev folder, `sd-material-research-dev/tests/matcheck/`.
 - **Scorecard.** The header lists hard failures, soft misses, vacuous checks and errors. A check that raises is
   reported as an error and the run goes on. If the map folder has a `<prefix>manifest.json` (written by
   `sdkit.export_outputs`), the header also gives the graph, export time and parameters, and warns about map files
-  older than the export (stale) and about maps whose sizes differ from each other or from the manifest.
+  older than the export (stale) and about maps whose sizes differ from each other or from the manifest. It also
+  repeats the export's own warnings: an 8-bit height or normal map, and Outputs skipped for having no identifier.
 
 ## Regions
 
