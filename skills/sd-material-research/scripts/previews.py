@@ -185,12 +185,20 @@ def shadow_vis(hmm, light, mmx, mmy):
 # ----------------------------------------------------------------------------- masks and crop sites
 
 
-def optional_gray(ctx, names, default):
+def optional_gray(ctx, names, default, warn):
+    """The first of names that exists, as gray, else default. A map of the wrong size falls back to the default too,
+    but with a warning: the lit views then don't show it."""
     for name in names:
         try:
             return ctx.main.gray(name).astype(np.float32)
-        except mc.ConfigError:
-            pass
+        except mc.ConfigError as e:
+            try:
+                there = os.path.exists(ctx.main.path(name))
+            except mc.ConfigError:
+                there = False
+            if there:
+                warn.append("%s; the lit views use %s %g instead" % (e, names[0], default))
+                return np.float32(default)
     return np.float32(default)
 
 
@@ -480,11 +488,12 @@ def render_variant(path, out, n_sites, shadows, ref=None, taken=None):
     H, W = hmm.shape
     bc = ctx.main.map("basecolor")
     bc = np.repeat(bc[..., None], 3, axis=2) if bc.ndim == 2 else bc[..., :3]
+    warn = []
     d = {"hmm": hmm, "luma": ctx.map_values("basecolor", "linear", "luma"),  # shared with per_element luma
-         "rough": optional_gray(ctx, ("roughness",), 0.5),
+         "rough": optional_gray(ctx, ("roughness",), 0.5, warn),
          "masks": {m: np.asarray(ctx.main.gray(m), np.float32) for m in cfg["maps"].get("masks", {})}}
     d["layout"], layout_how = layout_masks(ctx, cfg, d["masks"])
-    ao = optional_gray(ctx, ("ao", "ambientocclusion", "ambient_occlusion"), 1.0)
+    ao = optional_gray(ctx, ("ao", "ambientocclusion", "ambient_occlusion"), 1.0, warn)
     tile_mm, tile_mm_y = W * ctx.mmx, H * ctx.mmy
     rows = []
 
@@ -604,7 +613,6 @@ def render_variant(path, out, n_sites, shadows, ref=None, taken=None):
 
     ry, rx = (sites[0]["y0"], sites[0]["x0"]) if ref is None else (int(ref[0] * H) % H, int(ref[1] * W) % W)
     cmp_crop = to8(lin_to_srgb(crop(rake_a, ry, rx, size, size)))
-    warn = []
     if agree[1] < -0.2 or agree[0] < -0.2:
         warn.append("the normal map disagrees with the height map (correlation of tilt x %.2f, y %.2f; both should "
                     "be positive): %s. Lit views follow the normal map as configured (%s), the hillshade follows "
