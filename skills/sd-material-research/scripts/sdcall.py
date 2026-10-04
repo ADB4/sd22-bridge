@@ -25,9 +25,11 @@ def main(argv=None):
     ap.add_argument("--out")
     ap.add_argument("--session", default=os.path.expanduser("~/.sd_claude_bridge/session.json"))
     a = ap.parse_args(argv)
-    with open(a.job) as fh:
+    if hasattr(sys.stdout, "reconfigure"):  # Designer's text may not fit a Windows console code page
+        sys.stdout.reconfigure(errors="replace")
+    with open(a.job, encoding="utf-8-sig") as fh:  # not the locale's code page (cp1252 on Windows)
         code = fh.read()
-    with open(a.session) as fh:
+    with open(a.session, encoding="utf-8") as fh:
         s = json.load(fh)
     out = a.out or os.path.splitext(a.job)[0] + ".result.json"
     req = {"id": int(time.time()), "token": s["token"], "cmd": "run_python", "args": {"code": code}}
@@ -49,8 +51,15 @@ def main(argv=None):
     except socket.timeout:
         print("no reply within %.0f s; Designer may still be working (check with designer_status later)" % a.timeout)
         return 3
+    except OSError as e:  # reset by the peer (Windows) when Designer goes away mid-job
+        buf = b""
+        print("connection error: %s" % e)
     finally:
         k.close()
+    if b"\n" not in buf:
+        print("Designer closed the connection without replying (it may have crashed, or the plugin reloaded). "
+              "Check Designer before running the job again.")
+        return 1
     reply = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
     body = reply.get("result") if reply.get("ok") else {"error": reply.get("error"), "traceback": reply.get("traceback")}
     with open(out, "w") as fh:
