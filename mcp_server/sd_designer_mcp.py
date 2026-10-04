@@ -372,10 +372,12 @@ def create_graph(identifier: str, package_path: str | None = None):
 
 
 @_tool(DESTRUCTIVE)
-def save_package(graph: str | None = None, save_as: str | None = None):
+def save_package(graph: str | None = None, save_as: str | None = None, overwrite: bool = False):
     """Save the package that contains the graph. Overwrites its .sbs file unless save_as gives a
-    new full path. Only call when the user asks to save."""
-    return call("save_package", _clean(graph=graph, save_as=save_as))
+    new full path. A save_as that already exists and isn't this package's file is refused unless
+    overwrite is true: set it only when the user agreed to replace that file. Only call when the
+    user asks to save."""
+    return call("save_package", _clean(graph=graph, save_as=save_as, overwrite=overwrite or None))
 
 
 # ---------------------------------------------------------------- preview

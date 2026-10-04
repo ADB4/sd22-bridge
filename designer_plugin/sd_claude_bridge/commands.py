@@ -1307,6 +1307,13 @@ def cmd_create_graph(args):
     }
 
 
+def _same_file(a, b):
+    try:
+        return os.path.samefile(a, b)  # also right for another case or a link on macOS/Windows
+    except OSError:
+        return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
 def cmd_save_package(args):
     save_as = args.get("save_as")
     if save_as is not None and not (isinstance(save_as, str) and save_as.strip()):
@@ -1314,7 +1321,8 @@ def cmd_save_package(args):
         raise ValueError("save_as must be a full .sbs path. Leave it out to overwrite the package.")
     g = _graph(args.get("graph"))
     pkg = g.getPackage()
-    path = save_as if save_as is not None else _try(pkg.getFilePath)
+    own = _try(pkg.getFilePath)
+    path = save_as if save_as is not None else own
     if not path:
         raise RuntimeError("This package has never been saved. Pass save_as with a full .sbs path.")
     path = str(path)
@@ -1336,6 +1344,12 @@ def cmd_save_package(args):
                 "%s is in Designer's own library folder, which this won't write to. Pass save_as "
                 "with a path outside it." % path
             )
+    if os.path.exists(path) and not (own and _same_file(path, str(own))) and args.get("overwrite") is not True:
+        # Another package's file, maybe open in Designer too: replace it only when asked to.
+        raise ValueError(
+            "%s already exists and isn't this package's file. Pass overwrite=true to replace it, "
+            "or pick another path." % path
+        )
     _pm().savePackageAs(pkg, path)
     return {"saved": path}
 
