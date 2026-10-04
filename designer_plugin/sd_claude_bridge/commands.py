@@ -453,14 +453,19 @@ def _library_graphs(path):
 def _main_graph(graphs, base):
     """The graph a package stands for: the one named like the file unless the Library hides it,
     else a shown one named like the file (normal_sobel.sbs keeps its current graph as
-    normal_sobel_2 next to a hidden deprecated normal_sobel), else any shown one (shape_glow.sbs
-    starts with a hidden helper), else the hidden one named like the file, else the first."""
+    normal_sobel_2 next to a hidden deprecated normal_sobel), else a shown one named like the file
+    without its noise_/pattern_ prefix (noise_voronoi.sbs starts with 3D Voronoi Fractal; the
+    node is Voronoi), else any shown one (shape_glow.sbs starts with a hidden helper), else the
+    hidden one named like the file, else the first."""
     base = base.lower()
     named = next((g for g in graphs if (g["id"] or "").lower() == base), None)
     if named is not None and not named["hidden"]:
         return named
     shown = [g for g in graphs if not g["hidden"]]
     prefixed = [g for g in shown if (g["id"] or "").lower().startswith(base)]
+    if not prefixed:
+        short = re.sub(r"^(noise|pattern)_", "", base)
+        prefixed = [g for g in shown if (g["id"] or "").lower() == short]
     if prefixed or shown:
         return (prefixed or shown)[0]
     return named or (graphs[0] if graphs else None)
