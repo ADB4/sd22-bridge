@@ -73,6 +73,19 @@ class BridgeError(RuntimeError):
     pass
 
 
+# Plugin commands that change nothing in Designer, so repeating one after a timeout is safe.
+READ_ONLY = {"ping", "info", "list_packages", "get_graph", "get_node", "get_selection",
+             "list_node_definitions", "search_library", "render"}
+
+
+def _timeout_text(cmd: str, timeout: float) -> str:
+    text = "Designer did not answer within %d s. It may be busy (computing, or a modal dialog is open)" % timeout
+    if cmd in READ_ONLY:
+        return text + ". Check Designer and try again."
+    return (text + " and still running this call, so don't repeat it: wait until designer_status answers, "
+            "then check whether the change happened.")
+
+
 def _log(msg: str) -> None:
     # stdout carries the MCP protocol; diagnostics go to stderr.
     print("[sd-mcp] " + msg, file=sys.stderr, flush=True)
@@ -86,12 +99,24 @@ def call(cmd: str, args: dict | None = None, timeout: float = 120.0):
         raise BridgeError(NOT_RUNNING) from None
     except (OSError, ValueError) as e:
         raise BridgeError("Could not read %s: %s" % (SESSION_FILE, e)) from None
+    if not isinstance(session, dict):
+        raise BridgeError("Could not read %s: it isn't a JSON object." % SESSION_FILE)
+    try:
+        port = int(session["port"])
+    except (KeyError, TypeError, ValueError):
+        raise BridgeError("%s has no valid port. Restart Designer to rewrite it." % SESSION_FILE) from None
 
     request = {"id": next(_ids), "token": session.get("token", ""), "cmd": cmd, "args": args or {}}
     payload = (json.dumps(request) + "\n").encode("utf-8")
     try:
-        sock = socket.create_connection(("127.0.0.1", int(session["port"])), timeout=5)
-    except (ConnectionRefusedError, TimeoutError, OSError):
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    except TimeoutError:
+        # A refused connection means nothing listens; a timeout means the listen queue is full.
+        raise BridgeError(
+            "Designer isn't accepting connections: it's probably busy with a long job, with earlier calls "
+            "queued behind it. Wait, then try designer_status again. Don't restart Designer unless it's frozen."
+        ) from None
+    except OSError:
         raise BridgeError(
             NOT_RUNNING + " (A session file exists, so Designer may have closed or crashed.)"
         ) from None
@@ -107,12 +132,16 @@ def call(cmd: str, args: dict | None = None, timeout: float = 120.0):
                     raise BridgeError("Designer closed the connection before replying.")
                 buf += chunk
         except TimeoutError:
-            raise BridgeError(
-                "Designer did not answer within %d s. It may be busy (computing, or a modal "
-                "dialog is open). Check Designer and try again." % timeout
-            ) from None
+            raise BridgeError(_timeout_text(cmd, timeout)) from None
+        except OSError as e:
+            raise BridgeError("Designer closed the connection before replying (%s)." % e) from None
 
-    response = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+    try:
+        response = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+    except ValueError as e:
+        raise BridgeError("Designer's reply isn't valid JSON: %s" % e) from None
+    if not isinstance(response, dict):
+        raise BridgeError("Designer's reply isn't a JSON object.")
     if not response.get("ok"):
         message = response.get("error") or "unknown error"
         tb = (response.get("traceback") or "").strip().splitlines()

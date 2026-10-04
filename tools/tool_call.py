@@ -17,7 +17,7 @@ Run it with the server's venv Python (it has the `mcp` package):
     %PY% tools\\tool_call.py --raw get_graph graph=claude_smoke_test
 
 On macOS the server's Python is ~/Library/Application Support/sd-claude-bridge/venv/bin/python
-(quote the path: it has a space), and the shell keeps double quotes, so inline JSON works.
+(quote the path: it has a space). Inline JSON works inside single quotes.
 
 Arguments are key=value pairs, or one JSON object: inline, @file.json, or - for stdin (UTF-8
 with or without a BOM, or UTF-16 as Windows PowerShell 5.1's > writes it). A key=value value is
@@ -31,7 +31,7 @@ it checks nothing.
 
 By default it loads the installed server (%LOCALAPPDATA%\\sd-claude-bridge, or on macOS
 ~/Library/Application Support/sd-claude-bridge). --source loads
-mcp_server\\ from this repo instead, to try an edit before running install.ps1. --raw sends a
+mcp_server\\ from this repo instead, to try an edit before running the installer. --raw sends a
 bridge command (the plugin's command names: get_graph, connect, render, ...) through call(),
 skipping the MCP layer. Images are saved under sd_claude_bridge/tool_call in the temp folder
 (%TEMP% on Windows, $TMPDIR on macOS).
