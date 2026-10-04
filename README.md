@@ -172,6 +172,10 @@ macOS asked whether Terminal may access Documents and the answer was No. Allow i
 
 The plugin targets the 2022 Python API. If one structured tool fails, Claude can usually do the same thing with `run_python`, which runs any `sd` API code. Errors include the last lines of the Designer-side traceback. Designer's API reference is under **Help > Python API Documentation**.
 
+### Designer is slow on a Mac when it's in the background
+
+macOS App Nap slows a hidden Designer down to a fraction of its speed. The plugin keeps App Nap off while it runs a command, and only then. If a job still runs several times slower than with Designer in front, run `ps -o pri= -p <Designer's pid>` while it works: 4 means Designer is napping, and Designer's Console should have a `[Claude bridge] could not start an App Nap activity` line explaining why. `SD_CLAUDE_BRIDGE_NO_ACTIVITY=1` (set like the variables under Security) turns this off.
+
 ### Previews are empty
 
 `render_preview` computes the graph and saves output textures to `sd_claude_bridge/previews` in the temp folder (`%TEMP%` on Windows, `$TMPDIR` on a Mac). Designer only computes nodes that feed an Output node, so a node with nothing downstream has no preview. Connect it to an Output node and preview that.

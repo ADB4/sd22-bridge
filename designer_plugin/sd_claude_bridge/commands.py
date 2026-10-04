@@ -201,8 +201,22 @@ def _all_packages():
     return _items(_try(_pm().getUserPackages))
 
 
+def _resources_in(pkg):
+    """A package's resources, folders opened, in Explorer order. Walks resources and folders only:
+    getChildrenResources(True) also visits every node of every graph (77 ms at 728 nodes, against
+    0.02 ms for one level), and every graph lookup pays it."""
+    out = []
+    todo = list(reversed(_items(_try(lambda: pkg.getChildrenResources(False)))))
+    while todo:
+        r = todo.pop()
+        out.append(r)
+        if _cls(r).endswith("Folder"):
+            todo.extend(reversed(_items(_try(lambda r=r: r.getChildren(False)))))
+    return out
+
+
 def _graphs_in(pkg):
-    return [r for r in _items(_try(lambda: pkg.getChildrenResources(True))) if _cls(r).endswith("Graph")]
+    return [r for r in _resources_in(pkg) if _cls(r).endswith("Graph")]
 
 
 def _graph(name=None):
@@ -1070,7 +1084,7 @@ def cmd_create_library_node(args):
         if pkg is None:
             raise RuntimeError("Designer could not load %s" % path)
         try:
-            graphs = [r for r in _items(pkg.getChildrenResources(True)) if _cls(r) == "SDSBSCompGraph"]
+            graphs = [r for r in _graphs_in(pkg) if _cls(r) == "SDSBSCompGraph"]
             want = args.get("graph_identifier")
             if not want:
                 main = _main_graph(xml_graphs, base)

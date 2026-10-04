@@ -24,6 +24,8 @@ try:
 except ImportError:  # newer Designer builds
     from PySide6 import QtCore, QtWidgets
 
+from . import activity
+
 LOG = "[Claude bridge]"
 DEFAULT_PORT = 9881
 PORT_ATTEMPTS = 10
@@ -270,7 +272,12 @@ class BridgeServer(object):
             if not hmac.compare_digest(token.encode("utf-8"), self.token.encode("utf-8")):
                 return {"id": req_id, "ok": False, "error": BAD_TOKEN}
             self._authed = True
-            result = self._dispatch(req.get("cmd"), req.get("args") or {})
+            # macOS: no App Nap while the command runs (7.5-14x slower when Designer is hidden).
+            tok = activity.begin(req.get("cmd"))
+            try:
+                result = self._dispatch(req.get("cmd"), req.get("args") or {})
+            finally:
+                activity.end(tok)
             return {"id": req_id, "ok": True, "result": result}
         except BaseException as e:
             # Always answer. The sd API raises APIException, which derives from
