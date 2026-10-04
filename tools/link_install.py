@@ -85,15 +85,23 @@ def targets():
     return out
 
 
+# Reparse tags of a symlink and a junction. Other reparse points, such as OneDrive placeholders, are plain files and
+# folders here.
+LINK_TAGS = (0xA000000C, 0xA0000003)
+
+
 def is_link(path):
     """A symlink, or on Windows also a junction (os.path.islink misses those before 3.12)."""
     if os.path.islink(path):
         return True
     try:
-        attrs = getattr(os.lstat(path), "st_file_attributes", 0)
+        st = os.lstat(path)
     except OSError:
         return False
-    return bool(attrs & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    tag = getattr(st, "st_reparse_tag", None)  # Windows, Python 3.8+
+    if tag is not None:
+        return tag in LINK_TAGS
+    return bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def links_to(path, target):

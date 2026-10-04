@@ -54,8 +54,9 @@ foreach ($sdUserDir in $targets) {
     New-Item -ItemType Directory -Force -Path $pluginParent | Out-Null
     # tools\link_install.py may have made it a junction into a git checkout. Leave that
     # alone: Windows PowerShell's Remove-Item -Recurse would delete the checkout's files.
+    # Test the link type, not the ReparsePoint attribute: OneDrive placeholders have that too.
     $existing = Get-Item -LiteralPath $pluginDest -Force -ErrorAction SilentlyContinue
-    if ($existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    if ($existing -and ($existing.LinkType -in @('Junction', 'SymbolicLink'))) {
         Write-Host "   Linked to a git checkout, left as is: $pluginDest"
         continue
     }
@@ -67,8 +68,10 @@ foreach ($sdUserDir in $targets) {
         Write-Host "   Left as is (a git checkout, or a linked sduserplugins folder): $pluginDest" -ForegroundColor Yellow
         continue
     }
-    if (Test-Path $pluginDest) {
-        Remove-Item -Recurse -Force $pluginDest
+    if (Test-Path -LiteralPath $pluginDest) {
+        Remove-Item -LiteralPath $pluginDest -Recurse -Force -ErrorAction SilentlyContinue
+        # Windows PowerShell can't delete OneDrive cloud files; cmd's rmdir can, and doesn't follow junctions.
+        if (Test-Path -LiteralPath $pluginDest) { cmd /c rmdir /s /q "$pluginDest" 2>$null }
     }
     Copy-Item -Recurse -Force $pluginSrc $pluginDest
     Get-ChildItem -Path $pluginDest -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
@@ -132,7 +135,7 @@ New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 foreach ($f in Get-ChildItem -LiteralPath (Join-Path $here 'mcp_server') -File) {
     $dest = Join-Path $installDir $f.Name
     $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
-    if ($existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    if ($existing -and ($existing.LinkType -eq 'SymbolicLink')) {
         Write-Host "   Linked to a git checkout, left as is: $dest"
         continue
     }
