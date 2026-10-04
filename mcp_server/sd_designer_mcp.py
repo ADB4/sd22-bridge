@@ -22,6 +22,7 @@ from typing import Union
 
 from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 SESSION_FILE = os.environ.get("SD_CLAUDE_BRIDGE_SESSION") or os.path.join(
@@ -91,6 +92,12 @@ class BridgeError(RuntimeError):
 # Plugin commands that change nothing in Designer, so repeating one after a timeout is safe.
 READ_ONLY = {"ping", "info", "list_packages", "get_graph", "get_node", "get_selection",
              "list_node_definitions", "search_library", "render"}
+
+# Tool hints for clients that group or auto-approve tools. An unannotated tool counts as one that
+# may change or delete things (destructiveHint defaults to true).
+READS = ToolAnnotations(readOnlyHint=True)
+ADDS = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
+DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
 
 
 def _timeout_text(cmd: str, timeout: float) -> str:
@@ -171,21 +178,21 @@ def _clean(**kwargs):
 
 
 # ------------------------------------------------------------------ status
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def designer_status():
     """Check the connection and report Designer/Python versions, the graph open in the
     Graph view, grid size and whether undo grouping and run_python are available."""
     return call("info", timeout=15)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def list_packages():
     """List open user packages (.sbs) and the graphs inside each."""
     return call("list_packages")
 
 
 # ------------------------------------------------------------------- read
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def get_graph(graph: str | None = None, include_values: bool = False, limit: int = 400):
     """Read a graph: node ids, definitions, positions and connections.
 
@@ -197,7 +204,7 @@ def get_graph(graph: str | None = None, include_values: bool = False, limit: int
     return call("get_graph", _clean(graph=graph, include_values=include_values, limit=limit))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def get_node(node: str, graph: str | None = None, all_params: bool = False):
     """Full detail for one node: connectable inputs (and what feeds them), parameters with
     current values, descriptions and enum options, outputs, and annotations.
@@ -209,19 +216,19 @@ def get_node(node: str, graph: str | None = None, all_params: bool = False):
     return call("get_node", _clean(node=node, graph=graph, all_params=all_params))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def get_selection():
     """Nodes currently selected in Designer's Graph view."""
     return call("get_selection")
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def list_node_definitions(query: str = ""):
     """Search atomic node definition ids (e.g. query "blend", "warp", "function")."""
     return call("list_node_definitions", {"query": query})
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def search_library(query: str, limit: int = 25):
     """Search Designer's bundled library packages by file name or node label (noises, patterns,
     filters, generators). Returns package_path values for create_library_node, each with its
@@ -234,7 +241,7 @@ def search_library(query: str, limit: int = 25):
 
 
 # ------------------------------------------------------------------ write
-@mcp.tool()
+@mcp.tool(annotations=ADDS)
 def create_node(definition: str, x: float | None = None, y: float | None = None, graph: str | None = None):
     """Create an atomic node, e.g. "uniform", "blend", "levels", "blur", "hsl", "normal",
     "transformation", "warp", "directionalwarp", "gradient" (gradient map), "curve",
@@ -243,7 +250,7 @@ def create_node(definition: str, x: float | None = None, y: float | None = None,
     return call("create_node", _clean(definition=definition, x=x, y=y, graph=graph))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ADDS)
 def create_library_node(
     package_path: str,
     graph_identifier: str | None = None,
@@ -258,7 +265,7 @@ def create_library_node(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ADDS)
 def create_output(
     identifier: str,
     usage: str | None = None,
@@ -324,20 +331,20 @@ def move_nodes(moves: list[NodeMove], graph: str | None = None):
     return call("move_nodes", _clean(moves=[m.model_dump() for m in moves], graph=graph))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def delete_nodes(nodes: list[str], graph: str | None = None):
     """Delete nodes by id. Only when the user asked for it or the nodes were created by you."""
     return call("delete_nodes", _clean(nodes=nodes, graph=graph))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ADDS)
 def create_graph(identifier: str, package_path: str | None = None):
     """Create a new Substance compositing graph, in a new unsaved package unless
     package_path names an open package."""
     return call("create_graph", _clean(identifier=identifier, package_path=package_path))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def save_package(graph: str | None = None, save_as: str | None = None):
     """Save the package that contains the graph. Overwrites its .sbs file unless save_as gives a
     new full path. Only call when the user asks to save."""
@@ -394,7 +401,7 @@ def _load_images(path: str, max_size: int) -> list[tuple[str | None, Image]]:
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READS)
 def render_preview(node: str | None = None, graph: str | None = None, max_size: int = 512):
     """Compute the graph and return images of its Output nodes (or of one node's outputs).
     Use after edits to check the result. Designer computes only nodes that feed an Output node,
@@ -435,7 +442,7 @@ def render_preview(node: str | None = None, graph: str | None = None, max_size: 
 
 
 # ----------------------------------------------------------------- escape
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def run_python(code: str):
     """Run Python inside Designer (its own interpreter, Python 3.9 in Designer 2022).
     In scope: sd, app (SDApplication), ui (QtForPythonUIMgr), pkg_mgr, graph (current graph or
