@@ -502,8 +502,17 @@ def run_python(code: str):
     """Run Python inside Designer (its own interpreter, Python 3.9 in Designer 2022).
     In scope: sd, app (SDApplication), ui (QtForPythonUIMgr), pkg_mgr, graph (current graph or
     None), SDPropertyCategory. print() output is returned; assign to `result` to return data.
+    If the code raises, the call fails with the traceback and what was printed before it.
     The whole run is one undo step when supported. Use for anything the other tools don't cover."""
-    return call("run_python", {"code": code}, timeout=600)
+    reply = call("run_python", {"code": code}, timeout=600)
+    if isinstance(reply, dict) and reply.get("error"):
+        # The plugin answers ok with {"stdout", "error"}; make it a failed call, as sdcall.py does.
+        message = str(reply["error"]).rstrip()
+        printed = str(reply.get("stdout") or "").rstrip()
+        if printed:
+            message += "\n\nPrinted before the error:\n" + printed[-4000:]
+        raise BridgeError(message)
+    return reply
 
 
 def main() -> None:
