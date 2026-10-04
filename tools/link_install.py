@@ -72,8 +72,13 @@ def targets():
             out.append((os.path.join(plugins, "sd_claude_bridge"),
                         os.path.join(REPO, "designer_plugin", "sd_claude_bridge"),
                         "plugin-" + sub[0].lower()))
-    if not any(label.startswith("plugin") for _, _, label in out):
+    labels = [label for _, _, label in out]
+    if not labels:
         print("! No Designer sduserplugins folder under %s. Start Designer once, then run this again." % docs)
+    elif labels == ["plugin-adobe"]:
+        # The installer makes the Adobe folder when it finds none, before a Steam Designer ever ran.
+        print("! Only the Adobe Designer folder has sduserplugins. Using the Steam edition? Start Designer once,"
+              " then run this again.")
     inst = install_dir()
     if os.path.isdir(inst):
         for name in SERVER_FILES:

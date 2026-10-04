@@ -45,6 +45,10 @@ if ($targets.Count -eq 0) {
     Write-Host "   Note: no Designer user folder found yet (Designer creates one on first launch). Using $($sdUserDirs[0])." -ForegroundColor Yellow
     Write-Host "   Steam edition: start Designer once, then run this installer again." -ForegroundColor Yellow
     $targets = @($sdUserDirs[0])
+} elseif ((Test-Path -LiteralPath $sdUserDirs[0]) -and -not (Test-Path -LiteralPath $sdUserDirs[1])) {
+    # Maybe an earlier run made the Adobe folder before Designer's first launch.
+    Write-Host "   Using the Steam edition? Its folder ($($sdUserDirs[1])) appears when Designer first starts:" -ForegroundColor Yellow
+    Write-Host "   start Designer once, then run this installer again." -ForegroundColor Yellow
 }
 
 foreach ($sdUserDir in $targets) {

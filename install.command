@@ -87,6 +87,10 @@ if [ -z "$TARGETS" ]; then
     echo "   Note: no Designer user folder found yet (Designer creates one on first launch)."
     echo "   Using: $TARGETS"
     echo "   If the plugin doesn't load, start Designer once, quit it, and run this installer again."
+elif [ -d "$ADOBE_DIR" ] && [ ! -d "$STEAM_DIR" ]; then
+    # Maybe an earlier run made the Adobe folder before Designer's first launch.
+    echo "   Using the Steam edition? Its folder ($STEAM_DIR) appears when Designer first starts:"
+    echo "   start Designer once, then run this installer again."
 fi
 
 OLD_IFS=$IFS
