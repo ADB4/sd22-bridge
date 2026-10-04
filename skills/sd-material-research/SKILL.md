@@ -146,6 +146,7 @@ prepare the next fixes from the numbers.
   - `sdkit.py`: Designer-side helpers (run_python)
   - `sdcall.py`: long jobs without the 60 s limit
   - `matcheck.py`: checks → scorecard
+  - `wrong_builds.py`: each hard check against its named wrong build
   - `previews.py`: lit views and sheets
   - `calibrate.py`: Histogram Scan Position from quantiles
   - `setup_env.sh`
