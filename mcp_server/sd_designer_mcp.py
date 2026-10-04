@@ -380,6 +380,11 @@ def save_package(graph: str | None = None, save_as: str | None = None):
 
 # ---------------------------------------------------------------- preview
 MAX_IMAGE_BYTES = 3_500_000  # stays under the API's 5 MB per image once base64-encoded
+# The API scales images above 1568 px down anyway, and refuses ones above 2000 px once a request
+# holds more than 20 images. The images of one call stay under MAX_PREVIEW_BYTES together: the
+# request limit is 32 MB, and earlier results stay in the conversation.
+MAX_PREVIEW_SIZE = 1568
+MAX_PREVIEW_BYTES = 8_000_000
 
 
 def _png(im, max_size: int) -> Image:
@@ -428,18 +433,9 @@ def _load_images(path: str, max_size: int) -> list[tuple[str | None, Image]]:
     ]
 
 
-@_tool(READS)
-def render_preview(node: str | None = None, graph: str | None = None, max_size: int = 512):
-    """Compute the graph and return images of its Output nodes (or of one node's outputs).
-    Use after edits to check the result. Designer computes only nodes that feed an Output node,
-    so a node with nothing downstream has no image yet: wire it to an Output first (and delete
-    that Output afterwards if you added it).
-    When alpha varies, it comes as a second grayscale image after the color channels (a Normal
-    node stores the height there by default; Shape Glow puts its result there).
-    Captions give each texture's computed size; max_size caps the returned image size."""
-    result = call("render", _clean(node=node, graph=graph), timeout=600)
+def _preview_content(images: list, max_size: int) -> list:
+    """Caption and image blocks for the first 8 textures."""
     content: list = []
-    images = result.get("images") or []
     per_node = collections.Counter(item.get("node") for item in images)
     for item in images[:8]:
         caption = "%s (%s)" % (item.get("label"), item.get("node"))
@@ -449,17 +445,49 @@ def render_preview(node: str | None = None, graph: str | None = None, max_size: 
         if size and len(size) == 2:  # the computed size; the image below may be scaled down
             caption += ", %sx%s px" % (size[0], size[1])
         try:
-            for note, image in _load_images(item["path"], max(64, min(int(max_size), 2048))):
+            for note, image in _load_images(item["path"], max_size):
                 content.append(caption + ("; " + note if note else ""))
                 content.append(image)
         except Exception as e:  # keep going if one image fails
             content.append("%s: could not read %s: %s" % (caption, item.get("path"), e))
+    return content
+
+
+def _image_bytes(content: list) -> int:
+    return sum(len(block.data) for block in content if isinstance(block, Image))
+
+
+@_tool(READS)
+def render_preview(node: str | None = None, graph: str | None = None, max_size: int = 512):
+    """Compute the graph and return images of its Output nodes (or of one node's outputs).
+    Use after edits to check the result. Designer computes only nodes that feed an Output node,
+    so a node with nothing downstream has no image yet: wire it to an Output first (and delete
+    that Output afterwards if you added it).
+    When alpha varies, it comes as a second grayscale image after the color channels (a Normal
+    node stores the height there by default; Shape Glow puts its result there).
+    Captions give each texture's computed size. max_size (64-1568) caps the returned image size;
+    when the images together pass 8 MB, all of them shrink further and the summary's max_size
+    says to what."""
+    result = call("render", _clean(node=node, graph=graph), timeout=600)
+    images = result.get("images") or []
+    size = max(64, min(int(max_size), MAX_PREVIEW_SIZE))
+    content = _preview_content(images, size)
+    total = _image_bytes(content)
+    while total > MAX_PREVIEW_BYTES and size > 64:
+        # Too much for one result: shrink every image (PNG size follows the pixel count roughly).
+        smaller_size = max(64, int(size * min(0.75, (MAX_PREVIEW_BYTES / total) ** 0.5)))
+        smaller = _preview_content(images, smaller_size)
+        if _image_bytes(smaller) >= total:
+            break  # nothing shrinks without Pillow
+        size, content, total = smaller_size, smaller, _image_bytes(smaller)
     # A texture can give two images (color channels, then alpha), so count both.
     summary = {
         "graph": result.get("graph"),
         "textures": len(images),
         "images": sum(1 for block in content if isinstance(block, Image)),
     }
+    if size != max_size:  # clamped, or shrunk to fit one result
+        summary["max_size"] = size
     if len(images) > 8:
         summary["textures_omitted"] = len(images) - 8
     if result.get("notes"):
