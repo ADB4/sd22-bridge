@@ -71,8 +71,8 @@ while the user answers. Round 2 follows `interview.md`. In both rounds:
 ### 2. Research
 - **With a bundled sheet:** read §0-3 and §5-10 in full and, from §4, only the cards of the processes the interview
   chose and any card they name (`grep -n '^##'` the sheet, then Read by line range). Every §5 invariant of a chosen
-  process goes into the spec. Close the request's gaps with targeted searches, and re-verify the numbers that hard
-  checks depend on.
+  process goes into the spec. Close the request's gaps and re-verify the numbers that hard checks depend on, in
+  background agents while you draft the spec; the gate waits for them (`references/research.md` A).
 - **Without one:** run the research team in `references/research.md`. It writes a new sheet for next time.
 - The brick build skipped this stage, and its acceptance targets were invented reactively after reviews. Research
   first is the main fix.
