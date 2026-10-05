@@ -39,7 +39,8 @@ to xhigh everywhere if the high graph does worse on any of these or the evals (r
 to high. The user switches with `/effort`: ask at the spec gate (high, for the first graph) and before the second
 graph (back to xhigh), and confirm each switch on this session's next records (the JSONL under `~/.claude/projects/`
 that holds your last AskUserQuestion text, not the newest file). If they said not to stop, skip the trial and stay at
-xhigh. Launch no lens or verifier until those records show xhigh; if they don't, ask and wait. A new semantics probe,
+xhigh. The panel's Workflow pins its agents at xhigh. The Agent-tool fallback inherits the session's effort: launch no
+fallback lens or verifier until this session's records show xhigh; if they don't, ask and wait. A new semantics probe,
 or a fix that failed twice, goes back to xhigh.
 
 Other entry points:
@@ -130,12 +131,13 @@ only for what §2 lacks):
 Follow `references/review.md`:
 1. Preflight: scorecards, previews, the fix ledger.
 2. Write `review/BRIEF.md`.
-3. Run 4-6 lenses derived from the spec, each with an adversarial verifier.
+3. Run 4-6 lenses derived from the spec; a verifier re-measures each lens's findings, highs first, and one re-verify
+   agent takes any high or medium a verifier left without a verdict.
 4. A lead writes the plan and the scorecard.
 
-Use a Workflow (`assets/workflows/review_round.js`) only when the user has opted into workflows (ultracode is on, or
-they asked). Otherwise run the same agents with the Agent tool. Reviewers never call Designer. While the panel runs,
-prepare the next fixes from the numbers you have.
+Run the panel as a Workflow (`assets/workflows/review_round.js`); use the Agent tool only when Workflow is unavailable.
+Reviewers never call Designer. While the panel runs, read the per-lens files as they land and draft the next fixes from
+them and the numbers you have; drafts stay drafts until the plan gate.
 
 ### 7. Iterate and hand off
 - At the plan gate, show the user the scorecard and the plan, and ask every design call in it (a choice between
@@ -147,8 +149,10 @@ prepare the next fixes from the numbers you have.
   that an edited node or preset parameter feeds (an edit to a shared node touches every preset). Then run the targeted
   set: the checks the items touch and the wrong builds of the touched hard checks. Items that miss their acceptance
   go into a second batch for that graph.
-- Give each plan item its own ledger row with measured before and after values, never one row per batch. Then review
-  again with fewer lenses. Three rounds is typical. The stopping rule is in `references/review.md` §5.
+- Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
+  apply: `date -u` when the plan gate is answered and after the last batch's targeted checks, into the ledger's
+  `apply` (`references/review.md` §1). Then review again with fewer lenses. Three rounds is typical. The stopping
+  rule is in `references/review.md` §5.
 - **Final gate:** after the last change, export every variant plus its `nowear` at 2048 in one foreground `sdcall.py`
   job (stage 5), then run the full matcheck on every variant in the background and draft the report meanwhile;
   finalize it only when every exit code and scorecard JSON (`hard_failed`, `hard_unmeasured`) reads green as in

@@ -16,7 +16,10 @@ only on material that already passes its numeric checks.
    params, script), its acceptance checks with the measured before/after values, and anything not done and why. One
    row per plan item, even when one batch applied several; a row without a measured after value counts as
    `not_landed`. The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick build,
-   2 of 10 and 1 of 8 fixes had fully landed when the next round started.
+   2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
+   `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is answered and after the last batch's targeted checks, and put
+   `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, or on a
+   Designer job past its expected time).
 5. Write or append `review/BRIEF.md` (§2).
 6. Leave Designer idle until the plan gate. Reviewers work from files only.
 
@@ -122,10 +125,15 @@ only on material that already passes its numeric checks.
    7. Is any claim of clustering, repetition or correlation tested against a control?
    8. Does the stated consequence actually follow?
 3. **Don't kill a finding over an overstated number.** Correct it, downgrade it, keep the core. Default to
-   `real=false` only when the core is unsupported.
+   `real=false` only when the core is unsupported. `artifact` names what inflated the numbers and never rejects by
+   itself: a finding that is entirely an artifact is `real=false`.
 4. **Review the fix.** Would it create a singular feature or lattice, add a bevel, break an invariant or registration,
    rescale other layers, or conflict with another requirement (e.g. "subtle")? Give a better fix.
 5. **Check the acceptance target** on current data and on a baseline. Replace it if it's unreachable.
+
+Verifiers take every finding of their lens: highs, then mediums, then lows. Never guess a verdict: a finding the time
+box (§6) left unmeasured goes in `not_checked`. One re-verify agent applies this same method to every high or medium
+without a verdict before the lead runs; a low without a verdict goes to the lead `unverified`.
 
 Brick numbers: 69 findings, 3 rejected outright, 22 downgraded, ~18 harmful or infeasible fixes rewritten. Expect
 calibration from the verifier, not a high rejection rate.
@@ -138,6 +146,10 @@ calibration from the verifier, not a high rejection rate.
 - Resolve conflicts with the user's requirements in writing (e.g. "don't add colour variety: the user asked for subtle").
 - Order fixes by dependency: layout → height/structure → process masks → colour → micro-detail.
 - Cap the list (10 / 8 / 5 by round), and give every fix acceptance checks and guard rails.
+- Re-measure every `unverified` high or medium before planning it (`spot_checks`); defer an unverified low unless its
+  numbers reproduce.
+- Put every choice only the user can make (between looks, a requirement trade, a deviation) in `design_calls`: the
+  question, 2-4 options, the recommended one, and what the answer changes.
 - List keep-as-is, deferred and rejected items.
 
 **Outputs:**
@@ -147,9 +159,9 @@ calibration from the verifier, not a high rejection rate.
   - `SC: met|mostly_met|not_met | R-id requirement (variant) | evidence`
   - `INV: pass|fail | INV-id | values`
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
-  - FIXSTATUS, REJECTED, DEFERRED
-- Show the user the scorecard and the plan before building the fixes, and ask every design call in the plan there,
-  in one batch (`SKILL.md` stage 7); none during the apply. If they said not to stop, take each call's recommended
+  - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, TIMING (the per-agent table, `panel_min`, and the ledger's `apply`)
+- Show the user the scorecard and the plan before building the fixes, and ask the plan's `design_calls` there, in one
+  batch (`SKILL.md` stage 7); none during the apply. If they said not to stop, take each call's recommended
   option and list it in the report.
 
 **Stop when:**
@@ -159,7 +171,8 @@ calibration from the verifier, not a high rejection rate.
 - the last round's fixes landed.
 
 **Also stop:**
-- after a dry round (no new confirmed medium-or-higher finding);
+- after a dry round (no new medium-or-higher finding confirmed by a verifier, the re-verify agent or the lead's
+  `spot_checks`) in which every lens returned;
 - after 3 full rounds (ask the user before a 4th);
 - when the user accepts.
 
@@ -172,17 +185,32 @@ rounds confirmed it" when the final fixes were never reviewed.
 
 ## 6. Running it
 
-- **Workflow** (only when the user has opted into workflows: ultracode on, or they asked):
-  `Workflow({scriptPath: "<skill>/assets/workflows/review_round.js", args: {...}})`. The args are documented in the
-  script. It runs pipeline(review → verify) per lens, then one lead.
-- **Without workflows** (Agent tool):
-  1. In one message, spawn one Agent per lens. Paste in the brief path, the lens prompt and the FINDINGS schema from
-     the workflow file, and ask for raw JSON, also saved to `review/round<N>/<lens>.json`.
-  2. In a second message, spawn one verifier per non-empty lens.
-  3. Run the lead in a fresh Agent, or in the main context when it's small.
-- **While the panel runs,** prepare the next fix batch from the numeric results you already have. Run no suite or
-  numpy jobs beside it (its agents measure too), never edit the maps the panel is reading, and never call Designer
-  from a subagent.
+- **Workflow** (the default): `Workflow({scriptPath: "<skill>/assets/workflows/review_round.js", args: {...}})`. The
+  args are documented in the script. It pipelines review → verify per lens, sends every high or medium left without a
+  verdict to one re-verify agent (its verdicts match by `lens/id`, or by a bare id no other finding sent to it shares),
+  then runs the lead. Every agent runs at xhigh; the runtime caps concurrency.
+- **Time boxes:** lens 15 min and 35 tool calls, verifier 12 min and 25 (args `box_lens`, `box_verify`). The re-verify
+  agent and the lead have none. A lens cut by its box names the limit in `box` and lists what it skipped in
+  `not_reached`; the lead is told, and those areas count as unreviewed.
+- **Status:** `confirmed`; `rejected` (the verdict says `real=false` or severity `none`; `artifact` alone never
+  rejects); `unverified` (no verdict). An unverified finding goes to the lead marked so, never into rejected. The lead
+  also gets the rejected list (id, lens, title, why) and can overrule a rejection it re-measures. Save the result as
+  `review/round<N>/review_result.json`.
+- **`dead`:** agents that returned nothing. A dead lens leaves its area unreviewed: say so at the plan gate, and run it
+  again in the next round, or now with the Agent tool from the script's lens and verifier prompts. A one-lens Workflow
+  would overwrite `lead.json`.
+- **Files and stamps:** each agent runs `date -u` first and last and writes its result, stamps first, to
+  `review/round<N>/`: `<lens>.json`, `<lens>.verdicts.json`, `reverify.verdicts.json`, `lead.json`. The result's
+  `timing` table and `panel_min` come from those stamps and stay in `review_result.json`; findings.md TIMING lists
+  them with the ledger's `apply` stamps (§1).
+- **Agent tool** (fallback, only when Workflow is unavailable; launch it only when this session's records show xhigh,
+  `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
+  verifier per non-empty lens, given all its findings, highs first; one re-verify agent for every high or medium
+  without a verdict or in a `not_checked` list; then the lead.
+- **While the panel runs,** read the lens and verdict files as they land, and write ledger records, hand-off notes and
+  fix drafts from them. Drafts stay drafts until the plan gate: none runs in Designer before it, and each takes the
+  verifier's fix where it differs. Run no suite or numpy jobs beside the panel (its agents measure too), never edit
+  the maps it reads, and never call Designer from a subagent.
 
 ## 7. Catch ledger
 
@@ -192,6 +220,8 @@ trade adds its row before it is used.
 
 | Trade | Still caught | Could be missed | Signal |
 |---|---|---|---|
-| One build-measure batch per graph (`SKILL.md` stage 7) | fixes that didn't land: each ledger row keeps its measured before/after values, and a full run follows the last change | which fix in a batch caused a regression; brick's ledger found 2 of 10 and 1 of 8 fixes fully landed (§1) | more `partial`, `not_landed` or `regressed` fix_status rows next round |
+| One build-measure batch per graph (`SKILL.md` stage 7) | fixes that didn't land: each ledger row keeps its measured before/after values, and a full run follows the last change | which fix in a batch caused a regression; brick's ledger found 2 of 10 and 1 of 8 fixes fully landed (§1) | more `partial`, `not_landed`, `regressed` or `not_checked` fix_status rows next round |
 | High effort for scripted stages (`SKILL.md`, Effort) | design turns stay at xhigh (spec, panel); no past catch is tied to xhigh (round-3 speed review) | reasoning depth in check-fix and fix turns | a lower share of hard checks passing at the first 1K export, more fix cycles, wrong builds regressing, or the developer's eval re-run below 30/30 |
+| Time-boxed lenses and verifiers (§6) | every high or medium gets a verdict at xhigh by the verifier's own method: what a box left goes to the re-verify agent (§4); verifiers take lows after them | a finding a boxed lens never reached; a ledger item a boxed lens never reached (fix_status `not_checked`); an overstated low the verifier's box cut (it reaches the lead `unverified`, never re-verified); verifiers changed 11 of 35 severities (`win`) and 10 of 25 on brick (`mac-tx`) | a high or medium reaching the lead `unverified`; lows reaching the lead `unverified` (`stats.unverified` above `stats.unverified_high_medium`); `stats.severity_changed` per verified high or medium below those rates (widen `box_verify`); a lens whose `box` is not `not_hit` or whose `not_reached` is non-empty (`stats.lenses_boxed`); fix_status `not_checked` rows |
+| Fix drafts from lens files while the panel runs (§6) | drafts never run in Designer before the plan gate and take the verifier's fix | an overstated number or wrong premise in a draft; about 18 brick fixes were rewritten by verifiers (§4) | a draft that reaches Designer before the plan gate, or one that differs from the verifier's fix |
 | Section-scoped sheet reads (`SKILL.md` stage 2) | invariants (§5) and targets (§9) are read in full | an interaction held in a skipped process card (asphalt I10: sealant only on cracks) | a §5 invariant of a chosen process missing from `spec.md` |
