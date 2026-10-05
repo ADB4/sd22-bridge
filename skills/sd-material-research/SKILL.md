@@ -133,14 +133,15 @@ only for what §2 lacks):
 ### 6. Review
 Follow `references/review.md`:
 1. Preflight: scorecards, previews, the fix ledger.
-2. Write `review/BRIEF.md`.
+2. Round 1: write `review/REFERENCE.md` (`assets/reference_template.md`). Each round: the lens table, then
+   `scripts/make_brief.py`, which writes the delta brief and the panel's args.
 3. Run 4-6 lenses derived from the spec; a verifier re-measures each lens's findings, highs first, and one re-verify
    agent takes any high or medium a verifier left without a verdict.
 4. A lead writes the plan and the scorecard.
 
 Run the panel as a Workflow (`assets/workflows/review_round.js`); use the Agent tool only when Workflow is unavailable.
-Reviewers never call Designer. While the panel runs, read the per-lens files as they land and draft the next fixes from
-them and the numbers you have; drafts stay drafts until the plan gate.
+Reviewers never call Designer. While the panel runs, write fix drafts to `review/drafts/round<N>/` from the lens and
+verdict files as they land (`references/review.md` §6), never in chat; drafts stay drafts until the plan gate.
 
 ### 7. Iterate and hand off
 - At the plan gate, show the user the scorecard and the plan, and ask every design call in it (a choice between
@@ -199,8 +200,9 @@ them and the numbers you have; drafts stay drafts until the plan gate.
   - `matcheck.py`: checks → scorecard
   - `previews.py`: lit views and sheets
   - `calibrate.py`: Histogram Scan Position from quantiles
+  - `make_brief.py`: a review round's delta brief and panel args (stdlib)
   - `setup_env.sh`
 - `assets/`:
-  - `spec_template.md`, `context_prompt_template.md`
+  - `spec_template.md`, `context_prompt_template.md`, `reference_template.md` (review REFERENCE.md)
   - `workflows/research_sheet.js`, `workflows/review_round.js`
 - `evals/`: spec dry-run test cases (`evals.json`) and how to run them (`README.md`).

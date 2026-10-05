@@ -14,7 +14,7 @@ Designer MCP bridge, using the sd-material-research skill. Read this whole file 
   - `checks/<variant>.json`: the numeric checks, run with `<skill>/scripts/matcheck.py`.
   - `build/NN_*.py`: the scripts that built and revised the graph, in order.
   - `registry.json`: node name → uid for every graph.
-  - `research/`: notes and sources. `review/`: the briefs, round results, scorecards and previews.
+  - `research/`: notes and sources. `review/`: `REFERENCE.md`, scorecards, `round<N>/` (brief, ledger, panel, previews).
 
 ## User requirements (acceptance criteria)
 1. <verbatim>

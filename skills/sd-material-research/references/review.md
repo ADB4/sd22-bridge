@@ -12,53 +12,96 @@ only on material that already passes its numeric checks.
    foreground `sdcall.py` job when they take more than ~40 s.
 2. `matcheck.py checks/<v>.json` for every variant. **Fix every hard failure first.**
 3. `previews.py checks/*.json --out review/round<N>`.
-4. Fill the fix ledger `review/round<N>/ledger.json`: for every planned fix, record the implemented change (node names,
-   params, script), its acceptance checks with the measured before/after values, and anything not done and why. One
-   row per plan item, even when one batch applied several; a row without a measured after value counts as
-   `not_landed`. The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick build,
-   2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
+4. Fill the fix ledger `review/round<N>/ledger.json` (round 2 on): for every planned fix, record the implemented change
+   (node names, params, script), its acceptance checks with the measured before/after values, and anything not done
+   and why. One row per plan item, even when one batch applied several; a row without a measured after value counts
+   as `not_landed`. The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
+   build, 2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
    `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is answered and after the last batch's targeted checks, and put
    `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, or on a
-   Designer job past its expected time).
-5. Write or append `review/BRIEF.md` (§2).
+   Designer job past its expected time). `decisions` holds the last gate's design calls and their answers, verbatim.
+   Keep these field names (a fixcheck re-measures each `acceptance` check per `variant` against `after`):
+   ```json
+   {"apply": {"started": "2026-10-05T01:00:00Z", "ended": "2026-10-05T01:40:00Z", "stall_min": 0},
+    "decisions": [{"question": "...", "answer": "..."}],
+    "items": [{"id": "P1", "title": "...", "change": "nodes, params, script",
+               "status": "done | partial | not_done", "note": "what was not done and why",
+               "acceptance": [{"check": "joint_half_depth", "variant": "classic", "target": [9.5, 11],
+                               "before": 10.1, "after": 10.5}]}]}
+   ```
+5. Round 1: write `review/REFERENCE.md` from `assets/reference_template.md`; later rounds: check that the apply
+   brought it up to date (§2). Then set its `Valid for:` to each manifest's `exported_at` from step 1's export. Write
+   the lens table `review/round<N>/lenses.json` (§3), then run
+   `python3 <skill>/scripts/make_brief.py --review-dir <tools>/review --round <N> --python "$PY"`. In about a second
+   it writes the delta brief `round<N>/BRIEF.md` and the panel args `round<N>/panel_args.json`. Exit 1 names an
+   ownership or ledger error, 2 a usage, REFERENCE or lens-table error (the message says which). Read its warnings: a
+   stale scorecard, an export newer than REFERENCE's `Valid for:` or none after the apply, a REFERENCE older than the
+   apply, `build/` files edited before the last plan gate (§6), a brief over 250 lines, carried items last round's lead
+   left open.
 6. Leave Designer idle until the plan gate. Reviewers work from files only.
 
-## 2. Brief template (`review/BRIEF.md`, append one section per round)
+## 2. Reference and delta brief
 
-1. **Rules.** Never call substance-designer tools. Inputs are read-only. Write helper scripts only under
-   `review/agents/round<N>/<lens>/`. Python: `$(bash <skill>/scripts/setup_env.sh)`; `matcheck.py` and `previews.py`
-   are importable for loading maps, regions and labels, so don't write PNG decoders. Return JSON matching the schema.
-2. **User requirements**, verbatim, with ids R1..Rn, each marked hard or soft. Include the interview answers and the
-   intentional deviations.
-3. **Physics digest** from the spec:
-   - the layer model and ASCII cross-section
-   - the process cards (acts on, reveals, **Never**, where, shape and scale)
-   - the invariants INV-1..k, each with its check id
-   - the sheet's common-mistakes table, as the watch list
-4. **Scale:** tile m, px, mm/px, height depth per variant, normal format, and the viewing distance of each view.
-5. **Graph architecture:**
-   - sections in build order, with node names and current parameters
-   - the composition (max/min/lerp)
-   - which masks come from the layout only
-6. **Node semantics cheat sheet:** copy `sd_craft.md` §5. Histogram Scan direction and Blend divide order have caused
-   wrong fixes.
-7. **Variant presets** table.
-8. **Files:** per variant, with purpose; the preview shader model and its caveats (one light, height-field shadows on
-   the raking views only, no IBL; judge colour from albedo-only views); full-res maps for re-measuring.
-9. **Current scorecard**, invariants first, plus any metric caveats or deprecations.
-10. **History:** for each previous round, each plan item → implemented change → measured acceptance (from the ledger).
-    Also: the keep-as-is list (the regression contract), rejected items (don't re-report) and deferred items.
-11. **Severity rubric:**
-    - **high:** breaks a hard requirement or invariant, or is a tell visible at the variant's use distance
-      (whole tile or tiled)
-    - **medium:** visible at 1:1 or in raking light, or a realism problem
-    - **low:** close-zoom polish
-    - Admissibility: every finding maps to an R-id, an INV-id or a cited spec fact. Taste gets said as taste, and
-      capped at low.
-12. **Acceptance-target rules:** compute every target on current data and check it against a baseline (the clean
-    variant, a shifted or shuffled control). Prefer rank-based or local-reference metrics. Unreachable targets get
-    replaced, not chased.
-13. **The verifier checklist** (§4), so reviewers know what their findings will be tested against.
+In the asphalt build four agents rebuilt round 2's brief from scratch (19 min on the critical path), though most of it
+hadn't changed, and every agent read all 1,779 lines. So the stable part lives in a reference, and a script writes a
+short delta each round.
+
+**`review/REFERENCE.md`** (persistent, from `assets/reference_template.md`). Write it in round 1, before the first
+delta. At the end of each apply, rewrite the sections the apply changed and any section one of the last lead's
+`premises_corrected` entries contradicts, plus `Changed in the last update:`. A corrected node-semantics premise also
+goes into R5, and into the hand-off notes for the skill's `sd_craft.md` §5. `Valid for:` (each variant's
+`exported_at` from its `<prefix>manifest.json`, and the spec version) is set after the preflight export (§1 step 5).
+Sections, each headed `## R<k> <title>`:
+- **R1 Requirements**, verbatim, with ids R1..Rn, each marked hard or soft. Include the interview answers, the
+  defaults and the intentional deviations.
+- **R2 Physics digest** from the spec:
+  - the layer model and ASCII cross-section
+  - the process cards (acts on, reveals, **Never**, where, shape and scale)
+  - the invariants INV-1..k, each with its check id
+  - the sheet's common-mistakes table, as the watch list
+- **R3 Scale:** tile m, px, mm/px, height depth per variant, normal format, and the viewing distance of each view.
+- **R4 Graph architecture:** sections in build order, with node names and current parameters; the composition
+  (max/min/lerp); which masks come from the layout only.
+- **R5 Node semantics cheat sheet:** copy `sd_craft.md` §5.
+- **R6 Variant presets** table.
+- **R7 Files:** maps per variant, with purpose, and how to load them (`matcheck.Ctx`); region names; previews; the
+  preview shader model and its caveats (one light, height-field shadows on the raking views only, no IBL; judge colour
+  from albedo-only views); side reports.
+- **R8 Metric caveats and deprecations.**
+- **R9** the severity rubric and acceptance-target rules below, and the verifier checklist (§4).
+
+**Everyone reads R1, R5 and R9:** `make_brief.py` copies them into every delta, because Histogram Scan direction and
+Blend divide order have caused wrong fixes. Each lens also reads the sections its row in the lens table names (§3), or
+all of REFERENCE.md when it names none. Verifiers, the re-verify agent and the lead read all of it: the premise check
+(§4) needs R4's parameter values. `make_brief.py` exits 2 while R5 or R9 still hold the template's text.
+
+**`review/round<N>/BRIEF.md`** (the delta, made by `make_brief.py`, about 250 lines). Every agent reads it in full:
+1. **Rules:** Designer off, read-only inputs, where helper scripts go, the Python and matcheck to use, 2 threads.
+2. **Read by everyone:** R1, R5 and R9, verbatim.
+3. **Decisions** at the last gate (the ledger's `decisions`).
+4. **Scorecard** per variant (hard failed, hard unmeasured, soft misses, vacuous, errors, the file), with a warning
+   for a scorecard older than its export or an export newer than REFERENCE's `Valid for:`.
+5. **Ledger:** one line per item, each acceptance check before → after [target], and its owner.
+6. **Keep-as-is** (the regression contract), **rejected** (don't re-report), **deferred** and **unverified** items,
+   and the **premises the lead corrected**, of the last round, in full, one line each, with a pointer to its
+   findings.md.
+7. **Output:** result files and schemas.
+8. **Lenses and owners:** scope, owned items, REFERENCE sections, lines to read.
+
+Over budget, it warns and names the largest sections: shorten their sources, not the copy. A material reviewed before
+the delta brief keeps its `review/BRIEF.md`; the runner reads it when `round<N>/BRIEF.md` is missing.
+
+**Severity rubric and acceptance-target rules** (REFERENCE R9; copy them there verbatim):
+- **Severity rubric:**
+  - **high:** breaks a hard requirement or invariant, or is a tell visible at the variant's use distance
+    (whole tile or tiled)
+  - **medium:** visible at 1:1 or in raking light, or a realism problem
+  - **low:** close-zoom polish
+  - Admissibility: every finding maps to an R-id, an INV-id or a cited spec fact. Taste gets said as taste, and
+    capped at low.
+- **Acceptance-target rules:** compute every target on current data and check it against a baseline (the clean
+  variant, a shifted or shuffled control). Prefer rank-based or local-reference metrics. Unreachable targets get
+  replaced, not chased.
 
 ## 3. Lenses
 
@@ -77,12 +120,29 @@ only on material that already passes its numeric checks.
   variant distinctness.
 
 **Round 2 and later: 3-5 lenses.**
-- **Fixcheck:** fill `fix_status` for every ledger item.
+- **Fixcheck:** fill `fix_status` for every ledger item it owns (all of them by default).
 - **Regressions:** check the keep-as-is contract and compare previous and current numbers.
 - **Fresh-eyes realism:** what still reads CG at 1:1 and 3×?
 - Plus G1 and G5.
 
 **Final round: 3 lenses.** Fixcheck; requirements plus tiling; realism plus regressions.
+
+**Lens table** (`review/round<N>/lenses.json`, read by `make_brief.py`):
+```json
+{"lenses": [{"key": "G5", "prompt": "...", "sections": ["R7"], "owns": ["r1:G5/G5-2"]}],
+ "open": [{"id": "H1", "text": "..."}]}
+```
+Keys: letters, digits, `_` or `-`, unique ignoring case, not `lead`, `reverify`, `ledger`, `review_result`, `lenses`
+or `panel_args` (file names in `round<N>/`). `sections` names the REFERENCE sections the lens needs besides R1, R5 and
+R9 (defaults per lens family in the template); `open` holds builder hypotheses and user questions.
+
+**One owner per carried item.** The carried items are every ledger item, every `unverified` finding and `deferred`
+entry of the last round (ids `r<N-1>:<lens>/<id>` and `r<N-1>:deferred:<k>`; k counts the last round's `deferred` list
+from 1, the plan in its `review_result.json`, else its `lead.json`), and every `open` entry. Each goes in exactly one
+lens's `owns`; the other lenses skip it. A lens keyed `fixcheck` owns every ledger item no other lens names.
+`make_brief.py` exits 1 on an item with no owner or two, or an `owns` id that names no carried item. The owner reports
+every item it owns: a ledger item in `fix_status`, any other in `owned` (`problem`, `resolved` or `not_checked`). In
+asphalt round 2, four issue clusters were each found by 2-4 lenses and verified 2-4 times.
 
 **Deriving lenses from the spec:**
 - Every process card whose signature reaches two or more maps becomes (part of) a G3 lens. Its Never lines become the
@@ -131,9 +191,11 @@ only on material that already passes its numeric checks.
    rescale other layers, or conflict with another requirement (e.g. "subtle")? Give a better fix.
 5. **Check the acceptance target** on current data and on a baseline. Replace it if it's unreachable.
 
-Verifiers take every finding of their lens: highs, then mediums, then lows. Never guess a verdict: a finding the time
-box (§6) left unmeasured goes in `not_checked`. One re-verify agent applies this same method to every high or medium
-without a verdict before the lead runs; a low without a verdict goes to the lead `unverified`.
+Verifiers take every finding of their lens: highs, then mediums, then lows. They read all of REFERENCE.md, not only
+their lens's sections: in brick round 3, three premise errors rested on sections the lens had not read. Never guess a
+verdict: a finding the time box (`review.md` §6) left unmeasured goes in `not_checked`. One re-verify agent applies
+this same method to every high or medium without a verdict before the lead runs; a low without a verdict goes to the
+lead `unverified`.
 
 Brick numbers: 69 findings, 3 rejected outright, 22 downgraded, ~18 harmful or infeasible fixes rewritten. Expect
 calibration from the verifier, not a high rejection rate.
@@ -151,6 +213,8 @@ calibration from the verifier, not a high rejection rate.
 - Put every choice only the user can make (between looks, a requirement trade, a deviation) in `design_calls`: the
   question, 2-4 options, the recommended one, and what the answer changes.
 - List keep-as-is, deferred and rejected items.
+- Plan, re-defer or close every carried item that is not a ledger item, starting the entry with its id;
+  `make_brief.py` warns next round about any it left open.
 
 **Outputs:**
 - `review/round<N>/review_result.json`
@@ -159,7 +223,8 @@ calibration from the verifier, not a high rejection rate.
   - `SC: met|mostly_met|not_met | R-id requirement (variant) | evidence`
   - `INV: pass|fail | INV-id | values`
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
-  - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, TIMING (the per-agent table, `panel_min`, and the ledger's `apply`)
+  - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
+    per-agent table, `panel_min`, and the ledger's `apply`)
 - Show the user the scorecard and the plan before building the fixes, and ask the plan's `design_calls` there, in one
   batch (`SKILL.md` stage 7); none during the apply. If they said not to stop, take each call's recommended
   option and list it in the report.
@@ -185,10 +250,12 @@ rounds confirmed it" when the final fixes were never reviewed.
 
 ## 6. Running it
 
-- **Workflow** (the default): `Workflow({scriptPath: "<skill>/assets/workflows/review_round.js", args: {...}})`. The
-  args are documented in the script. It pipelines review → verify per lens, sends every high or medium left without a
-  verdict to one re-verify agent (its verdicts match by `lens/id`, or by a bare id no other finding sent to it shares),
-  then runs the lead. Every agent runs at xhigh; the runtime caps concurrency.
+- **Workflow** (the default): `Workflow({scriptPath: "<skill>/assets/workflows/review_round.js", args: {...}})`, the
+  args being `review/round<N>/panel_args.json` from `make_brief.py`; add `max_findings`, `box_lens` or `box_verify`
+  to change a default (documented in the script). It pipelines review → verify per lens, sends every high or medium
+  left without a verdict to one re-verify agent (its verdicts match by `lens/id`, or by a bare id no other finding sent
+  to it shares), then runs the lead. Lenses read the REFERENCE sections their row names; verifiers, the re-verify
+  agent and the lead read all of it (§2). Every agent runs at xhigh; the runtime caps concurrency.
 - **Time boxes:** lens 15 min and 35 tool calls, verifier 12 min and 25 (args `box_lens`, `box_verify`). The re-verify
   agent and the lead have none. A lens cut by its box names the limit in `box` and lists what it skipped in
   `not_reached`; the lead is told, and those areas count as unreviewed.
@@ -207,10 +274,18 @@ rounds confirmed it" when the final fixes were never reviewed.
   `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
   verifier per non-empty lens, given all its findings, highs first; one re-verify agent for every high or medium
   without a verdict or in a `not_checked` list; then the lead.
-- **While the panel runs,** read the lens and verdict files as they land, and write ledger records, hand-off notes and
-  fix drafts from them. Drafts stay drafts until the plan gate: none runs in Designer before it, and each takes the
-  verifier's fix where it differs. Run no suite or numpy jobs beside the panel (its agents measure too), never edit
-  the maps it reads, and never call Designer from a subagent.
+- **While the panel runs,** work from its files, in this order. Run no suite or numpy jobs beside it (its agents
+  measure too), never edit the maps it reads, and never call Designer from a subagent.
+  1. As each `<lens>.json` lands: note which findings touch the same node or stage script (one draft per cluster).
+  2. As each `<lens>.verdicts.json` lands: for each confirmed high or medium, write a fix draft
+     `review/drafts/round<N>/<lens>-<id>.md` (outside `round<N>/`, which the panel reads): the stage script and its
+     old → new text, the acceptance check and target, the verdict's numbers and `better_fix`. Drafts go in files,
+     never in chat: context grows during a panel (one asphalt apply peaked at 896k).
+  3. Prepare the next ledger's rows and the hand-off notes from the drafts (ids filled in when the plan lands).
+  4. When `lead.json` lands: reconcile, one draft per plan item, rewritten to the lead's `change` and the verifier's
+     `better_fix` and `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then the plan gate.
+
+  Drafts stay drafts until the plan gate: none runs in Designer and none is copied into `build/` before it.
 
 ## 7. Catch ledger
 
@@ -223,5 +298,6 @@ trade adds its row before it is used.
 | One build-measure batch per graph (`SKILL.md` stage 7) | fixes that didn't land: each ledger row keeps its measured before/after values, and a full run follows the last change | which fix in a batch caused a regression; brick's ledger found 2 of 10 and 1 of 8 fixes fully landed (§1) | more `partial`, `not_landed`, `regressed` or `not_checked` fix_status rows next round |
 | High effort for scripted stages (`SKILL.md`, Effort) | design turns stay at xhigh (spec, panel); no past catch is tied to xhigh (round-3 speed review) | reasoning depth in check-fix and fix turns | a lower share of hard checks passing at the first 1K export, more fix cycles, wrong builds regressing, or the developer's eval re-run below 30/30 |
 | Time-boxed lenses and verifiers (§6) | every high or medium gets a verdict at xhigh by the verifier's own method: what a box left goes to the re-verify agent (§4); verifiers take lows after them | a finding a boxed lens never reached; a ledger item a boxed lens never reached (fix_status `not_checked`); an overstated low the verifier's box cut (it reaches the lead `unverified`, never re-verified); verifiers changed 11 of 35 severities (`win`) and 10 of 25 on brick (`mac-tx`) | a high or medium reaching the lead `unverified`; lows reaching the lead `unverified` (`stats.unverified` above `stats.unverified_high_medium`); `stats.severity_changed` per verified high or medium below those rates (widen `box_verify`); a lens whose `box` is not `not_hit` or whose `not_reached` is non-empty (`stats.lenses_boxed`); fix_status `not_checked` rows |
-| Fix drafts from lens files while the panel runs (§6) | drafts never run in Designer before the plan gate and take the verifier's fix | an overstated number or wrong premise in a draft; about 18 brick fixes were rewritten by verifiers (§4) | a draft that reaches Designer before the plan gate, or one that differs from the verifier's fix |
+| Delta brief and section-scoped REFERENCE reads (§2) | the requirements, cheat sheet, rubric and verifier checklist are in every delta; verifiers, the re-verify agent and the lead read all of REFERENCE.md | a cross-section fact a lens skipped; wrong premises on Histogram Scan direction and Blend divide once caused wrong fixes (§2) | the lead's `premises_corrected` (`stats.premises_corrected`) rising round over round, or a verdict's `premise_errors` citing a REFERENCE section its lens didn't read |
+| Fix drafts from verdict files while the panel runs (§6) | drafts start from confirmed verdicts, take the verifier's fix, are rewritten to the lead's plan, and never run in Designer before the plan gate | an overstated number or wrong premise in a draft; about 18 brick fixes were rewritten by verifiers (§4) | a draft that reaches Designer before the plan gate (`make_brief.py` warns on `build/` files edited between the last panel's first lens start and the apply's start; it only sees edits not overwritten later in the apply), or one that differs from the verifier's fix |
 | Section-scoped sheet reads (`SKILL.md` stage 2) | invariants (§5) and targets (§9) are read in full | an interaction held in a skipped process card (asphalt I10: sealant only on cracks) | a sheet §5 invariant of the layout or a chosen process missing from `spec.md`, in its §6 without a check id, or on its left-out list while a preset has the process or feature it governs |

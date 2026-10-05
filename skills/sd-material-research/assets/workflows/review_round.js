@@ -10,11 +10,15 @@ export const meta = {
   ],
 }
 
-// args:
-//   review_dir   absolute path of <tools>/review  (BRIEF.md lives here; round<N>/ holds previews, scorecards, ledger)
+// args: pass round<N>/panel_args.json from scripts/make_brief.py (it checks keys, sections and ownership), plus any
+// optional arg below.
+//   review_dir   absolute path of <tools>/review  (REFERENCE.md lives here; round<N>/ holds the delta BRIEF.md,
+//                previews, scorecards, ledger)
 //   round        round number (1, 2, ...)
-//   lenses       [{key, prompt}]   built from the spec (references/review.md §3); key: letters, digits, _ or -,
-//                unique ignoring case (the Mac volume folds case, so G1 and g1 would share a file)
+//   lenses       [{key, prompt, sections?, owns?}]   built from the spec (references/review.md §3); key: letters,
+//                digits, _ or -, unique ignoring case (the Mac volume folds case, so G1 and g1 would share a file);
+//                sections: the REFERENCE.md ids the lens reads besides R1, R5, R9 (all of it when absent or empty);
+//                owns: the carried items it owns (ledger ids, last round's unverified/deferred, open questions)
 //   max_findings optional, default 7 / 6 / 5 for rounds 1 / 2 / 3+
 //   box_lens     optional {min, calls}, default {min: 15, calls: 35}   (RV-03 time boxes; widen box_verify when the
 //   box_verify   optional {min, calls}, default {min: 12, calls: 25}    severity-change rate in stats falls)
@@ -44,7 +48,7 @@ const RANK = f => { const r = SEV.indexOf(f.severity); return r < 0 ? SEV.length
 if (!DIR) throw new Error('args.review_dir is required')
 const lenses = A.lenses || []
 if (!Array.isArray(lenses) || lenses.length === 0) throw new Error('args.lenses must be a non-empty array of {key, prompt}')
-const RESERVED = ['lead', 'reverify', 'ledger', 'review_result']
+const RESERVED = ['lead', 'reverify', 'ledger', 'review_result', 'lenses', 'panel_args']
 const seenKeys = new Set()
 for (const l of lenses) {
   const k = l && l.key
@@ -52,6 +56,11 @@ for (const l of lenses) {
   if (!/^[A-Za-z0-9_-]+$/.test(k || '') || RESERVED.includes(kk) || seenKeys.has(kk) || !l.prompt)
     throw new Error(`lens ${JSON.stringify(k)}: needs a prompt and a key of letters, digits, _ or -, unique ignoring case, not ${RESERVED.join(', ')} in any case`)
   seenKeys.add(kk)
+  const sid = s => typeof s === 'string' && /^R[1-9][0-9]*$/.test(s)
+  if (l.sections != null && (!Array.isArray(l.sections) || !l.sections.every(sid)))
+    throw new Error(`lens ${JSON.stringify(k)}: sections must be an array of REFERENCE ids R1, R2, ...`)
+  if (l.owns != null && (!Array.isArray(l.owns) || !l.owns.every(o => typeof o === 'string')))
+    throw new Error(`lens ${JSON.stringify(k)}: owns must be an array of item ids`)
 }
 
 const STAMPS = {
@@ -80,6 +89,10 @@ const FINDINGS = {
     fix_status: { type: 'array', items: { type: 'object', properties: {
       fix: { type: 'string' }, status: { type: 'string', enum: ['landed', 'partial', 'not_landed', 'regressed', 'not_checked'] }, note: { type: 'string' },
     }, required: ['fix', 'status', 'note'] } },
+    owned: { type: 'array', description: 'one row per carried item YOU OWN that is not a ledger item', items: { type: 'object', properties: {
+      id: { type: 'string' }, outcome: { type: 'string', enum: ['problem', 'resolved', 'not_checked'] },
+      finding: { type: 'string', description: 'with outcome problem: the id of your finding on it' }, note: { type: 'string' },
+    }, required: ['id', 'outcome', 'note'] } },
     strengths: { type: 'array', items: { type: 'string' } },
     box: { type: 'string', enum: ['not_hit', 'minutes', 'calls'], description: 'the time-box limit that stopped you, if any' },
     not_reached: { type: 'array', items: { type: 'string' }, description: 'parts of your lens brief (areas, cards, regions, variants) you did not review' },
@@ -147,12 +160,30 @@ const PLAN = {
   required: ['started', 'ended', 'fixes', 'design_calls', 'spot_checks', 'requirements_scorecard', 'invariants', 'keep_as_is', 'deferred', 'conflicts_resolved', 'premises_corrected', 'overall_assessment'],
 }
 
-const COMMON = `Read ${DIR}/BRIEF.md completely (all rounds up to ${R}); it lists the requirements, physics digest, scale, graph,
-node semantics, files, scorecard, history, severity rubric and the verifier checklist. Round files are in ${DIR}/round${R}/.
+// RV-05: every agent reads the round's delta brief (it carries REFERENCE R1, R5 and R9: requirements, node cheat sheet,
+// rubric and verifier checklist), then the REFERENCE.md sections its REFERENCE SECTIONS line names.
+const REF = `${DIR}/REFERENCE.md`
+const COMMON = `Read ${RD}/BRIEF.md in full: the round's delta brief (rules; the requirements, node semantics cheat sheet,
+severity rubric and verifier checklist, REFERENCE R1, R5 and R9; decisions; scorecard; ledger; carried items; lens table).
+Then read the sections of ${REF} your REFERENCE SECTIONS line names (\`sed -n '/^## R4 /,/^## R5 /p'\` prints R4).
+If ${RD}/BRIEF.md does not exist (a material reviewed before the delta brief), read ${DIR}/BRIEF.md completely instead
+(all rounds up to ${R}; it lists the requirements, physics digest, scale, graph, node semantics, files, scorecard,
+history, severity rubric and the verifier checklist) and skip the REFERENCE SECTIONS line.
+Round files are in ${RD}/.
 Never call substance-designer tools (Designer is single-threaded and reserved for the builder).
 Read-only inputs. Helper scripts and images ONLY under ${DIR}/agents/round${R}/<your-label>/; your result file is the one other write.
 Python: ${PY}  (numpy, scipy, Pillow, OpenCV). Import ${SKILL}/scripts/matcheck.py (load_image, Ctx, label_wrap)
-instead of writing decoders; full-res 16-bit maps are listed in the brief.`
+instead of writing decoders; full-res 16-bit maps are listed in REFERENCE R7 (or the old brief).`
+// Lenses read their own sections; verifiers, the re-verify agent and the lead read all of REFERENCE.md (the checklist's
+// premise check needs the parameter values in R4).
+const ALL_REF = `REFERENCE SECTIONS: all of ${REF}.`
+const refLine = l => Array.isArray(l.sections) && l.sections.length
+  ? `REFERENCE SECTIONS: ${l.sections.join(', ')} of ${REF} (R1, R5 and R9 are in the delta brief).`
+  : ALL_REF
+const ownLine = l => !Array.isArray(l.owns) ? '' : `
+YOU OWN: ${l.owns.length ? l.owns.join(', ') : 'no carried items'}; carried items another lens owns are theirs: skip them.${l.owns.length ? `
+Ledger items you own get a fix_status row; every other item you own gets one owned row: outcome problem (finding = the id
+of your finding on it), resolved, or not_checked when you did not reach it.` : ''}`
 
 const filing = file => `STAMPS AND RESULT FILE: your first action is \`${STAMP}\`; that is "started". Your last actions: run it
 again for "ended", then write "${file}" as one JSON object, "started" and "ended" first, then every other field you
@@ -173,6 +204,7 @@ with your own script gets no verdict and goes in not_checked.`
 phase('Review')
 const results = await pipeline(lenses,
   l => agent(`${COMMON}
+${refLine(l)}${ownLine(l)}
 Be concrete and critical, like a senior material artist reviewing for production. Every finding cites files, coordinates
 and numbers, names its cause in the graph, proposes a node/parameter-level fix and an acceptance check. Only report problems
 that map to a requirement id, an invariant id or a cited spec fact; say "taste" otherwise. Do not re-report items the brief
@@ -202,6 +234,7 @@ LENS ${l.key}: ${l.prompt}`, { label: `review:${l.key}`, phase: 'Review', schema
     log(`lens ${l.key}: ${fs.length} findings (${fs.filter(HM).length} high/medium) in ${RD}/${l.key}.json`)
     if (sent.length === 0) return { rev, v: null, sent }
     const v = await agent(`${COMMON}
+${ALL_REF}
 You are the adversarial verifier for lens ${l.key}. Below are all its findings: highs, then mediums, then lows. Work
 through them in that order. ${METHOD}
 ${boxed(BOX_VERIFY, 'stop and return: every finding you did not re-measure goes in not_checked.')}
@@ -213,7 +246,7 @@ ${JSON.stringify(sent, null, 1)}`, { label: `verify:${l.key}`, phase: 'Verify', 
   })
 
 // Merge. A finding without a verdict is 'unverified', never 'rejected'.
-const merged = [], strengths = [], fixStatus = [], dead = [], redo = [], cut = []
+const merged = [], strengths = [], fixStatus = [], owned = [], dead = [], redo = [], cut = []
 lenses.forEach((l, i) => {
   const r = results[i]
   if (!r || !r.rev) { dead.push(`review:${l.key}`); return }
@@ -225,6 +258,7 @@ lenses.forEach((l, i) => {
   }
   strengths.push(...(r.rev.strengths || []).map(s => `[${l.key}] ${s}`))
   fixStatus.push(...(r.rev.fix_status || []).map(s => ({ lens: l.key, ...s })))
+  owned.push(...(r.rev.owned || []).map(s => ({ lens: l.key, ...s })))
   const skipped = new Set((r.v && r.v.not_checked) || [])
   for (const f of r.rev.findings || []) {
     const m = { lens: l.key, ...f, status: 'unverified', verdict: null }
@@ -253,6 +287,7 @@ if (redo.length) {
     return { ...f, id: qid(m) }
   })
   reverify = await agent(`${COMMON}
+${ALL_REF}
 You are the re-verify agent for round ${R}. Each finding below is high or medium and has no verdict: its lens verifier ran
 out of its time box, died, or skipped it. Verify each one as its lens verifier would, and use the ids exactly as given.
 ${METHOD} There is no time box: re-measure every finding; put one in not_checked only when you cannot measure it at all.
@@ -300,6 +335,7 @@ const deadLenses = dead.filter(d => d.startsWith('review:')).map(d => d.slice(7)
 
 phase('Synthesize')
 const plan = await agent(`${COMMON}
+${ALL_REF}
 You are the lead material artist for round ${R}. Merge duplicates (keep source ids; agreement across lenses = confidence),
 re-measure any disputed number yourself, correct wrong premises (Histogram Scan centre = 1 - Position; Blend divide = dst/src),
 resolve conflicts with the user's requirements in writing, and order fixes by dependency (layout -> height/structure ->
@@ -313,6 +349,10 @@ plan, unless you re-measure one and find the rejection wrong: then plan it and s
 A FIX STATUS row marked not_checked is one a boxed lens never reached: unless another lens reported that fix, read its
 measured after value in ${RD}/ledger.json (or re-measure it) and add a spot_checks row (id = its fix, outcome landed,
 partial or not_landed).
+Every carried item in the brief that is not a ledger item (last round's deferred and unverified items, open questions)
+gets one outcome: planned (its id in a fix's source_ids), re-deferred (a deferred entry that starts with its id, e.g.
+"r2:deferred:2: ...") or closed (a keep_as_is or conflicts_resolved entry that starts with its id and gives the reason).
+Spot-check an OWNED ITEM REPORTS row marked not_checked before you close its item.
 Every choice only the user can make (between looks, a requirement trade, a deviation) goes in design_calls: the question,
 2-4 options with the recommended one first, and what the answer changes. Write each fix a call touches for the recommended
 option. The plan gate asks every call in one batch; nothing is asked during the apply.
@@ -335,9 +375,16 @@ ${JSON.stringify(cut, null, 1)}
 FIX STATUS REPORTS:
 ${JSON.stringify(fixStatus, null, 1)}
 
+OWNED ITEM REPORTS:
+${JSON.stringify(owned, null, 1)}
+
 STRENGTHS:
 ${JSON.stringify(strengths, null, 1)}`, { label: 'synthesize', phase: 'Synthesize', schema: PLAN, effort: EFFORT })
 if (!plan) { dead.push('synthesize'); log(`lead returned nothing; the agents' files are in ${RD}`) }
+// RV-05 signal: premises the lead had to correct; a rise round over round means a lens's REFERENCE sections were
+// cut too far.
+stats.premises_corrected = plan && Array.isArray(plan.premises_corrected) ? plan.premises_corrected.length : 0
+log(`premises corrected by the lead: ${stats.premises_corrected} (RV-05 signal: compare round over round)`)
 
 // GAP-1: per-agent timing from each agent's own stamps (the same values it wrote into its file).
 const parse = s => { try { const t = Date.parse(s); return isFinite(t) ? t : null } catch (e) { return null } }
@@ -359,4 +406,4 @@ const ends = timing.map(t => parse(t.ended)).filter(t => t !== null)
 const panel_min = starts.length && ends.length ? Math.round((Math.max(...ends) - Math.min(...starts)) / 6000) / 10 : null
 log(`timing: ${timing.filter(t => t.min !== null).length} of ${timing.length} agents stamped; panel ${panel_min === null ? '?' : panel_min} min${dead.length ? `; returned nothing: ${dead.join(', ')}` : ''}`)
 
-return { round: R, plan, confirmed, unverified, rejected, fixStatus, stats, timing, panel_min, dead }
+return { round: R, plan, confirmed, unverified, rejected, fixStatus, owned, stats, timing, panel_min, dead }
