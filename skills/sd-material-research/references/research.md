@@ -37,7 +37,8 @@ research runs as background agents while you draft the spec. The spec gate waits
    re-verify agent changed a number, change it in the spec, the checks and (step 7) the sheet. A hard-check number it
    couldn't confirm goes into the spec as `(est.)` with its reason, into §11 and onto the gate summary's estimates.
    Its check stays hard only for a direction (`references/checks.md`, "Hard checks that can fail").
-   `grep -rn 'TBD:' spec.md checks/` prints nothing before the gate.
+   `grep -rn 'TBD:' spec.md checks/` and `grep -niE 'check:\*\* *(none|n/?a|-|—)([^a-z_]|$)' spec.md` print nothing
+   before the gate.
 6. Write `<tools>/research/notes.md` in the agents' table: the sheet values you are using, with their sections as
    sources; the gap files by name (don't copy them); the decisions the user should own, from the sheet and the gap
    files (ask them in a short follow-up interview round).

@@ -71,8 +71,11 @@ while the user answers. Round 2 follows `interview.md`. In both rounds:
 
 ### 2. Research
 - **With a bundled sheet:** read §0-3 and §5-10 in full and, from §4, only the cards of the processes the interview
-  chose and any card they name (`grep -n '^##'` the sheet, then Read by line range). Every §5 invariant of a chosen
-  process goes into the spec. Close the request's gaps and re-verify the numbers that hard checks depend on, in
+  chose and any card they name (`grep -n '^##'` the sheet, then Read by line range). Every sheet §5 invariant of the
+  layout or a chosen process goes into spec §6 with its Enforce line and a check id that measures it in these
+  variants: re-aim a sheet check whose region no preset fills (wood 11 with no fresh damage: measure the crack walls).
+  Only one whose process or feature no preset has goes on the left-out list under spec §5, with the reason. Close the
+  request's gaps and re-verify the numbers that hard checks depend on, in
   background agents while you draft the spec; the gate waits for them (`references/research.md` A).
 - **Without one:** run the research team in `references/research.md`. It writes a new sheet for next time.
 - The brick build skipped this stage, and its acceptance targets were invented reactively after reviews. Research

@@ -34,14 +34,18 @@ One row per included process:
 |---|---|---|---|---|---|---|
 
 Under the table, give the order of operations: which process feeds which, and why.
-Also list the processes left out on purpose, and why.
+Then the left-out list, each item with its reason: the processes left out on purpose, and each sheet §5 invariant
+whose process or feature no variant here has. These get no §6 entry. An invariant that acts here but is hard to
+measure stays in §6 with a check (soft if need be).
 
 ## 6. Invariants
 Numbered. For each one:
 - **Statement**
 - **Physics:** one line
 - **Enforce:** the structural mechanism in the graph
-- **Check:** the check id(s) in `checks/<variant>.json`
+- **Check:** the check id(s) in `checks/<variant>.json` that measure it in these variants: at least one, never
+  "none". Re-aim a sheet check whose region no preset fills to where the invariant acts here; only an invariant whose
+  process or feature no variant has goes on §5's left-out list
 - **Severity:** hard or soft. For each hard check, one line: the wrong build it fails, and why this spec's default
   passes it (see `references/checks.md`, "Hard checks that can fail"). Tiling is hard on every axis that tiles.
 
