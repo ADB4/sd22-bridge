@@ -121,27 +121,33 @@ only for what §2 lacks):
 ### 5. Measure
 - Export every variant plus its `nowear` at 2048 (`sk.export_outputs` / `sk.nowear`) in one foreground `sdcall.py`
   job. 28 renders take under 2 min.
-- Run `$PY <skill>/scripts/matcheck.py checks/<v>.json`, which writes scorecards. Exit 0: every hard check passed;
-  1: one failed; 3: one measured nothing (expected for damage checks in a `nowear` run, otherwise read the header);
-  2: config error.
-- Run `$PY <skill>/scripts/previews.py checks/*.json --out review/round<N>`, which makes lit views with height
-  shadows, a hillshade, tiling sheets, crops at typical and worst sites, and compare sheets.
+- Then run the suite from one background shell: `$PY <skill>/scripts/matcheck.py checks/<v>.json` for every config
+  (it writes scorecards), the wrong builds (`scripts/wrong_builds.py`, once present), then
+  `$PY <skill>/scripts/previews.py checks/*.json --out review/round<N>`, which makes lit views with height shadows, a
+  hillshade, tiling sheets, crops at typical and worst sites, and compare sheets. Write the round's review files
+  meanwhile (`references/review.md` §1).
+- When it lands, read every exit code (`references/review.md` §1 step 2) and each scorecard JSON's `hard_failed` and
+  `hard_unmeasured`. matcheck exit 0: every hard check passed; 1: one failed; 3: one measured nothing (expected for
+  damage checks in a `nowear` run, otherwise read the header); 2: config error.
 - Look at the previews yourself with Read, but treat your own verdict as provisional. In the brick build it was
   optimistic three times.
 - Fix every **hard** failure before any review.
 
 ### 6. Review
 Follow `references/review.md`:
-1. Preflight: scorecards, previews, the fix ledger.
-2. Round 1: write `review/REFERENCE.md` (`assets/reference_template.md`). Each round: the lens table, then
-   `scripts/make_brief.py`, which writes the delta brief and the panel's args.
+1. Preflight: the 2K export, then the suite in the background; meanwhile the fix ledger, `review/REFERENCE.md`
+   (round 1: `assets/reference_template.md`) and the lens table.
+2. On a green suite only, `scripts/make_brief.py`, which writes the delta brief and the panel's args.
 3. Run 4-6 lenses derived from the spec; a verifier re-measures each lens's findings, highs first, and one re-verify
    agent takes any high or medium a verifier left without a verdict.
 4. A lead writes the plan and the scorecard.
 
 Run the panel as a Workflow (`assets/workflows/review_round.js`); use the Agent tool only when Workflow is unavailable.
 Reviewers never call Designer. While the panel runs, write fix drafts to `review/drafts/round<N>/` from the lens and
-verdict files as they land (`references/review.md` §6), never in chat; drafts stay drafts until the plan gate.
+verdict files as they land, never in chat; drafts stay drafts until the plan gate. **Split at a Workflow lens launch**
+unless the user said not to stop: write the panel hand-off into `CONTEXT_PROMPT.md`, ask the user to open a new
+session and keep this one open, then only wait; the new session drafts, holds the plan gate and applies
+(`references/review.md` §6).
 
 ### 7. Iterate and hand off
 - At the plan gate, show the user the scorecard and the plan, and ask every design call in it (a choice between
@@ -151,8 +157,8 @@ verdict files as they land (`references/review.md` §6), never in chat; drafts s
   run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
   (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
   that an edited node or preset parameter feeds (an edit to a shared node touches every preset). Then run the targeted
-  set: the checks the items touch and the wrong builds of the touched hard checks. Items that miss their acceptance
-  go into a second batch for that graph.
+  set: the checks the items touch and the wrong builds of the touched hard checks, one background job per config, at
+  most 4 at once, while the next graph builds. Items that miss their acceptance go into a second batch for that graph.
 - Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
   apply: `date -u` when the plan gate is answered and after the last batch's targeted checks, into the ledger's
   `apply` (`references/review.md` §1). Then review again with fewer lenses. Three rounds is typical. The stopping
@@ -167,13 +173,14 @@ verdict files as they land (`references/review.md` §6), never in chat; drafts s
   acceptance criteria.
 
 ## Designer rules that save hours
-- **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. Who
-  calls Designer and who owns the CPU:
+- **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. After a
+  split (stage 6) only the new session calls Designer, and it never acts on a `findings.md` older than `lead.json`.
+  Who calls Designer and who owns the CPU:
 
 | Phase | Calls Designer | Owns the CPU |
 |---|---|---|
 | 4 build, 7 apply | main, one call at a time | Designer, plus at most 4 measure jobs (the previous graph's checks) |
-| 5 measure, final gate | main for the exports, then nobody | the suite (matcheck, previews) |
+| 5 measure, final gate | main for the exports, then nobody | the suite (matcheck, wrong builds, previews) |
 | 6 panel, until the plan gate | nobody | the panel's agents; no suite or numpy jobs beside them |
 
 - **A timeout (~60 s) usually means Designer is still computing.** Don't retry. Wait (poll `designer_status`, or

@@ -10,8 +10,17 @@ only on material that already passes its numeric checks.
 
 1. Export every variant and the `nowear` reference at 2048 (`sk.export_outputs`, `sk.nowear`). Run them as one
    foreground `sdcall.py` job when they take more than ~40 s.
-2. `matcheck.py checks/<v>.json` for every variant. **Fix every hard failure first.**
-3. `previews.py checks/*.json --out review/round<N>`.
+2. Start the suite from one background shell (Bash `run_in_background`), in sequence: `matcheck.py checks/<v>.json`
+   for every variant, the wrong builds (`scripts/wrong_builds.py`, once present), then
+   `previews.py checks/*.json --out review/round<N>`. End each command with `; echo "rc=$? <name>"`, never `&&` or
+   `set -e` (a `nowear` run exits 3), so every exit code shows.
+3. While it runs, do steps 4 and 5 up to `make_brief.py`: the ledger, REFERENCE.md and its `Valid for:`, the lens
+   table. When it lands, read every `rc=` line, the wrong builds and previews included, and each scorecard JSON's
+   `hard_failed` and `hard_unmeasured`, never a grep of the text (`SKILL.md` stage 5). A scorecard older than the
+   export counts as red (matcheck's exit 2 writes none). **Fix every hard failure first**, then steps 1-3 again: bring
+   the REFERENCE sections (R4's parameters) and ledger rows the fix touched up to date, and reset `Valid for:` to the
+   new export. `make_brief.py` and the lenses wait for a green suite. No `checks/` configs is not green: write them
+   (`SKILL.md` stage 3), or have the user waive the gate and say so in the hand-off's measured state.
 4. Fill the fix ledger `review/round<N>/ledger.json` (round 2 on): for every planned fix, record the implemented change
    (node names, params, script), its acceptance checks with the measured before/after values, and anything not done
    and why. One row per plan item, even when one batch applied several; a row without a measured after value counts
@@ -19,10 +28,14 @@ only on material that already passes its numeric checks.
    build, 2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
    `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is answered and after the last batch's targeted checks, and put
    `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, or on a
-   Designer job past its expected time). `decisions` holds the last gate's design calls and their answers, verbatim.
-   Keep these field names (a fixcheck re-measures each `acceptance` check per `variant` against `after`):
+   Designer job past its expected time). After a split, `apply.split` holds its stamps (§6); `started` is the plan-gate
+   answer. `decisions` holds the last gate's design calls and their answers, verbatim. Keep these field names (a
+   fixcheck re-measures each `acceptance` check per `variant` against `after`):
    ```json
-   {"apply": {"started": "2026-10-05T01:00:00Z", "ended": "2026-10-05T01:40:00Z", "stall_min": 0},
+   {"apply": {"started": "2026-10-05T01:00:00Z", "ended": "2026-10-05T01:40:00Z", "stall_min": 0,
+              "split": {"panel_launch": "2026-10-05T00:10:00Z", "context_prompt": "2026-10-05T00:13:00Z",
+                        "new_session": "2026-10-05T00:15:00Z", "lead_json": "2026-10-05T00:57:00Z",
+                        "first_call": "2026-10-05T01:02:00Z"}},
     "decisions": [{"question": "...", "answer": "..."}],
     "items": [{"id": "P1", "title": "...", "change": "nodes, params, script",
                "status": "done | partial | not_done", "note": "what was not done and why",
@@ -31,13 +44,15 @@ only on material that already passes its numeric checks.
    ```
 5. Round 1: write `review/REFERENCE.md` from `assets/reference_template.md`; later rounds: check that the apply
    brought it up to date (§2). Then set its `Valid for:` to each manifest's `exported_at` from step 1's export. Write
-   the lens table `review/round<N>/lenses.json` (§3), then run
+   the lens table `review/round<N>/lenses.json` (§3). On a green suite (step 3), run
    `python3 <skill>/scripts/make_brief.py --review-dir <tools>/review --round <N> --python "$PY"`. In about a second
    it writes the delta brief `round<N>/BRIEF.md` and the panel args `round<N>/panel_args.json`. Exit 1 names an
    ownership or ledger error, 2 a usage, REFERENCE or lens-table error (the message says which). Read its warnings: a
-   stale scorecard, an export newer than REFERENCE's `Valid for:` or none after the apply, a REFERENCE older than the
-   apply, `build/` files edited before the last plan gate (§6), a brief over 250 lines, carried items last round's lead
-   left open.
+   scorecard missing, failing or older than its export (re-run matcheck before any lens starts); an export newer
+   than REFERENCE's `Valid for:`, or none after the apply; a REFERENCE older than the apply, or an R5 that differs
+   from `sd_craft.md` §5; `build/` files edited before the last plan gate (§6); a lens naming no sections; a brief
+   over 250 lines; last round's `lead.json` or `review_result.json` missing; carried items last round's lead left
+   open.
 6. Leave Designer idle until the plan gate. Reviewers work from files only.
 
 ## 2. Reference and delta brief
@@ -211,7 +226,8 @@ calibration from the verifier, not a high rejection rate.
 - Re-measure every `unverified` high or medium before planning it (`spot_checks`); defer an unverified low unless its
   numbers reproduce.
 - Put every choice only the user can make (between looks, a requirement trade, a deviation) in `design_calls`: the
-  question, 2-4 options, the recommended one, and what the answer changes.
+  question, 2-4 options, the recommended one, and what the answer changes. At most 4 calls (AskUserQuestion takes 4
+  questions), 3 from round 3 on, where the ask for another round joins the batch; any further call goes in deferred.
 - List keep-as-is, deferred and rejected items.
 - Plan, re-defer or close every carried item that is not a ledger item, starting the entry with its id;
   `make_brief.py` warns next round about any it left open.
@@ -224,7 +240,7 @@ calibration from the verifier, not a high rejection rate.
   - `INV: pass|fail | INV-id | values`
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
   - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
-    per-agent table, `panel_min`, and the ledger's `apply`)
+    per-agent table, `panel_min`, and `round<N>/ledger.json`'s `apply`, §6)
 - Show the user the scorecard and the plan before building the fixes, and ask the plan's `design_calls` there, in one
   batch (`SKILL.md` stage 7); none during the apply. If they said not to stop, take each call's recommended
   option and list it in the report.
@@ -262,14 +278,15 @@ rounds confirmed it" when the final fixes were never reviewed.
 - **Status:** `confirmed`; `rejected` (the verdict says `real=false` or severity `none`; `artifact` alone never
   rejects); `unverified` (no verdict). An unverified finding goes to the lead marked so, never into rejected. The lead
   also gets the rejected list (id, lens, title, why) and can overrule a rejection it re-measures. Save the result as
-  `review/round<N>/review_result.json`.
+  `review/round<N>/review_result.json` (after a split, the new session saves it from the run's file: below).
 - **`dead`:** agents that returned nothing. A dead lens leaves its area unreviewed: say so at the plan gate, and run it
   again in the next round, or now with the Agent tool from the script's lens and verifier prompts. A one-lens Workflow
   would overwrite `lead.json`.
 - **Files and stamps:** each agent runs `date -u` first and last and writes its result, stamps first, to
   `review/round<N>/`: `<lens>.json`, `<lens>.verdicts.json`, `reverify.verdicts.json`, `lead.json`. The result's
   `timing` table and `panel_min` come from those stamps and stay in `review_result.json`; findings.md TIMING lists
-  them with the ledger's `apply` stamps (§1).
+  them with `round<N>/ledger.json`'s `apply` (§1), the apply this round reviewed. This round's split stamps show in
+  the next round's TIMING.
 - **Agent tool** (fallback, only when Workflow is unavailable; launch it only when this session's records show xhigh,
   `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
   verifier per non-empty lens, given all its findings, highs first; one re-verify agent for every high or medium
@@ -277,15 +294,86 @@ rounds confirmed it" when the final fixes were never reviewed.
 - **While the panel runs,** work from its files, in this order. Run no suite or numpy jobs beside it (its agents
   measure too), never edit the maps it reads, and never call Designer from a subagent.
   1. As each `<lens>.json` lands: note which findings touch the same node or stage script (one draft per cluster).
-  2. As each `<lens>.verdicts.json` lands: for each confirmed high or medium, write a fix draft
-     `review/drafts/round<N>/<lens>-<id>.md` (outside `round<N>/`, which the panel reads): the stage script and its
-     old → new text, the acceptance check and target, the verdict's numbers and `better_fix`. Drafts go in files,
-     never in chat: context grows during a panel (one asphalt apply peaked at 896k).
-  3. Prepare the next ledger's rows and the hand-off notes from the drafts (ids filled in when the plan lands).
+  2. As each `<lens>.verdicts.json` lands: add each confirmed high or medium to its cluster's fix draft
+     `review/drafts/round<N>/<lens>-<id>.md`, named after the cluster's first finding (outside `round<N>/`, which the
+     panel reads): the stage script and its old → new text, the acceptance check and target, the verdict's numbers
+     and `better_fix`. Drafts go in files, never in chat: context grows during a panel (one asphalt apply peaked at
+     896k).
+  3. Prepare the next ledger's rows in `review/round<N+1>/ledger.json` from the drafts, status `not_done` until
+     applied (ids filled in when the plan lands, `apply.split` as the stamps come), and the hand-off notes.
   4. When `lead.json` lands: reconcile, one draft per plan item, rewritten to the lead's `change` and the verifier's
-     `better_fix` and `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then the plan gate.
+     `better_fix` and `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then hold the plan gate
+     from `lead.json` (scorecard, plan, every design call; any `/effort` switch goes in the same message). While the
+     user answers, write findings.md (§5) from `review_result.json`, and the next ledger's rows. Apply only once
+     findings.md is newer than `lead.json`.
 
   Drafts stay drafts until the plan gate: none runs in Designer and none is copied into `build/` before it.
+- **Split at lens launch** (`SKILL.md` stage 6), on the Workflow route only and unless the user said not to stop. On
+  the Agent-tool fallback, or when told not to stop, one session runs the panel, waits, drafts, reconciles, holds the
+  plan gate and applies. Two sessions share the tools folder, so each keeps to its part. The Workflow call prints
+  `Run ID: <run id>` and `Transcript dir: <session dir>/subagents/workflows/<run id>`: `<session dir>` is the printed
+  dir minus `/subagents/workflows/<run id>` (the old session's `~/.claude/projects/<project>/<session id>/`), and its
+  basename is the session id. A stamp is `date -u +%Y-%m-%dT%H:%M:%SZ`.
+  - **Old session.** Stamp just before the Workflow call (panel launch). When the call returns, write the panel
+    hand-off (`assets/context_prompt_template.md`) at the top of `<tools>/CONTEXT_PROMPT.md`, add one pointer line
+    with no status to the material's project memory note (`panel hand-off for round <N> at <tools>/CONTEXT_PROMPT.md;
+    skip it if it says Spent`), give the user the hand-off's kick-off line in a code block and ask them to open the
+    new session now in a new window or tab, run `/effort xhigh` there first, and leave this one open (no `/exit`,
+    `/clear` or archive) until it says the panel finished. After that: no Designer call, no file write, no new work.
+    Stay open until the panel's completion notice: an idle session keeps its panel running, but closing it mid-run was
+    never tested and may stop the panel. On the notice, only say the panel finished.
+  - **New session.** Stamp first (new session start), and take the hand-off's write time with
+    `date -u -r "<tools>/CONTEXT_PROMPT.md" +%Y-%m-%dT%H:%M:%SZ`. Confirm xhigh on this session's records (`SKILL.md`
+    Effort; here the JSONL under `~/.claude/projects/` that holds the kick-off line; if not, ask and wait). Do items
+    1-3 above for the files already there, then watch the round folder with a Monitor (`timeout_ms` 1800000, its cap;
+    re-arm it on each expiry and skip lines for files already handled). It prints one line per panel file as it lands.
+    After `lead.json` it waits up to 2 min for `$WF` and ends on `run ended` or `no runner result 2 min after
+    lead.json`; it also ends on a run that ended without `lead.json`, or when no agent file changed in 20 min (a live
+    agent can think for 10 min without a write):
+    ```bash
+    RD="<tools>/review/round<N>"; WF="<session dir>/workflows/<run id>.json"; TD="<transcript dir>"; seen="|"
+    [ -d "$TD" ] || { echo "no transcript dir: check the hand-off"; exit 1; }
+    while :; do
+      for f in "$RD"/*.json; do b=$(basename "$f"); case "$seen" in *"|$b|"*) continue;; esac
+        [ -s "$f" ] && [ "$f" -nt "$RD/panel_args.json" ] && { echo "landed $b $(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ)"; seen="$seen$b|"; }
+      done
+      case "$seen" in *"|lead.json|"*) n=0; while [ ! -f "$WF" ] && [ $n -lt 8 ]; do sleep 15; n=$((n+1)); done
+        [ -f "$WF" ] && echo "run ended" || echo "no runner result 2 min after lead.json"; break;; esac
+      [ -f "$WF" ] && { echo "ended without lead.json"; break; }
+      [ -n "$(find "$TD" -name 'agent-*.jsonl' -mmin -20 | head -1)" ] || { echo "stalled 20 min"; break; }
+      sleep 15
+    done
+    ```
+    On each `landed` line, item 1 or 2, then 3 (`<transcript dir>/journal.jsonl` holds each agent's return as it ends).
+    `ended without lead.json`, `stalled` or `no runner result`: the last bullet. The runner's return lands in `$WF`
+    only at completion, seconds after `lead.json`. On `run ended`, save its `result` as the round's
+    `review_result.json` (the one-liner fails unless its `status` is `completed`: then the last bullet); until then
+    the lens, verdict and lead files are enough to start reconciling:
+    ```bash
+    RD="<tools>/review/round<N>"; WF="<session dir>/workflows/<run id>.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["status"]=="completed", d["status"]; json.dump(d["result"], open(sys.argv[2], "w"), indent=1)' "$WF" "$RD/review_result.json"
+    ```
+    Then item 4: reconcile, the plan gate with every design call in one batch (`SKILL.md` stage 7), findings.md while
+    the user answers, then the apply. Only this session calls Designer. Once the gate is answered, rewrite the
+    panel block's `Next:` line in `CONTEXT_PROMPT.md` as `Spent: plan gate answered <UTC>; this block is history.
+    Split stamps: <panel_launch, context_prompt, new_session, lead_json>`, and add `first_call` when taken: a resumed
+    session then skips the block, and the stamps survive a session that dies mid-apply.
+  - **Stamps** into the ledger that records this apply (`review/round<N+1>/ledger.json`, `apply.split`, §1):
+    `panel_launch` (from the hand-off), `context_prompt` (its write time), `new_session`, `lead_json` (the watch's
+    `landed lead.json` line) and `first_call` (a stamp just before the apply's first Designer call). The plan-gate
+    answer is the apply's `started`.
+  - **If the panel stopped.** `$WF` present, any status (`ended without lead.json`, or a `status` other than
+    `completed`): the run is over. Ask nothing; the dead agents are its `dead` list (status `completed`), or else
+    every agent whose file never landed (`dead`, above). On `stalled` or `no runner result 2 min after lead.json` (the
+    old session may have closed): ask the user whether the old session is still open with its panel running (its
+    task list shows it); if so, keep waiting (re-arm the watch; after `lead.json`, re-check `$WF`); if not, every
+    agent whose file never landed is dead. Just before each rerun with the Agent tool from the script's prompts,
+    check again that its file has not landed and, with no `$WF`, that no `agent-*.jsonl` in the transcript dir
+    changed in 20 min. A rerun writes `<name>.rerun.json`, moved into place only if the original is still absent
+    (`[ -e lead.json ] || mv lead.rerun.json lead.json`). If a file from the runner lands later anyway, stop and tell
+    the user before the plan gate. With no runner result, write `review_result.json` yourself by the Status rules
+    above: `plan` from `lead.json`; `confirmed`, `unverified` (each with `lens`, `id`, `title`, `why_unverified`) and
+    `rejected` (`id`, `lens`, `title`, `why`) from the lens and verdict files. Then findings.md from it.
 
 ## 7. Catch ledger
 

@@ -55,3 +55,38 @@ Re-check the hard invariants after every change: <list check ids>.
 
 ## What I'd like to do next
 <describe the next change here>
+
+---
+
+# Panel hand-off (written at lens launch)
+
+The old session writes this block, from its `##` heading to the end, when the panel's Workflow call returns
+(`references/review.md` §6). It goes first in `<tools>/CONTEXT_PROMPT.md`: above the material hand-off if the file has
+one, replacing an older panel block. After the plan gate the new session rewrites its `Next:` line as `Spent: ...`
+(`references/review.md` §6), so a resumed session skips it. The end-of-material hand-off (above) drops it.
+
+Kick-off line for the new session. The old session gives it to the user in a code block and tells them: open it in a new
+window or tab, run `/effort xhigh` there first, and keep the old session open (no `/exit`, `/clear` or archive) until it
+says the panel finished; closing it may stop the panel.
+```
+Use sd-material-research to resume <material> round <N> under its running review panel: read "<tools>/CONTEXT_PROMPT.md", the panel hand-off first.
+```
+
+## Panel hand-off: round <N>
+The old session launched round <N>'s review panel and only waits for it. This session owns the tools folder and is
+the only Designer caller. Follow `references/review.md` §6, new session.
+- Round <N>. Run ID `<run id>`. Transcript dir `<session dir>/subagents/workflows/<run id>` (`journal.jsonl`).
+- Old session `<session id>`, folder `<session dir>`: the runner's return lands in `workflows/<run id>.json` at
+  completion. Panel launch: <UTC>.
+- Tools folder `<tools>`, package `<path>.sbs`. Requirements and architecture: `spec.md`, `review/REFERENCE.md`.
+- Measured state, from the suite after the <exported_at> export: <variant: exit code, hard failed, hard unmeasured,
+  soft misses; or no `checks/` configs, gate waived by the user>; scorecards in `<dir>`.
+- Ledger: `review/round<N>/ledger.json` (the last apply; none in round 1). This round's apply goes in
+  `review/round<N+1>/ledger.json`, with `apply.split`.
+- Drafts: `review/drafts/round<N>/`. Effort trial: <graph: arm, records so far>.
+- Next: stamp your start; confirm xhigh on the JSONL that holds the kick-off line (`SKILL.md` Effort; if not, ask and
+  wait); draft from the lens and verdict files as they land (a Monitor on `review/round<N>/`); wait for `lead.json`;
+  reconcile the drafts; the plan gate from `lead.json` (every design call in one batch, and in the same message the
+  `/effort` switch the trial line names, if any); while the user answers, save `review_result.json` once the run
+  ends and write findings.md and the next ledger's rows; on the answer, mark this block spent; apply only once
+  findings.md is newer than `lead.json`.

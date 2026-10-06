@@ -356,6 +356,7 @@ Spot-check an OWNED ITEM REPORTS row marked not_checked before you close its ite
 Every choice only the user can make (between looks, a requirement trade, a deviation) goes in design_calls: the question,
 2-4 options with the recommended one first, and what the answer changes. Write each fix a call touches for the recommended
 option. The plan gate asks every call in one batch; nothing is asked during the apply.
+At most ${R >= 3 ? 3 : 4} design calls (AskUserQuestion takes 4 questions${R >= 3 ? '; from round 3 the ask for another round takes one' : ''}); put any further call in deferred.
 ${filing(`${RD}/lead.json`)}
 
 CONFIRMED FINDINGS (with verifier notes):
