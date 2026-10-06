@@ -11,10 +11,12 @@ Designer MCP bridge, using the sd-material-research skill. Read this whole file 
   - Outputs: <list>.
 - Tools folder: `<path>_tools/`
   - `spec.md`: requirements, scale, layer model, invariants, presets, targets. The acceptance criteria live here.
-  - `checks/<variant>.json`: the numeric checks, run with `<skill>/scripts/matcheck.py`.
+  - `checks/<variant>.json`: the numeric checks; `checks/wrong_build_cases.py`: the wrong build each hard check
+    catches; `SUITE.json`: runs them all with the previews (`<skill>/scripts/suite.py`).
   - `build/NN_*.py`: the scripts that built and revised the graph, in order.
   - `registry.json`: node name → uid for every graph.
-  - `research/`: notes and sources. `review/`: `REFERENCE.md`, scorecards, `round<N>/` (brief, ledger, panel, previews).
+  - `research/`: notes and sources. `review/`: `REFERENCE.md`, `round<N>/` (suite.json, scorecards, wrong builds,
+    previews, ledger, fixcheck, brief, panel).
 
 ## User requirements (acceptance criteria)
 1. <verbatim>
@@ -39,8 +41,14 @@ After any graph change:
 1. run the layout
 2. save
 3. export
-4. run `matcheck.py` for every variant
-5. compare against the table below
+4. run the suite from a background shell,
+   `$PY <skill>/scripts/suite.py <tools>/SUITE.json --out <tools>/review/round<N>` (`--configs` and `--kinds` for a
+   targeted set), and read its `suite.json` (`suite_partial.json` after a targeted set, which never closes a round):
+   `green`, `rc`, `full`, `red`; a `suite.json` that started before the last export is red, and a targeted set moves
+   it aside (`references/checks.md`, "Suite")
+5. with a fix ledger, run `$PY <skill>/scripts/fixcheck.py --ledger <tools>/review/round<N>/ledger.json` and read
+   its `fixcheck/fixcheck.json` (`references/review.md` §1 step 4)
+6. compare against the table below
 
 ## Current measured state (2048)
 | check | variant A | variant B | variant C |
@@ -79,8 +87,9 @@ the only Designer caller. Follow `references/review.md` §6, new session.
 - Old session `<session id>`, folder `<session dir>`: the runner's return lands in `workflows/<run id>.json` at
   completion. Panel launch: <UTC>.
 - Tools folder `<tools>`, package `<path>.sbs`. Requirements and architecture: `spec.md`, `review/REFERENCE.md`.
-- Measured state, from the suite after the <exported_at> export: <variant: exit code, hard failed, hard unmeasured,
-  soft misses; or no `checks/` configs, gate waived by the user>; scorecards in `<dir>`.
+- Measured state, after the <exported_at> export: `review/round<N>/suite.json` <green, rc, full>; per variant, from
+  `review/round<N>/scorecard_<variant>.json` <hard_failed, hard_unmeasured, soft_failed>; or <no `checks/` configs,
+  gate waived by the user>; fixcheck: <rc, items not landed; none in round 1>.
 - Ledger: `review/round<N>/ledger.json` (the last apply; none in round 1). This round's apply goes in
   `review/round<N+1>/ledger.json`, with `apply.split`.
 - Drafts: `review/drafts/round<N>/`. Effort trial: <graph: arm, records so far>.

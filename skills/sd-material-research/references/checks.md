@@ -2,7 +2,8 @@
 
 The spec turns each physical claim into a numeric check on the exported maps. `scripts/matcheck.py` runs a
 `checks/<variant>.json` and writes `scorecard_<variant>.md` and `.json`. Reference sheets and specs use the check
-names below.
+names below. A round's measure runs matcheck, the wrong builds and the previews of every config through
+`scripts/suite.py` ("Suite"); `scripts/fixcheck.py` re-measures a fix ledger ("Fixcheck").
 
 ```bash
 PY=$(bash <skill>/scripts/setup_env.sh)          # once; prints the venv python
@@ -103,8 +104,9 @@ lives in the dev folder, `sd-material-research-dev/tests/matcheck/`.
 - **Vacuity guard.** Each check reports `n_key`, the size of the set its value rests on (pixels, or elements,
   profiles or features as `details.n_key_unit` says). Below `min_px` (default 1) the check is reported as `vacuous`
   with `passed: null`: an invariant on an empty region must not count as a pass (on a hard check the run exits 3
-  unless another hard check failed). Set `min_px` on every hard check whose region can be empty in some variant,
-  e.g. `"min_px": 500` on a damage-order check. A `min_px` on a type that has no counted set (`seam`,
+  unless another hard check failed, and the suite is red). Set `min_px` on every hard check whose region can be empty
+  in some variant, e.g. `"min_px": 500` on a damage-order check; where a preset leaves the region empty by design,
+  make the check soft or `skip` in that config. A `min_px` on a type that has no counted set (`seam`,
   `normal_valid`, `height_usage`) is a config error. What `n_key` counts: `order` the checked upper pixels (and 0
   when `lower` has fewer than `lower_min_px` pixels); `components` and `coverage` the `within` set (the whole tile
   without it), not the region; `height_diff` the smaller of `a` and `b`; `concentration` within ∩ driver; `slope`
@@ -226,7 +228,8 @@ dry runs found the same failure modes in every material, so check each hard chec
 
 `scripts/wrong_builds.py` replays those lines on the exported maps. Each case edits the maps in memory into the named
 wrong build and runs the check through matcheck's own functions; it behaves when the check passes the real maps and
-fails the edited ones. Keep the cases next to the configs, e.g. `<tools>/checks/wrong_build_cases.py`:
+fails the edited ones. Keep the cases next to the configs, e.g. `<tools>/checks/wrong_build_cases.py`, and name the
+file in `SUITE.json`: the suite is red while any hard check has no case ("Suite"). For example:
 
 ```python
 import numpy as np
@@ -259,6 +262,8 @@ $PY <skill>/scripts/wrong_builds.py --cases <tools>/checks/wrong_build_cases.py 
 - `--only` takes configs, groups or check ids. It writes `wrong_builds.md` and `.json`. Exit code 0 when every case
   behaves and every hard check has a case, 1 when a case misbehaves (the real build fails, or the wrong build passes
   or reads vacuous) or a hard check has none, 2 on a config or cases-module error.
+- `--list` and `--merge` serve the suite: one `--only` job per config and group, merged into what one serial run
+  writes (the script's docstring).
 - A case takes about 0.5 s at 2048 (a `normal_valid` case about 1 s), plus about 0.4 s per config to load its maps.
 
 ## Tips
@@ -288,11 +293,14 @@ $PY <skill>/scripts/previews.py <tools>/checks/classic.json <tools>/checks/weath
 ```
 - `--sites N`: crop sites per variant, 1 typical + N-1 worst (default 3). `--no-shadows`: skip cast shadows.
 - About 4 s and 1 GB peak RSS per 2048 variant (about 15 s and 3.3 GB at 4096).
-- Use a fresh `--out` per round. Crops from an earlier run with more sites are not deleted.
+- Use a fresh `--out` per round. Crops from an earlier run with more sites are not deleted (the suite deletes its own
+  last run's files by name).
 - `scale.normal_format` must be `directx` or `opengl`. When the normal map's tilt disagrees with the height map's
   (e.g. a flipped green channel), the index and stderr carry a warning; the lit views still follow the config.
-- Two configs with the same `variant` get distinct prefixes (`<variant>_2`). Non-square tiles keep their physical
-  aspect in the downsized views.
+- Two configs with the same `variant` get distinct prefixes (`<variant>_2`; the suite refuses them). Non-square tiles
+  keep their physical aspect in the downsized views.
+- The suite renders one config per job (`--part`), then the compare sheets and index (`--assemble`), byte-identical
+  to one serial run. Neither is for use by hand.
 
 Per variant, `<out>/<variant>_*.png`:
 
@@ -343,3 +351,80 @@ Optional block in checks.json. `sites` are added on top of N, e.g. at a failing 
 Judge colour from albedo and relief from the hillshade with the lit views. Check any dark rim against the height crop.
 Colour PNGs go through matcheck's loader (16-bit with OpenCV, 8-bit with the Pillow fallback), and the index states
 the bit depth of the normal and basecolor reads.
+
+## Suite
+
+`scripts/suite.py` runs a material's whole measure in parallel and gates it: matcheck, the wrong builds and the
+previews one config (or cross-case group) per job, and the material's own commands; then it merges the wrong builds
+and assembles the previews. It never calls Designer. Start it with `$PY`; every job inherits it. Details: the
+docstring of `scripts/suite.py`.
+
+```bash
+$PY <skill>/scripts/suite.py <tools>/SUITE.json --out <tools>/review/round<N>                 # full run
+$PY <skill>/scripts/suite.py <tools>/SUITE.json --out <tools>/review/round<N> \
+    --configs classic,weathered --kinds matcheck,wrong_builds --beside-designer                # targeted set
+```
+
+`<tools>/SUITE.json` sits beside `checks/`; paths are relative to it.
+```json
+{"configs": ["checks/*.json"],
+ "cases": "checks/wrong_build_cases.py",
+ "checks_dir": "checks",
+ "previews": {"configs": ["checks/*.json"], "args": ["--sites", "3"]},
+ "commands": [{"name": "ladder", "argv": ["{python}", "checks/ladder.py"], "outputs": ["review/ladder.json"],
+               "timeout": 300, "expect": 20, "gate": {"json": "review/ladder.json", "empty": ["hard_failed"]}}],
+ "timeout": 900}
+```
+- `configs` (required): globs or files; JSON with no `checks` key is skipped.
+- `cases`: the wrong-builds module ("Hard checks that can fail").
+- `checks_dir`: where its config names live (default: its folder).
+- `previews`: `configs` (default: `configs`) and `args` (`--sites N`, `--no-shadows`). Without it, no previews.
+- `commands`: the material's own scripts (a ladder; composites, split per variant). `outputs`: files it must write;
+  `expect`: its seconds, for the job order until a run has timed it; `after: true`: after the other jobs; `gate`:
+  fields of a JSON output that must be `empty`, `true` or `false`. `{python}`, `{out}`, `{tools}` expand.
+- `timeout`: seconds per job (default 900).
+
+**Gate.** Read `suite.json`, never the text: green only with `green` true, `rc` 0 and `full` true. A job is red on a
+nonzero exit, a missing or stale output, a hard check that failed, errored or was vacuous (no waiver: `nowear` stays a
+`compare` render inside the variant configs), a wrong build that misbehaves or measured nothing, a failed command
+`gate` or a timeout. **R6:** a config whose hard check has no case is red (ids under `uncovered`), and every config
+with a hard check is when SUITE.json has no `cases`. Exit code 0 green, 1 red, 2 refused (no job run, no report).
+
+**Workers.** Default CPUs − 2, capped by RAM (1.5 GB a 2K job) and the job count: 6 on an 8-CPU Mac. Beside a
+Designer build (stage 7's targeted sets) pass `--beside-designer`: about half the cores. Beside a review panel, no
+suite (`review.md` §6). Untested past 6 workers. Jobs start longest first: by this or the last round's
+`suite/times.json`, else by estimate.
+
+Every output a job declares is deleted by exact name before the run, so a job that dies is red, never green on a
+stale file. One suite per `--out` at a time: another exits 2 while `<out>/suite/lock.json` names a running suite, or
+a job a SIGKILLed suite left running: kill the pids it names or let them finish.
+
+**Filtered runs** (`--configs` config stems, variants, groups or commands; `--kinds`) write `suite_partial.json`, each
+replacing the last one, and never close a round. They move a `suite.json` beside them to
+`suite/superseded_suite.json`; a missing one is never green. A `suite.json` that started before the last export is red.
+
+**Timing** (`mac-loaded`, 6 workers against 1): 12 configs, 48 cases and previews 160.5 s → 36.0 s (4.46×, n = 3,
++19 % CPU); 26 configs, 580 cases 7.9 → 1.76 min (4.50×; serial n = 1, parallel n = 3). A real asphalt-class 2K suite
+with composites has not been run yet (M8).
+
+## Fixcheck
+
+`scripts/fixcheck.py` re-measures every acceptance row of a fix ledger (`review.md` §1 step 4) and says which fixes
+landed. Start it with `$PY`: matcheck runs under its `--python`, by default its own. Details: the docstring at the top
+of `scripts/fixcheck.py`.
+
+```bash
+$PY <skill>/scripts/fixcheck.py --ledger <tools>/review/round<N>/ledger.json [--rerun]
+```
+A row's `check` must be a check id in its `variant`'s config. fixcheck reads that variant's `scorecard_<variant>.json`
+beside the ledger when it is fresh (the current export, newer than it and the config), else re-runs `matcheck.py
+--only` into `fixcheck/<variant>/` (`--rerun`: always). Read `fixcheck/fixcheck.json`. Row status:
+- `holds`: meets the target (the row's `[lo, hi]`, else the check's own); `drifted`: meets it, but the ledger's
+  `after` is stale (update it); `misses`: fails it.
+- `no_after`: no measured `after` (not landed); `no_target`: nothing to judge by; `no_check`: no such check, or
+  skipped; `unmeasured`: errored, vacuous or not a number; `no_variant`: no config has that variant.
+
+An item landed when it has rows and every row holds or drifted. Flags: `done_not_landed` (status `done`, not landed),
+`claim_contradicted` (the ledger's `after` meets the target, the re-measure misses), `measure_failed` (matcheck could
+not re-measure a variant). Exit code 0: no flag; 1: a flag; 2: a usage, checks-dir or ledger error (nothing written).
+About 0.07 s on fresh scorecards; a re-run about 1.6 s per variant at 2K (`mac-loaded`).

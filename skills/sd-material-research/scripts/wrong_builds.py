@@ -4,6 +4,8 @@
 
 Usage:
     python wrong_builds.py --cases checks/wrong_build_cases.py --checks-dir checks --out review [--only id1,id2]
+    python wrong_builds.py --cases checks/wrong_build_cases.py --list
+    python wrong_builds.py --merge review/wb/classic review/wb/weathered ... --out review
 
 The cases module defines CASES = [(config, check_id, wrong_build, edit), ...]: `config` names <checks-dir>/<config>.json,
 `check_id` a hard check in it, `wrong_build` the mistake in words, and edit(ctx) returns the wrong build as a list of
@@ -19,6 +21,11 @@ skipped (so one loop can cover many configs). Optional hooks in the cases module
 --only takes configs, cross-case groups or check ids (a group runs only when named or when --only is absent).
 Writes wrong_builds.md and .json in --out. Exit code: 0 when every case behaves and every hard check has a case, 1 when
 a case misbehaves or a hard check has none, 2 on a config error or a cases module that does not load.
+--list prints {"configs": [...], "groups": [...], "cases": N, "ids": [...]} as JSON, configs and groups in the order a
+run takes them, ids the cases' check ids (exit 0, or 2 when the module does not load). --merge reads the
+wrong_builds.json of each folder, in the order given, and writes the merged report to --out with the same exit code
+(seconds = their sum); suite.py runs one --only job per config and per group, then merges them in --list order, which
+equals one serial run.
 
 Cases modules `import wrong_builds as wb` for the edit helpers (paint, luma_shift, height_units, normal_from, stepped,
 once) and `import matcheck as mc` for the region tools (mc.dilate, mc.erode, ...).
@@ -198,13 +205,42 @@ def write_report(out, rows, missing, not_hard, seconds):
     return 1 if bad or unc else 0
 
 
+def merge(parts, out):
+    """--merge: one report from several --out folders, rows in the order given."""
+    rows, missing, not_hard, seconds = [], {}, [], 0.0
+    for d in parts:
+        p = os.path.join(d, "wrong_builds.json")
+        try:
+            with open(p) as fh:
+                r = json.load(fh)
+            rows += list(r["rows"])
+            for k, v in r["missing"].items():
+                missing[k] = sorted(set(missing[k]) | set(v)) if k in missing else list(v)
+            not_hard += list(r["not_hard"])
+            seconds += float(r.get("seconds") or 0.0)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            print("merge error: %s: %s" % (p, e), file=sys.stderr)
+            return 2
+    return write_report(out, rows, missing, not_hard, round(seconds, 1))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--cases", required=True, help="cases module (.py) defining CASES")
-    ap.add_argument("--checks-dir", required=True, help="folder of the <config>.json files")
-    ap.add_argument("--out", required=True, help="folder for wrong_builds.md and .json")
+    ap.add_argument("--cases", help="cases module (.py) defining CASES")
+    ap.add_argument("--checks-dir", help="folder of the <config>.json files")
+    ap.add_argument("--out", help="folder for wrong_builds.md and .json")
     ap.add_argument("--only", help="comma-separated configs, cross-case groups or check ids")
+    ap.add_argument("--list", action="store_true", help="print the cases module's configs, groups and case count")
+    ap.add_argument("--merge", nargs="+", metavar="DIR", help="merge the wrong_builds.json in these folders into --out")
     a = ap.parse_args(argv)
+    if a.merge:
+        if a.cases or a.list or a.only or not a.out:
+            ap.error("--merge takes part folders and --out only")
+        return merge(a.merge, a.out)
+    if not a.cases:
+        ap.error("the following arguments are required: --cases")
+    if not a.list and not (a.checks_dir and a.out):
+        ap.error("the following arguments are required: --checks-dir, --out")
     t0 = time.time()
     sys.modules.setdefault("wrong_builds", sys.modules[__name__])   # `import wrong_builds` in a cases module = this file
     try:
@@ -223,6 +259,14 @@ def main(argv=None):
     only = set(a.only.split(",")) if a.only else None
     want = lambda cfg, cid: only is None or cfg in only or cid in only
     configs = list(dict.fromkeys(extra + [c[0] for c in cases]))
+    if a.list:
+        try:
+            print(json.dumps({"configs": configs, "groups": list(cross), "cases": len(cases),
+                              "ids": sorted({c[1] for c in cases if isinstance(c[1], str)})}))
+        except TypeError as e:  # a config or group name JSON cannot hold
+            print("cases error: %s" % e, file=sys.stderr)
+            return 2
+        return 0
     load = loader(a.checks_dir)
     rows, missing, not_hard = [], {}, []
     for config in configs:

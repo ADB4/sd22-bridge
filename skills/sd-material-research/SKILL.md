@@ -25,7 +25,7 @@ into a method that works for any material.
 | 2 | Research | `references/research.md`, `references/materials/<m>.md` by section | `research/notes.md`, or a new sheet | — | xhigh |
 | 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | user approves | xhigh |
 | 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass | high (trial) |
-| 5 | Measure | `references/checks.md` | scorecards, previews | hard checks pass | high (trial) |
+| 5 | Measure | `references/checks.md` | scorecards, previews | suite green | high (trial) |
 | 6 | Review | `references/review.md` | `review/round<N>/findings.md` | user approves the plan | xhigh |
 | 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied | high (trial) |
 
@@ -98,7 +98,8 @@ Then generate `checks/<variant>.json` from the acceptance table, using the schem
 `references/checks.md`, not matcheck's source. Include perceptual checks, such as the visible joint at half depth, not
 only mask-level ones. Before the gate, put every hard check through `references/checks.md`, "Hard checks that can
 fail": tiling is hard, a direction the physics fixes is hard, and each hard check reads the rendered maps and names the
-wrong build it catches. In the dry runs, every spec's weakest hard checks proved only the mask wiring.
+wrong build it catches, as a case in `checks/wrong_build_cases.py` (the suite is red without one). Write `SUITE.json`
+too (`references/checks.md`, "Suite"). In the dry runs, every spec's weakest hard checks proved only the mask wiring.
 
 **Gate:** show the user a short summary (scale, layer model, the 3-6 key invariants in plain words, the variant
 ladder, what's estimated) and wait for the go-ahead. Skip this only if they said not to stop.
@@ -121,23 +122,23 @@ only for what §2 lacks):
 ### 5. Measure
 - Export every variant plus its `nowear` at 2048 (`sk.export_outputs` / `sk.nowear`) in one foreground `sdcall.py`
   job. 28 renders take under 2 min.
-- Then run the suite from one background shell: `$PY <skill>/scripts/matcheck.py checks/<v>.json` for every config
-  (it writes scorecards), the wrong builds (`scripts/wrong_builds.py`, once present), then
-  `$PY <skill>/scripts/previews.py checks/*.json --out review/round<N>`, which makes lit views with height shadows, a
-  hillshade, tiling sheets, crops at typical and worst sites, and compare sheets. Write the round's review files
-  meanwhile (`references/review.md` §1).
-- When it lands, read every exit code (`references/review.md` §1 step 2) and each scorecard JSON's `hard_failed` and
-  `hard_unmeasured`. matcheck exit 0: every hard check passed; 1: one failed; 3: one measured nothing (expected for
-  damage checks in a `nowear` run, otherwise read the header); 2: config error.
+- Then run the suite from one background shell: `$PY <skill>/scripts/suite.py SUITE.json --out review/round<N>`. It
+  writes the scorecards, the wrong builds and the previews: lit views with height shadows, a hillshade, tiling sheets,
+  crops at typical and worst sites, and compare sheets. Write the round's review files meanwhile
+  (`references/review.md` §1).
+- When it lands, read `review/round<N>/suite.json`, never the text: green means `green` true, `rc` 0 and `full` true.
+  Otherwise fix each job in `red`: a hard check failed or measured nothing, a wrong build misbehaved, or a hard check
+  has no case (`references/checks.md`, "Suite").
 - Look at the previews yourself with Read, but treat your own verdict as provisional. In the brick build it was
   optimistic three times.
-- Fix every **hard** failure before any review.
+- Fix every **red** job before any review.
 
 ### 6. Review
 Follow `references/review.md`:
 1. Preflight: the 2K export, then the suite in the background; meanwhile the fix ledger, `review/REFERENCE.md`
    (round 1: `assets/reference_template.md`) and the lens table.
-2. On a green suite only, `scripts/make_brief.py`, which writes the delta brief and the panel's args.
+2. On a green suite only: from round 2, `scripts/fixcheck.py` (did each ledger fix land?); then
+   `scripts/make_brief.py`, which writes the delta brief and the panel's args.
 3. Run 4-6 lenses derived from the spec; a verifier re-measures each lens's findings, highs first, and one re-verify
    agent takes any high or medium a verifier left without a verdict.
 4. A lead writes the plan and the scorecard.
@@ -156,18 +157,19 @@ session and keep this one open, then only wait; the new session drafts, holds th
 - Apply one build-measure batch per graph: edit the graph's plan items into their stage scripts in dependency order,
   run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
   (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
-  that an edited node or preset parameter feeds (an edit to a shared node touches every preset). Then run the targeted
-  set: the checks the items touch and the wrong builds of the touched hard checks, one background job per config, at
-  most 4 at once, while the next graph builds. Items that miss their acceptance go into a second batch for that graph.
+  that an edited node or preset parameter feeds (an edit to a shared node touches every preset). While the next graph
+  builds, run the targeted set in the background: `suite.py` with `--configs` the touched configs and cross-case groups,
+  `--kinds matcheck,wrong_builds` and `--beside-designer`, into `review/round<N+1>` after you read the last set's
+  `suite_partial.json` (each set replaces it). Items that miss their acceptance go into a second batch for that graph.
 - Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
   apply: `date -u` when the plan gate is answered and after the last batch's targeted checks, into the ledger's
   `apply` (`references/review.md` §1). Then review again with fewer lenses. Three rounds is typical. The stopping
   rule is in `references/review.md` §5.
 - **Final gate:** after the last change, export every variant plus its `nowear` at 2048 in one foreground `sdcall.py`
-  job (stage 5), then run the full matcheck on every variant in the background and draft the report meanwhile;
-  finalize it only when every exit code and scorecard JSON (`hard_failed`, `hard_unmeasured`) reads green as in
-  stage 5. The report states what was verified after the last change, in physical terms ("joint 10.5 mm at half
-  depth; 0 damaged pixels below the mortar; damage 4.3 %"). Send the comparison images (SendUserFile).
+  job (stage 5), then run the full suite into `review/round<N+1>` in the background, then `fixcheck.py` on its ledger
+  (`references/review.md` §5); draft the report meanwhile and finalize it only on a green `suite.json`. The report
+  states what was verified after the last change, in physical terms ("joint 10.5 mm at half depth; 0 damaged pixels
+  below the mortar; damage 4.3 %"). Send the comparison images (SendUserFile).
 - Write `<tools>/CONTEXT_PROMPT.md` from the template: requirements, architecture, how to edit, a measured-state
   table, open items, and the invariants to re-check. Also save a project memory note with the requirements as
   acceptance criteria.
@@ -179,7 +181,7 @@ session and keep this one open, then only wait; the new session drafts, holds th
 
 | Phase | Calls Designer | Owns the CPU |
 |---|---|---|
-| 4 build, 7 apply | main, one call at a time | Designer, plus at most 4 measure jobs (the previous graph's checks) |
+| 4 build, 7 apply | main, one call at a time | Designer, plus the previous graph's checks on about half the cores (4 on an 8-CPU Mac) |
 | 5 measure, final gate | main for the exports, then nobody | the suite (matcheck, wrong builds, previews) |
 | 6 panel, until the plan gate | nobody | the panel's agents; no suite or numpy jobs beside them |
 
@@ -196,7 +198,7 @@ session and keep this one open, then only wait; the new session drafts, holds th
 ## Bundled files
 - `references/method.md`: the physical reasoning (layout, layers, envelope, process cards, invariants, scale).
 - `references/interview.md`, `research.md`, `review.md`: how to run those stages.
-- `references/checks.md`: the schema card, the check vocabulary, matcheck and previews usage.
+- `references/checks.md`: the schema card, the check vocabulary, and the measuring scripts' usage.
 - `references/sd_craft.md`: bridge operation, sdkit, graph skeleton, recipes R1-R14, node cheat sheet, engine costs,
   transfer table.
 - `references/materials/`: reference sheets (`_TEMPLATE.md` plus brick, asphalt, concrete, wood_planks, and any added
@@ -207,6 +209,8 @@ session and keep this one open, then only wait; the new session drafts, holds th
   - `matcheck.py`: checks → scorecard
   - `wrong_builds.py`: each hard check against its named wrong build
   - `previews.py`: lit views and sheets
+  - `suite.py`: the three above in parallel, gated (stdlib)
+  - `fixcheck.py`: re-measures the fix ledger (stdlib)
   - `calibrate.py`: Histogram Scan Position from quantiles
   - `make_brief.py`: a review round's delta brief and panel args (stdlib)
   - `setup_env.sh`

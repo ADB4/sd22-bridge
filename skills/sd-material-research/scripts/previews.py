@@ -3,10 +3,16 @@
 
 Usage:
     python previews.py checks/classic.json [checks/weathered.json ...] --out DIR [--sites N] [--no-shadows]
+    python previews.py checks/classic.json --out DIR --part PART.json [--sites N] [--no-shadows]
+    python previews.py --assemble PART1.json [PART2.json ...] --out DIR
 
 Scale, maps and regions come from each checks.json through matcheck.py (same folder). Writes <out>/<variant>_*.png,
 compare_front.png and compare_crop_raking.png when given two or more configs, and <out>/views_index.md, which says
 what every file shows and at what scale. Documented in references/checks.md, "Previews".
+--part renders one config and writes its index info to PART.json instead of the compare sheets and the index;
+--assemble then writes both from the parts and the saved PNGs in DIR (the parts' own --out), byte-identical to one
+serial run of the same configs in the same order (suite.py runs one part per config, then the assemble). Exit code 2 on
+a config or part error.
 """
 import argparse
 import json
@@ -683,13 +689,147 @@ def write_index(out, infos, compare, shadows):
         fh.write("\n".join(L))
 
 
+def compare_sheets(out, infos, fronts, crops, ref_px):
+    """Write compare_front.png and compare_crop_raking.png; return their index rows."""
+    names = [i["variant"] for i in infos]
+    labelled_row(fronts, ["%s: lit front, whole tile" % nm for nm in names]).save(
+        os.path.join(out, "compare_front.png"), compress_level=3)
+    labelled_row(crops, ["%s: lit raking_a" % nm for nm in names]).save(
+        os.path.join(out, "compare_crop_raking.png"), compress_level=3)
+    i0 = infos[0]
+    return [("compare_front.png", "lit_front_1024 of %s, side by side" % ", ".join(names),
+             "each panel the whole tile, %s" % dims(i0["tile_mm"], i0["tile_mm_y"]), "toy shader (see Shader)"),
+            ("compare_crop_raking.png", "lit raking_a crop at the same place in every variant: %s's typical "
+             "site, origin x %d y %d" % (names[0], ref_px[0], ref_px[1]),
+             "each panel a 1:1 crop, %s" % dims(i0["size"] * i0["mm"], i0["size"] * i0["mmy"], "mm"),
+             "toy shader (see Shader)")]
+
+
+def plain(o):
+    """json.dump default for numpy scalars."""
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.bool_):
+        return bool(o)
+    raise TypeError("%r is not JSON serialisable" % (o,))
+
+
+def render_part(path, out, part, n_sites, shadows):
+    """--part: one config's per-variant files, and its index info in the part file (written last, atomically)."""
+    if os.path.basename(path).startswith("scorecard_"):
+        print("config error in %s: a matcheck scorecard, not a config" % path, file=sys.stderr)
+        return 2
+    os.makedirs(out, exist_ok=True)
+    try:
+        info, _, _, _, _ = render_variant(path, out, n_sites, shadows)
+    except (mc.ConfigError, KeyError, ValueError, OSError) as e:
+        print("config error in %s: %s" % (path, e), file=sys.stderr)
+        return 2
+    print("%s: %d files, %.1f s" % (info["variant"], len(info["rows"]), info["seconds"]))
+    for w in info["warn"]:
+        print("%s: warning: %s" % (info["variant"], w), file=sys.stderr)
+    rec = {"previews_part": 1, "out": os.path.abspath(out), "shadows": shadows, "sites": n_sites, "info": info}
+    d = os.path.dirname(os.path.abspath(part))
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, ".%s.tmp" % os.path.basename(part))
+    with open(tmp, "w") as fh:
+        json.dump(rec, fh, indent=1, default=plain)
+    os.replace(tmp, part)
+    print("wrote %s" % part)
+    return 0
+
+
+def assemble(parts, out):
+    """--assemble: the compare sheets and views_index.md from part files, as one serial run of their configs would
+    write them (the reference crop site is the first part's typical site)."""
+    recs = []
+    for p in parts:
+        try:
+            with open(p) as fh:
+                rec = json.load(fh)
+            if not (isinstance(rec, dict) and rec.get("previews_part") == 1 and isinstance(rec.get("info"), dict)):
+                raise ValueError("not a previews part file")
+        except (OSError, ValueError) as e:
+            print("part error in %s: %s" % (p, e), file=sys.stderr)
+            return 2
+        recs.append(rec)
+    for key, what in (("shadows", "--no-shadows"), ("sites", "--sites")):
+        if len({json.dumps(r.get(key)) for r in recs}) > 1:
+            print("part error: the parts were rendered with different %s; one serial run uses one" % what,
+                  file=sys.stderr)
+            return 2
+    here = os.path.realpath(out)
+    away = [p for p, r in zip(parts, recs) if os.path.realpath(str(r.get("out") or "")) != here]
+    if away:
+        print("part error: %s were rendered into another --out; assemble reads the PNGs in %s"
+              % (", ".join(away), out), file=sys.stderr)
+        return 2
+    infos = []
+    for r in recs:
+        i = dict(r["info"])
+        i["rows"] = [tuple(row) for row in i["rows"]]
+        i["agree"] = tuple(i["agree"])
+        infos.append(i)
+    names = [i["variant"] for i in infos]
+    keys = [n.casefold() for n in names]  # one file on a case-insensitive disk
+    if len(set(keys)) < len(keys):
+        print("part error: two parts have one variant name (%s); their files overwrite each other"
+              % ", ".join(sorted({n for n, k in zip(names, keys) if keys.count(k) > 1})), file=sys.stderr)
+        return 2
+    compare = []
+    if len(infos) > 1:
+        fronts, crops, ref, ref_px = [], [], None, None
+        for i in infos:
+            H, W = i["H"], i["W"]
+            imgs = []
+            for name in ("lit_front_1024", "lit_raking_full"):
+                fn = os.path.join(out, "%s_%s.png" % (i["variant"], name))
+                try:
+                    with Image.open(fn) as im:
+                        imgs.append(np.asarray(im.convert("RGB")))
+                except OSError as e:
+                    print("part error: %s: %s" % (i["variant"], e), file=sys.stderr)
+                    return 2
+            if imgs[1].shape[:2] != (H, W):
+                print("part error: %s_lit_raking_full.png is %dx%d px, its part says %dx%d"
+                      % (i["variant"], imgs[1].shape[1], imgs[1].shape[0], W, H), file=sys.stderr)
+                return 2
+            if ref is None:  # render_variant's arithmetic, on the saved 8-bit sRGB raking view
+                ry, rx = i["sites"][0]["y0"], i["sites"][0]["x0"]
+                ref, ref_px = (ry / float(H), rx / float(W)), (rx, ry)
+            else:
+                ry, rx = int(ref[0] * H) % H, int(ref[1] * W) % W
+            fronts.append(imgs[0])
+            crops.append(crop(imgs[1], ry, rx, i["size"], i["size"]))
+        compare = compare_sheets(out, infos, fronts, crops, ref_px)
+    write_index(out, infos, compare, recs[0]["shadows"])
+    print("wrote %s/views_index.md" % out)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("configs", nargs="+", help="checks.json files, one per variant")
+    ap.add_argument("configs", nargs="*", help="checks.json files, one per variant")
     ap.add_argument("--out", required=True, help="output directory")
     ap.add_argument("--sites", type=int, default=3, help="crop sites per variant: 1 typical + N-1 worst (default 3)")
     ap.add_argument("--no-shadows", action="store_true", help="skip the cast shadows on the raking views")
+    ap.add_argument("--part", metavar="PART.json", help="render one config; write its index info here, no compare "
+                    "sheets and no views_index.md")
+    ap.add_argument("--assemble", nargs="+", metavar="PART.json", help="write the compare sheets and views_index.md "
+                    "in --out from part files and their saved PNGs")
     a = ap.parse_args(argv)
+    if a.assemble:
+        if a.configs or a.part:
+            ap.error("--assemble takes part files, not configs or --part")
+        return assemble(a.assemble, a.out)
+    if not a.configs:
+        ap.error("the following arguments are required: configs")
+    if a.part:
+        if len(a.configs) != 1:
+            ap.error("--part renders exactly one config")
+        return render_part(a.configs[0], a.out, a.part, max(1, a.sites), not a.no_shadows)
     os.makedirs(a.out, exist_ok=True)
     infos, fronts, crops, ref, ref_px, taken = [], [], [], None, None, set()
     for path in a.configs:
@@ -709,20 +849,7 @@ def main(argv=None):
         print("%s: %d files, %.1f s" % (info["variant"], len(info["rows"]), info["seconds"]))
         for w in info["warn"]:
             print("%s: warning: %s" % (info["variant"], w), file=sys.stderr)
-    compare = []
-    if len(infos) > 1:
-        names = [i["variant"] for i in infos]
-        labelled_row(fronts, ["%s: lit front, whole tile" % nm for nm in names]).save(
-            os.path.join(a.out, "compare_front.png"), compress_level=3)
-        labelled_row(crops, ["%s: lit raking_a" % nm for nm in names]).save(
-            os.path.join(a.out, "compare_crop_raking.png"), compress_level=3)
-        i0 = infos[0]
-        compare = [("compare_front.png", "lit_front_1024 of %s, side by side" % ", ".join(names),
-                    "each panel the whole tile, %s" % dims(i0["tile_mm"], i0["tile_mm_y"]), "toy shader (see Shader)"),
-                   ("compare_crop_raking.png", "lit raking_a crop at the same place in every variant: %s's typical "
-                    "site, origin x %d y %d" % (names[0], ref_px[0], ref_px[1]),
-                    "each panel a 1:1 crop, %s" % dims(i0["size"] * i0["mm"], i0["size"] * i0["mmy"], "mm"),
-                    "toy shader (see Shader)")]
+    compare = compare_sheets(a.out, infos, fronts, crops, ref_px) if len(infos) > 1 else []
     write_index(a.out, infos, compare, not a.no_shadows)
     print("wrote %s/views_index.md" % a.out)
     return 0
