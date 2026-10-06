@@ -243,6 +243,7 @@ $PY <skill>/scripts/wrong_builds.py --cases <tools>/checks/wrong_build_cases.py 
 - `--only` takes configs, groups or check ids. It writes `wrong_builds.md` and `.json`. Exit code 0 when every case
   behaves and every hard check has a case, 1 when a case misbehaves (the real build fails, or the wrong build passes
   or reads vacuous) or a hard check has none, 2 on a config or cases-module error.
+- A case takes about 0.5 s at 2048 (a `normal_valid` case about 1 s), plus about 0.4 s per config to load its maps.
 
 ## Tips
 
