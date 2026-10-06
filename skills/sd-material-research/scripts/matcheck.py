@@ -5,7 +5,8 @@ Usage:
     python matcheck.py checks/weathered.json [--out DIR] [--only id1,id2] [--quiet]
 
 The check vocabulary is documented in references/checks.md. Exit code: 0 when every hard check
-passes, 1 when a hard check fails, 2 on a configuration error.
+passes, 1 when a hard check fails (a NaN value on a hard check with a target counts as failing), 2 on a
+configuration error, 3 when none failed but a hard check errored or was vacuous.
 Needs numpy, Pillow and scipy, plus opencv-python-headless to read 16-bit colour PNGs at full precision
 (scripts/setup_env.sh creates an environment with them).
 """
@@ -400,6 +401,8 @@ class Render:
                                   % (name, a.shape[1], a.shape[0], self.size[1], self.size[0]))
             if a.ndim == 3 and cv2 is None and "color maps read at 8 bits" not in self.notes:
                 self.notes.append("color maps read at 8 bits")
+            if name == "height" and a.ndim == 3 and "height map has colour channels; read as gray" not in self.notes:
+                self.notes.append("height map has colour channels; read as gray")
             self._maps[name] = a
             self.files[name] = p
         return self._maps[name]
@@ -578,6 +581,9 @@ class Ctx:
             if channel in LAB_CHANNELS:
                 rgb = a[..., :3] if a.ndim == 3 else np.repeat(a[..., None], 3, axis=2)
                 v = lab_channel(rgb, channel)
+            elif name == "height" and space == "mm":
+                # An RGB(A) height reads as gray, the same way region min_mm/max_mm read it.
+                v = to_gray(a) * np.float32(self.depth_mm)
             elif a.ndim == 3:
                 rgb = a[..., :3]
                 if space == "linear":
@@ -585,8 +591,6 @@ class Ctx:
                 elif space == "srgb255":
                     rgb = rgb * np.float32(255.0)
                 v = rgb[..., "rgb".index(channel)] if channel in ("r", "g", "b") else rgb @ LUMA
-            elif name == "height" and space == "mm":
-                v = a * np.float32(self.depth_mm)
             elif space == "srgb255":
                 v = a * np.float32(255.0)
             elif space == "linear":
@@ -616,13 +620,16 @@ class Ctx:
             key = np.round(a * 65535).astype(np.int64)
         uniq, inv = np.unique(key, return_inverse=True)
         lab = inv.reshape(key.shape) + 1
-        if not src.get("split_components", True):
-            return lab, len(uniq)
-        # one ID value can cover several separate units (random IDs collide); split each into its own elements
         keep = np.bincount(lab.ravel(), minlength=len(uniq) + 1) >= min_px  # ID values with >= min_px pixels
         keep[0] = False
         if src.get("ignore_zero", True):
             keep[1:] &= uniq != 0
+        if not src.get("split_components", True):
+            # Same filter as below (ID 0 and IDs under min_px are not elements), then number them 1..n.
+            remap = np.zeros(keep.size, np.int64)
+            remap[keep] = np.arange(1, int(keep.sum()) + 1)
+            return remap[lab], int(keep.sum())
+        # one ID value can cover several separate units (random IDs collide); split each into its own elements
         return split_values(lab, keep[lab], src.get("connectivity", 4))
 
 
@@ -1126,6 +1133,12 @@ def ck_spacing(ctx, c):
         return float("nan"), det
     seg = ac[lo:hi]
     k = int(np.argmax(seg)) + lo
+    # Take the first local peak within 10 % of the highest. When the period isn't a whole number of px,
+    # a multiple of it can land nearer a whole px and score higher than the period itself.
+    for i in range(lo, hi):
+        if ac[i] >= 0.9 * ac[k] and ac[i] >= ac[i - 1] and ac[i] >= ac[min(i + 1, ac.size - 1)]:
+            k = i
+            break
     det.update(autocorr_peak=round(float(ac[k]), 4), search_mm=[round(lo * mm, 2), round(hi * mm, 2)])
     return float(k * mm), det
 
@@ -1381,7 +1394,7 @@ def ck_normal_valid(ctx, c):
     cx = float(np.corrcoef(n[..., 0][sel], gx[sel])[0, 1]) if sel.sum() > 10 else float("nan")
     cy = float(np.corrcoef(n[..., 1][sel], gy[sel])[0, 1]) if sel.sum() > 10 else float("nan")
     detected = "opengl" if cy > 0 else "directx"
-    expect = c.get("normal_format", ctx.normal_format)
+    expect = str(c.get("normal_format", ctx.normal_format)).lower()
     zneg = float((n[..., 2] < 0).mean())
     # slope scale: tangent of the normal's tilt over the height map's slope, on sloped pixels
     nz = np.maximum(n[..., 2], 1e-3)
@@ -1493,7 +1506,8 @@ def image_size(path):
 
 def manifest_report(ctx):
     """Header info from <dir>/<prefix>manifest.json (graph, export time, params) and warnings for map files that
-    predate their export or whose sizes differ."""
+    predate their export or whose sizes differ, plus the export's own warnings (8-bit height or normal, skipped
+    Outputs)."""
     info, warn, sizes = None, [], {}
     for rname, R in [("", ctx.main)] + sorted(ctx.compare.items()):
         files = {k: R.path(k) for k in R.names()}
@@ -1516,6 +1530,9 @@ def manifest_report(ctx):
                     "exported_at": m.get("exported_at", m.get("export_time")),
                     "params": m.get("graph_params", m.get("params")), "instances": m.get("instances"),
                     "note": m.get("note")}
+        for key in ("warning", "skipped"):
+            if m.get(key):
+                warn.append("%sexport: %s" % (tag, m[key]))
         # sdkit writes the maps first and the manifest last; a map older than the export window is stale
         start = os.path.getmtime(mp) - float(m.get("total_s") or 60.0) - 2.0
         for k, p in sorted(files.items()):
@@ -1557,12 +1574,96 @@ def run_check(ctx, c):
             raise ConfigError("min_px: check type '%s' has no region to count" % c["type"])
         if n_key is not None and n_key < float(c.get("min_px", 1)):
             row.update(passed=None, note="vacuous: %d %s" % (n_key, det.get("n_key_unit", "px")))
+        elif (row["severity"] == "hard" and row["target"] is not None and isinstance(val, (float, np.floating))
+              and math.isnan(val)):
+            # An undefined value can't show the invariant holds (the wrong build often gives exactly this).
+            row.update(passed=False, note="FAIL: undefined (NaN)")
     except ConfigError as e:
         row.update(value=None, passed=None, error=str(e))
     except Exception as e:  # keep going: one broken check should not hide the rest
         row.update(value=None, passed=None, error="%s: %s" % (type(e).__name__, e))
     row["seconds"] = round(time.time() - t0, 2)
     return row
+
+
+SPACES = ("raw", "linear", "srgb255", "mm")
+AXES = {"run_length": ("x", "y", "both"), "seam": ("x", "y", "both"), "step": ("x", "y", "both"), "spacing": ("x", "y")}
+NORMAL_FORMATS = ("directx", "opengl")
+
+
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _spaces(node, where):
+    """(where, value) for every "space" key in a config subtree."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "space":
+                yield where, v
+            else:
+                yield from _spaces(v, "%s.%s" % (where, k))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _spaces(v, "%s[%d]" % (where, i))
+
+
+def validate_config(cfg, only=None):
+    """Raise ConfigError (exit 2) for config mistakes that would otherwise switch a hard gate off without a word or
+    crash mid-run: a hard check that can never fail, an unknown severity, space, axis or normal_format, a malformed
+    check or scale, and --only ids that match nothing."""
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("maps"), dict):
+        raise ConfigError("the config must be a JSON object with a 'maps' object")
+    sc = cfg.get("scale", {})
+    tm = sc.get("tile_m")
+    tms = tm if isinstance(tm, (list, tuple)) else [tm]
+    if not 1 <= len(tms) <= 2 or not all(_number(t) and t > 0 for t in tms):
+        raise ConfigError("scale.tile_m must be the tile size in metres, a positive number or [x, y], not %r" % (tm,))
+    depth = sc.get("height_depth_mm")
+    if not (_number(depth) and depth > 0):
+        raise ConfigError("scale.height_depth_mm must be the depth in mm that the height map's 0-1 range spans, not %r"
+                          % (depth,))
+    checks = cfg.get("checks", [])
+    if not isinstance(checks, list):
+        raise ConfigError("'checks' must be a list")
+    formats = [("scale.normal_format", sc.get("normal_format", "directx"))]
+    ids = set()
+    for i, c in enumerate(checks):
+        where = "check #%d" % (i + 1)
+        if not isinstance(c, dict):
+            raise ConfigError("%s is not an object" % where)
+        if c.get("id") is not None:
+            where = "check '%s'" % c["id"]
+            ids.add(c["id"])
+        if c.get("type") not in CHECKS:
+            raise ConfigError("%s: unknown type %r (use %s)" % (where, c.get("type"), ", ".join(sorted(CHECKS))))
+        severity = c.get("severity", "soft")
+        if severity not in ("hard", "soft"):
+            raise ConfigError("%s: severity must be hard or soft, not %r" % (where, severity))
+        if not isinstance(c.get("why", ""), str):
+            raise ConfigError("%s: why must be a string" % where)
+        t = target_of(c)
+        if t is not None and not (isinstance(t, (list, tuple)) and len(t) == 2
+                                  and all(v is None or _number(v) for v in t)):
+            raise ConfigError("%s: a target is [low, high], with null for an open end, not %r" % (where, t))
+        if severity == "hard" and (t is None or (t[0] is None and t[1] is None)):
+            raise ConfigError("%s: a hard check needs a target (target, target_mm, target_deg or %s), or it can never "
+                              "fail" % (where, ", ".join(sorted(TARGET_KEYS))))
+        axes = AXES.get(c["type"])
+        if axes and "axis" in c and c["axis"] not in axes:
+            raise ConfigError("%s: axis must be %s or %s, not %r" % (where, ", ".join(axes[:-1]), axes[-1], c["axis"]))
+        if "normal_format" in c:
+            formats.append(("%s: normal_format" % where, c["normal_format"]))
+    for where, v in formats:
+        if not (isinstance(v, str) and v.lower() in NORMAL_FORMATS):
+            raise ConfigError("%s is %r: use directx or opengl" % (where, v))
+    for where, v in list(_spaces(cfg.get("regions", {}), "regions")) + list(_spaces(checks, "checks")):
+        if v not in SPACES:
+            raise ConfigError("%s: unknown space %r (use %s)" % (where, v, ", ".join(SPACES)))
+    if only:
+        missing = sorted(set(only) - ids)
+        if missing:
+            raise ConfigError("--only: no check has the id %s" % ", ".join(map(repr, missing)))
 
 
 def main(argv=None):
@@ -1576,23 +1677,26 @@ def main(argv=None):
     try:
         with open(a.config) as fh:
             cfg = json.load(fh)
+        only = set(a.only.split(",")) if a.only else None
+        validate_config(cfg, only)
         base = os.path.dirname(os.path.abspath(a.config))
         ctx = Ctx(cfg, base)
-    except (ConfigError, KeyError, ValueError, OSError) as e:
+    except (ConfigError, KeyError, ValueError, TypeError, OSError) as e:
         print("config error: %s" % e, file=sys.stderr)
         return 2
-    only = set(a.only.split(",")) if a.only else None
     results = [run_check(ctx, c) for c in cfg.get("checks", [])
                if not c.get("skip") and not (only and c.get("id") not in only)]
     manifest, warnings = manifest_report(ctx)
     hard_fail = [r["id"] for r in results if r["severity"] == "hard" and r["passed"] is False]
     errors = [r["id"] for r in results if r.get("error")]
     soft_fail = [r["id"] for r in results if r["severity"] != "hard" and r["passed"] is False]
+    unmeasured = [r["id"] for r in results if r["severity"] == "hard" and r["passed"] is None]  # errored or vacuous
     vacuous = [r["id"] for r in results if r.get("note", "").startswith("vacuous")]
     card = {"material": cfg.get("material"), "variant": cfg.get("variant"), "config": os.path.abspath(a.config),
             "scale": {"mm_per_px": round(ctx.mm, 4), "height_depth_mm": ctx.depth_mm, "tile_m": ctx.tile_m},
             "manifest": manifest, "note": ctx.note, "notes": ctx.notes, "warnings": warnings,
-            "hard_failed": hard_fail, "soft_failed": soft_fail, "vacuous": vacuous, "errors": errors,
+            "hard_failed": hard_fail, "hard_unmeasured": unmeasured, "soft_failed": soft_fail, "vacuous": vacuous,
+            "errors": errors,
             "seconds": round(time.time() - t0, 1), "results": results}
     out = a.out or cfg.get("out_dir") or base
     out = out if os.path.isabs(out) else os.path.normpath(os.path.join(base, out))
@@ -1604,6 +1708,8 @@ def main(argv=None):
              "%.4f mm/px, height depth %g mm. Hard failures: %s. Soft misses: %s. Vacuous: %s. Errors: %s." % (
                  ctx.mm, ctx.depth_mm, ", ".join(hard_fail) or "none", ", ".join(soft_fail) or "none",
                  ", ".join(vacuous) or "none", ", ".join(errors) or "none"), ""]
+    if unmeasured and not hard_fail:
+        lines += ["No hard check failed, but %s measured nothing (error or vacuous): exit code 3." % ", ".join(unmeasured), ""]
     if manifest:
         lines += ["Export: graph `%s` at %s (%s). Params: `%s`" % (
             manifest["graph"], manifest["exported_at"], manifest["path"],
@@ -1625,7 +1731,7 @@ def main(argv=None):
     if not a.quiet:
         print(md)
         print("wrote %s/%s.{json,md}" % (out, name))
-    return 1 if hard_fail else 0
+    return 1 if hard_fail else 3 if unmeasured else 0
 
 
 if __name__ == "__main__":

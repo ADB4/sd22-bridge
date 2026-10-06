@@ -44,6 +44,9 @@ def merge(path, entry, remove=False):
         except ValueError as e:
             print("  ! %s is not valid JSON (%s). Left unchanged; edit it by hand." % (path, e))
             return False
+        except OSError as e:
+            print("  ! Could not read %s (%s). Left unchanged." % (path, e))
+            return False
         if not isinstance(config, dict):
             print("  ! %s does not contain a JSON object. Left unchanged." % path)
             return False
@@ -59,7 +62,11 @@ def merge(path, entry, remove=False):
         while os.path.exists(backup):
             n += 1
             backup = path + ".bak-" + time.strftime("%Y%m%d-%H%M%S") + "-%d" % n
-        shutil.copy2(path, backup)
+        try:
+            shutil.copy2(path, backup)
+        except OSError as e:
+            print("  ! Could not back up %s (%s). Left unchanged." % (path, e))
+            return False
         print("  backup: %s" % backup)
     elif remove:
         return False
@@ -70,9 +77,27 @@ def merge(path, entry, remove=False):
     if remove:
         servers.pop(SERVER_NAME, None)
     else:
+        old = servers.get(SERVER_NAME)
+        if isinstance(old, dict) and isinstance(old.get("env"), dict) and old["env"]:
+            # An env the user added (SD_CLAUDE_BRIDGE_SESSION, ...) survives a reinstall.
+            entry = dict(entry, env=old["env"])
+            print("  kept the entry's env: %s" % ", ".join(sorted(old["env"])))
         servers[SERVER_NAME] = entry
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
+    # Write a temporary file and swap it in, so an interrupted write can't leave a truncated config.
+    # realpath keeps a symlinked config file a symlink.
+    real = os.path.realpath(path)
+    tmp = real + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        if os.path.exists(real):
+            shutil.copymode(real, tmp)  # keep a config the user made private (0600) private
+        os.replace(tmp, real)
+    except OSError as e:
+        print("  ! Could not write %s (%s). Left unchanged." % (path, e))
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return False
     print("  %s: %s" % ("removed entry from" if remove else "updated", path))
     return True
 

@@ -96,7 +96,7 @@ const COMMON = `Read ${DIR}/BRIEF.md completely (all rounds up to ${R}); it list
 node semantics, files, scorecard, history, severity rubric and the verifier checklist. Round files are in ${DIR}/round${R}/.
 Never call substance-designer tools (Designer is single-threaded and reserved for the builder).
 Read-only inputs. Helper scripts and images ONLY under ${DIR}/agents/round${R}/<your-label>/.
-Python: ${PY}  (numpy, scipy, Pillow, OpenCV). Import ${SKILL}/scripts/matcheck.py (load_image, Ctx, regions, label_wrap)
+Python: ${PY}  (numpy, scipy, Pillow, OpenCV). Import ${SKILL}/scripts/matcheck.py (load_image, Ctx, label_wrap)
 instead of writing decoders; full-res 16-bit maps are listed in the brief.`
 
 const lenses = A.lenses || []

@@ -30,9 +30,9 @@ The invariants are enforced by structure. <Name the enforcing nodes.>
 import sys, importlib
 K = "<skill>/scripts"
 if K not in sys.path: sys.path.insert(0, K)
-import sdkit; importlib.reload(sdkit)
-s = sdkit.Session("<tools>")            # loads registry.json
-s.use("<m>_core")
+import sdkit as sk; importlib.reload(sk)
+sk.configure("<tools>")                 # loads registry.json
+sk.use("<m>_materials.sbs::<m>_core")   # the key new_graph registered
 ...
 ```
 After any graph change:

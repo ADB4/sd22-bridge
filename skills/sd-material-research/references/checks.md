@@ -9,8 +9,12 @@ PY=$(bash <skill>/scripts/setup_env.sh)          # once; prints the venv python
 $PY <skill>/scripts/matcheck.py <tools>/checks/weathered.json            # all checks
 $PY <skill>/scripts/matcheck.py <tools>/checks/weathered.json --only joint_half_depth,no_damage_below_mortar
 ```
-Exit code 0 means every hard check passed, 1 means a hard check failed, 2 means a config error. A full run at 2048
-takes about 30 s.
+Exit code 0 means every hard check passed. 1 means a hard check failed, including one whose value is undefined (NaN),
+which is what the wrong build often gives. 3 means none failed but a hard check measured nothing: it raised an error or
+was vacuous (the header names it). 2 means a config error. Before running, matcheck rejects a hard check without a
+target (it could never fail), a severity other than hard or soft, an unknown type, space, axis or normal_format, a
+target that isn't `[low, high]`, a missing or non-numeric `scale.tile_m` or `scale.height_depth_mm`, and `--only` ids
+that match no check. A full run at 2048 takes about 30 s.
 
 Units: lengths in **mm**, converted with `scale.tile_m` and the map size. Heights are in **mm** too: the height
 map's 0-1 range spans `height_depth_mm`. All filters, morphology and connected components wrap around the tile
@@ -82,21 +86,23 @@ lives in the dev folder, `sd-material-research-dev/tests/matcheck/`.
   (C* about 0-8) from fresh or sheltered wood, rust or warm stone without per-species RGB targets; `hue` is circular,
   so compare it with `value_range` only inside a range that doesn't cross 0/360.
 - **Vacuity guard.** Each check reports `n_key`, the size of the set its value rests on (pixels, or elements,
-  profiles or features as `details.n_key_unit` says). Below `min_px` (default 1) the check is reported as
-  `vacuous` with `passed: null`: an invariant on an empty region must not count as a pass. Set `min_px` on every
-  hard check whose region can be empty in some variant, e.g. `"min_px": 500` on a damage-order check. A `min_px` on
-  a type that has no counted set (`seam`, `normal_valid`, `height_usage`) is a config error. What `n_key` counts:
-  `order` the checked upper pixels (and 0 when `lower` has fewer than `lower_min_px` pixels); `components` and
-  `coverage` the `within` set (the whole tile without it), not the region; `height_diff` the smaller of `a` and `b`;
-  `concentration` within ∩ driver; `slope` (between) and `ridge` the band; `orientation` on a region the mask dilated
-  1.5 px; `boundary_profile` the pixels in the in-range bins; `edge_profile` profiles; `dispersion` features;
-  `per_element` elements. So for `components`, put the guard on a `coverage` of the same region.
+  profiles or features as `details.n_key_unit` says). Below `min_px` (default 1) the check is reported as `vacuous`
+  with `passed: null`: an invariant on an empty region must not count as a pass (on a hard check the run exits 3
+  unless another hard check failed). Set `min_px` on every hard check whose region can be empty in some variant,
+  e.g. `"min_px": 500` on a damage-order check. A `min_px` on a type that has no counted set (`seam`,
+  `normal_valid`, `height_usage`) is a config error. What `n_key` counts: `order` the checked upper pixels (and 0
+  when `lower` has fewer than `lower_min_px` pixels); `components` and `coverage` the `within` set (the whole tile
+  without it), not the region; `height_diff` the smaller of `a` and `b`; `concentration` within ∩ driver; `slope`
+  (between) and `ridge` the band; `orientation` on a region the mask dilated 1.5 px; `boundary_profile` the pixels
+  in the in-range bins; `edge_profile` profiles; `dispersion` features; `per_element` elements. So for `components`,
+  put the guard on a `coverage` of the same region.
 - **Map sizes.** All maps of a run, and of its comparison renders, must have one size; a check that reads a map of
   another size reports a config error naming both sizes.
 - **Scorecard.** The header lists hard failures, soft misses, vacuous checks and errors. A check that raises is
   reported as an error and the run goes on. If the map folder has a `<prefix>manifest.json` (written by
   `sdkit.export_outputs`), the header also gives the graph, export time and parameters, and warns about map files
-  older than the export (stale) and about maps whose sizes differ from each other or from the manifest.
+  older than the export (stale) and about maps whose sizes differ from each other or from the manifest. It also
+  repeats the export's own warnings: an 8-bit height or normal map, and Outputs skipped for having no identifier.
 
 ## Regions
 
@@ -148,7 +154,7 @@ interior is reproduced by 3.6 mm at 0.88 mm/px; 3.5 mm keeps the pixels exactly 
 | `value_range` | stat of a map in a region | `map`, `region`, `space` raw / srgb255 / linear, `channel` luma/r/g/b | albedo and roughness targets |
 | `value_order` | 1 if the stats are ordered across regions, else 0 | `map`, `regions`, `stat`, `order` ascending/descending, `min_gap` | roughness face < damage < mortar |
 | `orientation` | coherence-weighted fraction of structure within `tolerance_deg` (default 15) of `axis_deg` (counter-clockwise from +x, y up), from a structure tensor | `region` or `map`, `window_mm`, `pre_sigma_mm` | checks run along the grain; transverse cracks run across the lane. `dominant_deg` in details is a 15° bin centre (±7.5°) |
-| `spacing` | dominant period along an axis (mm), by autocorrelation of the profile averaged across the other axis | `region` or `map`, `axis` x/y, `min_mm`, `max_mm` | course height, fastener rows at joist spacing, broom striations. Lags stop at half the tile, so a period needs at least two repeats in the tile; a joint that appears once per tile can't be measured this way (use the layout itself) |
+| `spacing` | dominant period along an axis (mm), by autocorrelation of the profile averaged across the other axis: the first peak within 10 % of the highest in the search range, so a multiple of the period isn't reported | `region` or `map`, `axis` x/y, `min_mm`, `max_mm` | course height, fastener rows at joist spacing, broom striations. Lags stop at half the tile, so a period needs at least two repeats in the tile; a joint that appears once per tile can't be measured this way (use the layout itself) |
 | `ridge` | fraction of a boundary band that forms fins (higher than both sides by > `threshold_mm`) | `between`, `band_mm`, `threshold_mm`, `half_width_px`, `against` (opt-in comparison render, e.g. nowear) | blur and mask-order artifacts at damage edges. With `against`, the test runs on the height minus that render's, so relief both share (a rut flank, as-built texture) cancels and only what the process added or removed can form a fin |
 | `normal_valid` | 1 if the green convention matches the height gradient, x tilts against dh/dx, z > 0, and the slope scale median((n.x/n.z) ÷ −dh/dx) is within 1 ± `scale_tolerance` (default 0.15) | `normal_format`, `map`, `scale_tolerance` | DirectX/OpenGL flips, broken normals, and a `height_depth_mm` or `tile_m` that doesn't match the normal's intensity. `details.failed` says which test failed. The default tolerance only catches scale errors above ~15 % (11 mm against a true 10 mm passes); use 0.05 to tighten. A flat height map fails |
 | `height_usage` | `metric` range_used / clipped_frac / unique_levels | | 8-bit height, clipped peaks |

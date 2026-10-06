@@ -84,7 +84,7 @@ ladder, what's estimated) and wait for the go-ahead. Skip this only if they said
 ### 4. Build
 Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2):
 - Script each stage as `build/NN_<stage>.py`. Run it with `run_python`; anything over ~45 s goes through
-  `python3 <skill>/scripts/sdcall.py build/NN.py` from a background shell.
+  `python3 <skill>/scripts/sdcall.py build/NN.py` (`py -3` on Windows) from a background shell.
 - Make the graph 16-bit at creation. Use only cheap noises (`sk.lib` refuses the FX-map noises that stall the engine).
   Save right after creating the package and after each stage.
 - **Render `nowear` from the first height stage on** (`sk.nowear`), and run `mask_invariance` and `envelope` after
@@ -95,7 +95,9 @@ Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (q
 
 ### 5. Measure
 - Export every variant plus its `nowear` at 2048 (`sk.export_outputs` / `sk.nowear`; batch them through `sdcall.py`).
-- Run `$PY <skill>/scripts/matcheck.py checks/<v>.json`, which writes scorecards.
+- Run `$PY <skill>/scripts/matcheck.py checks/<v>.json`, which writes scorecards. Exit 0: every hard check passed;
+  1: one failed; 3: one measured nothing (expected for damage checks in a `nowear` run, otherwise read the header);
+  2: config error.
 - Run `$PY <skill>/scripts/previews.py checks/*.json --out review/round<N>`, which makes lit views with height
   shadows, a hillshade, tiling sheets, crops at typical and worst sites, and compare sheets.
 - Look at the previews yourself with Read, but treat your own verdict as provisional. In the brick build it was

@@ -3,9 +3,11 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 # Options:
 #   -SkipClaudeConfig   don't touch Claude Desktop's config file
+#   -ClaudeDesktop      add the Claude Desktop entry without asking
 
 param(
-    [switch]$SkipClaudeConfig
+    [switch]$SkipClaudeConfig,
+    [switch]$ClaudeDesktop
 )
 
 $ErrorActionPreference = 'Continue'
@@ -28,7 +30,7 @@ Write-Host "Substance Designer <-> Claude bridge installer"
 Step "1/4  Installing the Designer plugin"
 
 $pluginSrc = Join-Path $here 'designer_plugin\sd_claude_bridge'
-if (-not (Test-Path $pluginSrc)) {
+if (-not (Test-Path -LiteralPath $pluginSrc)) {
     Fail "Can't find $pluginSrc. Unzip the whole folder first, then run install.bat from inside it."
 }
 
@@ -40,11 +42,15 @@ $sdUserDirs = @(
     (Join-Path $docs 'Adobe\Adobe Substance 3D Designer'),
     (Join-Path $docs 'Allegorithmic\Substance Designer')
 )
-$targets = @($sdUserDirs | Where-Object { Test-Path $_ })
+$targets = @($sdUserDirs | Where-Object { Test-Path -LiteralPath $_ })
 if ($targets.Count -eq 0) {
     Write-Host "   Note: no Designer user folder found yet (Designer creates one on first launch). Using $($sdUserDirs[0])." -ForegroundColor Yellow
     Write-Host "   Steam edition: start Designer once, then run this installer again." -ForegroundColor Yellow
     $targets = @($sdUserDirs[0])
+} elseif ((Test-Path -LiteralPath $sdUserDirs[0]) -and -not (Test-Path -LiteralPath $sdUserDirs[1])) {
+    # Maybe an earlier run made the Adobe folder before Designer's first launch.
+    Write-Host "   Using the Steam edition? Its folder ($($sdUserDirs[1])) appears when Designer first starts:" -ForegroundColor Yellow
+    Write-Host "   start Designer once, then run this installer again." -ForegroundColor Yellow
 }
 
 foreach ($sdUserDir in $targets) {
@@ -54,16 +60,38 @@ foreach ($sdUserDir in $targets) {
     New-Item -ItemType Directory -Force -Path $pluginParent | Out-Null
     # tools\link_install.py may have made it a junction into a git checkout. Leave that
     # alone: Windows PowerShell's Remove-Item -Recurse would delete the checkout's files.
+    # Test the link type, not the ReparsePoint attribute: OneDrive placeholders have that too.
     $existing = Get-Item -LiteralPath $pluginDest -Force -ErrorAction SilentlyContinue
-    if ($existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        Write-Host "   Linked to a git checkout, left as is: $pluginDest"
+    if ($existing -and ($existing.LinkType -in @('Junction', 'SymbolicLink'))) {
+        if (Test-Path -LiteralPath (Join-Path $pluginDest '__init__.py')) {
+            Write-Host "   Linked to a git checkout, left as is: $pluginDest"
+            continue
+        }
+        $existing.Delete()  # deletes only the link
+        Write-Host "   Removed a link to a checkout that is gone: $pluginDest"
+    }
+    # Never delete the source: a checkout cloned as sduserplugins\sd_claude_bridge, or an
+    # sduserplugins folder that is itself a link (into a checkout, for example).
+    $parentItem = Get-Item -LiteralPath $pluginParent -Force -ErrorAction SilentlyContinue
+    $parentLinked = $parentItem -and ($parentItem.LinkType -in @('Junction', 'SymbolicLink'))
+    if ((Test-Path -LiteralPath (Join-Path $pluginDest '.git')) -or $parentLinked) {
+        Write-Host "   Left as is (a git checkout, or a linked sduserplugins folder): $pluginDest" -ForegroundColor Yellow
         continue
     }
-    if (Test-Path $pluginDest) {
-        Remove-Item -Recurse -Force $pluginDest
+    if (Test-Path -LiteralPath $pluginDest) {
+        Remove-Item -LiteralPath $pluginDest -Recurse -Force -ErrorAction SilentlyContinue
+        # Windows PowerShell can't delete OneDrive cloud files; cmd's rmdir can, and doesn't follow junctions.
+        if (Test-Path -LiteralPath $pluginDest) { cmd /c rmdir /s /q "$pluginDest" 2>$null }
+        # Copying onto what's left would nest the new plugin inside the old one.
+        if (Test-Path -LiteralPath $pluginDest) {
+            Fail "Could not remove the old plugin at $pluginDest. Quit Designer, which keeps its files open, and run install.bat again."
+        }
     }
-    Copy-Item -Recurse -Force $pluginSrc $pluginDest
-    Get-ChildItem -Path $pluginDest -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+    Copy-Item -LiteralPath $pluginSrc -Destination $pluginDest -Recurse -Force -ErrorVariable copyErrors
+    if ($copyErrors -or -not (Test-Path -LiteralPath (Join-Path $pluginDest '__init__.py'))) {
+        Fail "Could not copy the plugin to $pluginDest (see the messages above)."
+    }
+    Get-ChildItem -LiteralPath $pluginDest -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force
     Write-Host "   Plugin copied to: $pluginDest"
 }
@@ -124,31 +152,41 @@ New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 foreach ($f in Get-ChildItem -LiteralPath (Join-Path $here 'mcp_server') -File) {
     $dest = Join-Path $installDir $f.Name
     $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
-    if ($existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        Write-Host "   Linked to a git checkout, left as is: $dest"
-        continue
+    if ($existing -and ($existing.LinkType -eq 'SymbolicLink')) {
+        $target = [string]($existing.Target | Select-Object -First 1)
+        if ($target -and (Test-Path -LiteralPath $target)) {
+            Write-Host "   Linked to a git checkout, left as is: $dest"
+            continue
+        }
+        $existing.Delete()  # its checkout is gone: copy the file instead
     }
-    Copy-Item -Force -LiteralPath $f.FullName -Destination $dest
+    Copy-Item -Force -LiteralPath $f.FullName -Destination $dest -ErrorVariable copyErrors
+    if ($copyErrors) {
+        Fail "Could not copy $($f.Name) to $installDir (see the messages above)."
+    }
 }
 
 $venv = Join-Path $installDir 'venv'
 $vpy = Join-Path $venv 'Scripts\python.exe'
 
 # Rebuild the venv if it's broken (e.g. the Python it was made from was removed).
-if (Test-Path $vpy) {
+if (Test-Path -LiteralPath $vpy) {
     & $vpy -c 'pass' 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "   Existing virtual environment is broken; recreating it." -ForegroundColor Yellow
-        Remove-Item -Recurse -Force $venv
+        Remove-Item -LiteralPath $venv -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $venv) {
+            Fail "Could not remove the broken virtual environment in $venv. Quit Claude Desktop, which runs the server from it, and run install.bat again."
+        }
     }
 }
-if (-not (Test-Path $vpy)) {
+if (-not (Test-Path -LiteralPath $vpy)) {
     $pyExe = $py.Exe
     $venvArgs = @()
     if ($py.Extra) { $venvArgs += $py.Extra }
     $venvArgs += @('-m', 'venv', $venv)
     & $pyExe @venvArgs
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $vpy)) {
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $vpy)) {
         Fail "Could not create the virtual environment in $venv"
     }
 }
@@ -169,15 +207,26 @@ Write-Host "   Installed to: $installDir"
 # --------------------------------------------------------------------------
 Step "4/4  Connecting Claude"
 
-if (-not $SkipClaudeConfig) {
+$configure = $false
+if ($SkipClaudeConfig) {
+    $configure = $false
+} elseif ($ClaudeDesktop) {
+    $configure = $true
+} elseif (-not [Console]::IsInputRedirected) {
     $answer = Read-Host "   Add 'substance-designer' to Claude Desktop's config now? [Y/n]"
     if ($answer -eq '' -or $answer -match '^[Yy]') {
-        & $vpy (Join-Path $installDir 'configure_claude.py')
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "   Config was not updated automatically; follow 'Manual setup' in README.md." -ForegroundColor Yellow
-        }
+        $configure = $true
     } else {
         Write-Host "   Skipped. See 'Manual setup' in README.md."
+    }
+} else {
+    # Input from a pipe (a script, Claude Code): Read-Host would wait for an answer that never comes.
+    Write-Host "   Not asked (no console input). Run install.ps1 -ClaudeDesktop to add the Claude Desktop entry."
+}
+if ($configure) {
+    & $vpy (Join-Path $installDir 'configure_claude.py')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "   Config was not updated automatically; follow 'Manual setup' in README.md." -ForegroundColor Yellow
     }
 }
 

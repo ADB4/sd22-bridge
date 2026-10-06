@@ -18,6 +18,9 @@ _server = None
 def initializeSDPlugin():
     """Designer entry point: start the bridge."""
     global _server
+    if _server is not None:
+        # Loaded twice: stop the old server so its port and timer don't linger.
+        uninitializeSDPlugin()
     try:
         from .bridge import BridgeServer
         from .commands import dispatch

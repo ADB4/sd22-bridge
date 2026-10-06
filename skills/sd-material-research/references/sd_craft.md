@@ -22,7 +22,7 @@ material. Material-specific build notes live in each sheet's section 10. This fi
   background shell. It is the same run_python, but with a 15 min socket timeout.
 - **render_preview is for eyeballing only.** It returns at most 8 textures at ≤512 px, 8-bit, and computes every
   output. Numbers come from `sdkit.export_outputs` plus `matcheck.py`.
-- **search_library is slow the first time** (~60 s, it parses ~485 packages). For a package you already know,
+- **search_library is slower the first time** (~3 s, it parses ~485 packages). For a package you already know,
   `sk.find_lib("noise_perlin_noise")` is instant.
 - **Designer's Python is 3.9 with no numpy or PIL.** Analysis runs outside, on exported 16-bit PNGs (`scripts/`).
 - **Ctrl+Z is unreliable after big scripts** (nested undo groups). Checkpoint with `sk.snapshot("before_fix3")`.
@@ -64,7 +64,8 @@ sk.nowear("concrete_materials.sbs::concrete_weathered", ["scaling", "spalling", 
 - Recipes: `blend`, `levels`, `hscan`, `blur`, `nblur`, `gconst`, `flood_random`, `fractal`, `level_for`.
 - Inputs and functions: `expose`, `list_inputs`, `drive`, `undrive`.
 - Variants and export: `probe`, `export_outputs` (+ manifest), `make_variant`, `render_variant`, `nowear`.
-- Hygiene: `prune_dead`, `layout`, `lint`, `status`, `snapshot`, `save_registry`.
+- Hygiene: `prune_dead` (a dry run by default; `prune_dead(False)` deletes only dead nodes sdkit named, never graph
+  inputs, and lists the others), `layout`, `lint`, `status`, `snapshot`, `save_registry`.
 
 **From the asphalt build.** These were the asphalt build's own helpers (00_env.py, 00_decal_env.py) and were validated
 there; the sdkit ports match them in stub tests but have not yet run live in Designer. Values take numbers or specs.
@@ -288,7 +289,8 @@ unpick after the colour stage is built on top of it.
 ## 6. Engine costs
 
 - **Stalls:** FX-map noises at high scale stalled the GL engine. Gaussian Noise above ~200, BnW Spots 3 at 96 and
-  Cells 4 at 110 took **354 s** at 1024 (~9 min at 2048). `sk.lib` refuses these, and `sk.lint` flags them.
+  Cells 4 at 110 took **354 s** at 1024 (~9 min at 2048). `sk.lib` and `sk.P` refuse these, and `sk.lint` flags
+  them, including a function-driven scale.
 - **Safe:** Cells 4 at 48, Crystal 1 at ~40, Clouds 2 / Perlin at 3-50, Tile Sampler 96×96 (~1-2 s), Fractal Sum
   Base at any level.
 - **Typical times:**

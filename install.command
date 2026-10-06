@@ -8,6 +8,7 @@
 # Written for /bin/sh (POSIX), so it runs on the bash 3.2 that macOS ships.
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+HERE_REAL=$(cd "$HERE" && pwd -P)
 SKIP_CONFIG=0
 FORCE_CONFIG=0
 for arg in "$@"; do
@@ -34,6 +35,16 @@ finish() {
         read -r _ignored
     fi
     exit "$1"
+}
+
+# True when $1 is the folder this script runs from, or inside it, after resolving links.
+# Used to never delete the source (a checkout cloned or linked at the plugin path).
+inside_here() {
+    real=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+    case "$real/" in
+        "$HERE_REAL"/*) return 0 ;;
+    esac
+    return 1
 }
 
 fail() {
@@ -76,6 +87,10 @@ if [ -z "$TARGETS" ]; then
     echo "   Note: no Designer user folder found yet (Designer creates one on first launch)."
     echo "   Using: $TARGETS"
     echo "   If the plugin doesn't load, start Designer once, quit it, and run this installer again."
+elif [ -d "$ADOBE_DIR" ] && [ ! -d "$STEAM_DIR" ]; then
+    # Maybe an earlier run made the Adobe folder before Designer's first launch.
+    echo "   Using the Steam edition? Its folder ($STEAM_DIR) appears when Designer first starts:"
+    echo "   start Designer once, then run this installer again."
 fi
 
 OLD_IFS=$IFS
@@ -93,8 +108,16 @@ for d in $TARGETS; do
        Then run this installer again."
     fi
     if [ -L "$dest" ]; then
-        # tools/link_install.py pointed it at a git checkout; a copy would undo that.
-        echo "   Linked to a git checkout, left as is: $dest"
+        if [ -e "$dest" ]; then
+            # tools/link_install.py pointed it at a git checkout; a copy would undo that.
+            echo "   Linked to a git checkout, left as is: $dest"
+            continue
+        fi
+        rm -f "$dest"
+        echo "   Removed a link to a checkout that is gone: $dest"
+    fi
+    if [ -e "$dest/.git" ] || inside_here "$dest"; then
+        echo "   Left as is (a git checkout, or the folder this installer runs from): $dest"
         continue
     fi
     rm -rf "$dest"
@@ -141,9 +164,13 @@ APP_DIR="$HOME/Library/Application Support/sd-claude-bridge"
 mkdir -p "$APP_DIR" || fail "Could not create $APP_DIR"
 for f in "$HERE"/mcp_server/*; do
     [ -f "$f" ] || continue
-    if [ -L "$APP_DIR/$(basename "$f")" ]; then
-        echo "   Linked to a git checkout, left as is: $APP_DIR/$(basename "$f")"
-        continue
+    t="$APP_DIR/$(basename "$f")"
+    if [ -L "$t" ]; then
+        if [ -e "$t" ]; then
+            echo "   Linked to a git checkout, left as is: $t"
+            continue
+        fi
+        rm -f "$t"  # its checkout is gone; cp would write through the link
     fi
     cp -f "$f" "$APP_DIR/"
 done

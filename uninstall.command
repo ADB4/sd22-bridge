@@ -11,6 +11,17 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 APP_DIR="$HOME/Library/Application Support/sd-claude-bridge"
+HERE_REAL=$(cd "$(dirname "$0")" && pwd -P)
+
+# True when $1 is the folder this script runs from, or inside it, after resolving links.
+# Used to never delete the source (a checkout cloned or linked at the plugin path).
+inside_here() {
+    real=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+    case "$real/" in
+        "$HERE_REAL"/*) return 0 ;;
+    esac
+    return 1
+}
 VPY="$APP_DIR/venv/bin/python"
 
 echo "Removing the Claude Desktop config entry..."
@@ -28,15 +39,25 @@ for p in \
     "$APP_DIR" \
     "$HOME/.sd_claude_bridge" \
     "${TMP_ROOT%/}/sd_claude_bridge"; do
-    if [ -e "$p" ]; then
+    if [ -e "$p" ] || [ -L "$p" ]; then  # -L: also a link whose checkout is gone
+        if [ ! -L "$p" ] && { [ -e "$p/.git" ] || inside_here "$p"; }; then
+            echo "   Left as is (a git checkout, or the folder this uninstaller runs from): $p"
+            continue
+        fi
         rm -rf "$p" 2>/dev/null
-        if [ -e "$p" ]; then
+        if [ -e "$p" ] || [ -L "$p" ]; then
             echo "   Could not fully remove $p (quit Designer and Claude, then try again)."
         else
             echo "   Removed $p"
         fi
     fi
 done
+
+# tools/link_install.py links the skill into this folder; without the bridge it would keep loading.
+SKILL_LINK="$HOME/.claude/skills/sd-material-research"
+if [ -L "$SKILL_LINK" ] && inside_here "$SKILL_LINK"; then
+    rm -f "$SKILL_LINK" && echo "   Removed $SKILL_LINK"
+fi
 
 echo ""
 echo "If you registered it with Claude Code, also run:"
