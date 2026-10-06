@@ -1,7 +1,7 @@
 # Asphalt pavement surfaces: reference sheet
 
 > **Scope:** asphalt-concrete pavement surfaces seen top-down: roads, parking lots, driveways and paths, from fresh to failed. The main case is dense-graded hot-mix asphalt (HMA) with a 9.5-12.5 mm NMAS wearing course. The sheet also covers how stone-matrix asphalt (SMA), open-graded/porous asphalt (OGFC, PEM) and chip seal differ, and the maintenance items laid on asphalt: crack sealant, patches, sealcoat, fog seal and markings. **Not covered:** asphalt roof shingles, mastic (poured) asphalt flooring and roofing, airfield markings and grooving, concrete (PCC) pavements except as a layer under an overlay, and detailed shoulder features (rumble strips, raised markers): research those live.
-> **Researched:** 2026-10-02, revised 2026-10-03. **Revised 2026-10-03 (asphalt lane build):** joint density deficit (typical 2-5 %), new 9.5 mm texture depth, LTPP severity wording, gearbox streak, the joint's hot-side step, gloss loss in weeks, the paving joint as the first crack, collector layer stacks, the PAVER pothole matrix; sources [51]-[57]. **Confidence:** distress definitions, severity bands, crack widths, rut and pothole depths, lane, wheel-path and marking geometry, layer and lift thicknesses and chip-seal construction come from FHWA/LTPP, US Army PAVER, DOT specifications and manuals (high). Visible albedo of new and old asphalt, street paint and concrete is measured (spectraldb); solar albedo with age is measured (LBNL); intermediate ages are interpolated (medium). Nearly all roughness values, oil-drip positions, paint wear at texture peaks, drying patterns and per-variant height ranges are estimates from physics, marked (est.) (low-medium).
+> **Researched:** 2026-10-02, revised 2026-10-03. **Revised 2026-10-03 (asphalt lane build):** joint density deficit (typical 2-5 %), new 9.5 mm texture depth, LTPP severity wording, gearbox streak, the joint's hot-side step, gloss loss in weeks, the paving joint as the first crack, collector layer stacks, the PAVER pothole matrix; sources [51]-[57]. **Revised 2026-10-04:** the rest of the lane build's research flags (wheel-path citation, joint air voids, pothole minimum area, overband wipe zone, pothole water and debris, the PAVER pothole cells, freeze-thaw layer stacks; sources [58]-[62]) and its build lessons, marked (asphalt build, 2026-10). **Confidence:** distress definitions, severity bands, crack widths, rut and pothole depths, lane, wheel-path and marking geometry, layer and lift thicknesses and chip-seal construction come from FHWA/LTPP, US Army PAVER, DOT specifications and manuals (high). Visible albedo of new and old asphalt, street paint and concrete is measured (spectraldb); solar albedo with age is measured (LBNL); intermediate ages are interpolated (medium). Nearly all roughness values, oil-drip positions, paint wear at texture peaks, drying patterns and per-variant height ranges are estimates from physics, marked (est.) (low-medium).
 
 Every number carries a source tag `[n]` (see Sources) or `(est.)` with a one-line reason.
 Give ranges rather than single values, and say which variant or region a value applies to.
@@ -20,8 +20,8 @@ Asphalt concrete is crushed stone and sand glued by 4.7-6.8 % bitumen by mass [2
 
 **Roads: lanes, wheel paths, joints**
 - Lane width is 3.6 m (12 ft) on high-speed roads, 3.0-3.6 m on urban arterials, and down to 2.7 m on low-volume rural roads [6].
-- Wheel paths follow the AASHTO R 85 lane zones used for federal reporting: two 1.0 m (39 in) strips with inner edges 0.375 m either side of the lane centre, so 0.75 m apart [3][4]. The WP centrelines sit ±0.875 m from the lane centre. Each edge zone is (lane width − 2.75 m)/2: 0.43 m for a 3.6 m lane and 0.13 m for a 3.0 m lane (derived). The strips are a reporting convention; real lateral wander spreads load damage up to about 150 mm beyond them (est.).
-- Paving lanes match traffic lanes. The surface-lift longitudinal joint is wanted at the centreline, but planned so it does not fall within wheel paths, recessed markings or striping [18]: in practice it runs beside the lane line, just outside the stripe (est.: 150-300 mm from the stripe edge). It is offset ≥150 mm (many specs 300 mm) from the joint in the lift below [18]. A joint is typically 2-5 % less dense than the mat (≤2 % is the recommended target; PennDOT averaged 91.4 % at the joint against 93.9 % in the mat), and its hot side is denser than its cold side [17][51]. The hot lane overlaps the cold lane by 25 ± 12 mm and is left about 2.5 mm higher after rolling [51]. Joints are where longitudinal cracks and raveling start [17][18]; the paving joint is usually the first longitudinal crack, open along 90-100 % of its length, 3-12 mm wide, by year 3-4 in Michigan and Wisconsin [55].
+- Wheel paths follow the AASHTO R 85 / PP 67 lane zones used for federal reporting, as quoted by CTDOT (R 85 itself is paywalled and was not read): two 1.0 m (39 in) strips with inner edges 0.375 m either side of the lane centre, so 0.75 m apart [3][4]. In a 2018 survey, 20 state agencies used a 39 in (1 m) wheel path [58]. The WP centrelines sit ±0.875 m from the lane centre. Each edge zone is (lane width − 2.75 m)/2: 0.43 m for a 3.6 m lane and 0.13 m for a 3.0 m lane (derived). The strips are a reporting convention; real lateral wander spreads load damage up to about 150 mm beyond them (est.).
+- Paving lanes match traffic lanes. The surface-lift longitudinal joint is wanted at the centreline, but planned so it does not fall within wheel paths, recessed markings or striping [18]: in practice it runs beside the lane line, just outside the stripe (est.: 150-300 mm from the stripe edge). It is offset ≥150 mm (many specs 300 mm) from the joint in the lift below [18]. A joint is typically 2-5 % less dense than the mat (≤2 % is the recommended target; PennDOT averaged 91.4 % at the joint against 93.9 % in the mat; even good practice leaves 8-10 % air voids at the joint against <7-8 % in the mat), and its hot side is denser than its cold side [17][51]. The hot lane overlaps the cold lane by 25 ± 12 mm and is left about 2.5 mm higher after rolling [51]. Joints are where longitudinal cracks and raveling start [17][18]; the paving joint is usually the first longitudinal crack, open along 90-100 % of its length, 3-12 mm wide, by year 3-4 in Michigan and Wisconsin [55].
 - Transverse construction joints sit at paving stops. About 55 % of localised raveling on OGFC occurs at transverse joints [25].
 - Segregation is the as-built texture variation [19]. It shows as chevron-shaped coarse spots at the start and end of each truckload, a streak down the paver centre (gearbox: 150-200 mm wide, directly behind the main-screed centre, more open and generally darker [54]), and streaks at one or both lane edges. NCHRP 441 texture-ratio bands: low 1.16-1.56, medium 1.57-2.09, high > 2.09 [53]. The truckload interval is about 50 m for a 3.7 m × 40 mm lift (est.: 18 t load ÷ 2.35 t/m³ ÷ 0.148 m²).
 - Markings follow the US MUTCD [7]. A normal line is 100-150 mm (4-6 in) wide and a wide line is at least twice that. Broken lane lines are 3.0 m segments with 9.1 m gaps (a 12.2 m cycle). Dotted lane lines are 0.9 m on, 2.7 m off. Thermoplastic edge lines on the inside of curves get 150-300 mm drainage gaps every 76 m [8]. FHWA recommends spacing crosswalk bars so they avoid the wheel paths [47]. Snow-plough states often use recessed (grooved-in) markings [18].
@@ -55,7 +55,7 @@ Wear may remove material inside a footprint, as on a worn dash, but it never wid
 | Feature | Typical | Range | Variant / notes | Source |
 |---|---|---|---|---|
 | Lane width | 3.6 m | 2.7-3.6 m | 3.0-3.6 m urban arterials | [6] |
-| Wheel path width | 1.0 m | | AASHTO R 85 / HPMS | [3][4] |
+| Wheel path width | 1.0 m | | AASHTO R 85 / PP 67 as quoted by CTDOT; HPMS; 20 agencies use 39 in | [3][4][58] |
 | Gap between wheel paths | 0.75 m | | inner edges ±0.375 m from lane centre | [3] |
 | Lane line width | 100 mm | 100-150 mm | wide line ≥200 mm | [7] |
 | Broken line | 3.0 m on + 9.1 m off | 1:3 ratio | 12.2 m cycle (US) | [7] |
@@ -64,6 +64,7 @@ Wear may remove material inside a footprint, as on a worn dash, but it never wid
 | Binder (intermediate) course | 57 mm per lift | 50-100 mm+ | 19 mm NMAS, 1-2 lifts | [11] |
 | HMA over aggregate base (lots) | 64-152 mm HMA | base 100-584 mm | by traffic and subgrade | [13] |
 | Full-depth HMA (lots) | | 100-290 mm | | [13] |
+| Bound HMA, freeze-thaw collector or arterial | 76-102 mm over aggregate base | full HMA 155-240 mm (derived) | Illinois ≥76 mm and PennDOT 89-102 mm over ≥200 mm base; a 100 mm pothole reaches base only on this thin stack | [60][61][62] |
 | Lift thickness ÷ NMAS | ≥3 fine-graded, ≥4 coarse/SMA | 3-5 optimum | | [12] |
 | Porous asphalt (lots) | 50-100 mm | ≥16 % voids | over 50 mm choker and ≥200-230 mm reservoir | [13] |
 | Thin overlay | ≤38-50 mm | | single lift | [20] |
@@ -81,7 +82,7 @@ Wear may remove material inside a footprint, as on a worn dash, but it never wid
 | MTD, OGFC | 1.5-3.0 mm | MPD >1.0 mm new | | [20][22] |
 | MTD, chip seal / microsurfacing / slurry | >1.0 / 0.5-1.0 / 0.3-0.6 mm | | | [20] |
 | Laser texture by NMAS (ICC index ≈1.5 × MPD) | 9.5: 1.0-1.4 mm; 12.5: 1.6; 19: 1.5-1.7; 25: 2.0-3.5 | std grows with NMAS and segregation | Virginia | [21] |
-| Crack width L / M / H (LTPP) | ≤6 / 6-19 / >19 mm | | longitudinal, transverse, block, reflection | [1] |
+| Crack width L / M / H (LTPP) | ≤6 / 6-19 / >19 mm | | longitudinal, transverse, block, reflection; M and H also cover narrower cracks with adjacent random cracking | [1] |
 | Crack width L / M / H (PAVER) | <10 / 10-75 / >75 mm | | or any width with breakup within 100 mm | [2] |
 | Slippage crack width L / M / H | <10 / 10-38 / >38 mm | | | [2] |
 | Fatigue polygon, longest side | <0.3 m | <0.5 m | eq. diameter about 100-250 mm (derived) | [1][2] |
@@ -94,7 +95,7 @@ Wear may remove material inside a footprint, as on a worn dash, but it never wid
 | Studded-tyre wear rate | | 0.04-0.5 mm/yr | measured on PCC; 60 % of HMA "rutting" in Washington is stud wear | [48] |
 | Depression L / M / H | 13-25 / 25-50 / >50 mm | | | [2] |
 | Pothole depth L / M / H | <25 / 25-50 / >50 mm | | | [1] |
-| Pothole plan size | ≥150 mm | 100-760 mm | | [1][2] |
+| Pothole plan size | ≥150 mm | 100-760 mm | minimum area about 0.02 m² | [1][2] |
 | Corrugation wavelength | <3 m | | ridges across traffic | [2] |
 | Swell length | >3 m | | | [2] |
 | Lane/shoulder drop-off L / M / H | 25-50 / 50-100 / >100 mm | | | [2] |
@@ -102,7 +103,7 @@ Wear may remove material inside a footprint, as on a worn dash, but it never wid
 | Raveling, medium | >20 missing coarse stones per yd² (m²) | or clusters | | [2] |
 | Patch, minimum | 0.1 m² | | | [1] |
 | Patch crown | 3-6 mm | | throw-and-roll, edge seal | [27] |
-| Sealant overband (band-aid) | 75-125 mm wide | 3-6 mm thick | | [26] |
+| Sealant overband (band-aid) | 75-125 mm wide | 3-6 mm thick | 3 mm typical; 25 mm wipe zone each side | [26] |
 | Crack width sealed / filled | 5-19 / 5-25 mm | | | [26] |
 | Routed reservoir | 12-19 mm | | | [26] |
 | Paint film | 0.38 mm (15 mil) wet per coat | final lines 2 coats; dry ≈0.2 mm per coat (est.) | 0.13-0.20 mm dry is the thin coat under thermoplastic | [8] |
@@ -296,6 +297,7 @@ Two mechanisms make wheel-path troughs, and they look different.
 - **Where:** WP; top-down lines often at the WP edges [49]. Short transverse cracks spaced <0.3 m inside a WP also count as fatigue [1].
 - **Shape and scale:** L: "an area of cracks with no or only a few connecting cracks" [1], parallel hairlines along V. M: a complete "chicken wire" network, perhaps slightly spalled. H: well-defined spalled pieces that may rock, possibly with pumping [1][2]. Pieces are many-sided and sharp-angled, usually <0.3 m on the longest side [1] (<0.5 m [2]).
 - **Progression:** V2: L lines, patchy in WP → V3: M cells over a large share of WP (federal "good" is <5 % of WP area cracked [5]) → V4: H with pumping and potholes.
+- **L amount (asphalt build, 2026-10):** at V2, 3 % of the WP (est.), each single L crack counted as a 0.1 m affected strip (LTPP Directive D-13, as the build applied it): ~2.2 m of crack per 3.66 m lane tile (derived). Draw it along tyre tracks in sub-parallel pairs (U 770 / 870 / 1150 / 2535 / 2780 / 2880 mm, est.), tapered at the ends; fatigue-network edges gave only 0.1-0.4 m of 5-20 cm segments.
 - **Interactions:** goes with rutting [2]; leads to potholes [2] and patches (4.15); cracks reduce reflectance [32]. Fatigue areas are patched, not crack-sealed (4.16).
 - **Signature per map:** height: narrow V-grooves, later dirt-filled (est.: 2-10 mm visible depth); albedo: crack walls take the fresh-binder colour, dirt fill lightens toward soil; height and AO make the line read dark; roughness up in cracks; at H, pieces slightly tilted or sunken (est.).
 - **Severity scale:** LTPP L / M / H [1]; PAVER L / M / H [2].
@@ -364,12 +366,12 @@ Two mechanisms make wheel-path troughs, and they look different.
 - **Acts on:** the wearing course, then the binder course, then base. **Removes / adds:** removes bound material. **Reveals:** whatever layer lies at that depth in the stack (`layer_index` from the section 2 thicknesses [11]); base only below all bound layers [1][11].
 - **Never:** is a smooth round bowl with a soft rim. Never shows base colour in a hole shallower than the bound layers. Never has a plan dimension under 150 mm [1].
 - **Where:** WP (from fatigue), at transverse cracks and joints [28], at raveled areas and edges [2]; repeated on the same weak spots (est.).
-- **Shape and scale:** bowl-shaped, "generally ... sharp edges and vertical sides near the top", usually <760 mm across [2], minimum 150 mm [1]. PAVER rates by diameter (100-200 / 200-460 / 460-760 mm) × depth (13-25 / 25-50 / >50 mm) [2]. Profile (est.): the top 10-30 mm near-vertical, then a 30-60° bowl. Potholes cluster and stop growing after a while (CEDR POTHOLE). The outline follows broken crack pieces (est.); debris and water collect in the bottom (est.). A thin overlay (≤38-50 mm [20]) can instead lose its whole lift at the tack-coat interface: a flat-floored, sharp-edged area that shows the older, lighter surface (est.).
+- **Shape and scale:** bowl-shaped, "generally ... sharp edges and vertical sides near the top", usually <760 mm across [2], minimum 150 mm and about 0.02 m² [1]. PAVER rates by diameter (100-200 / 200-460 / 460-760 mm) × depth: L L M at 13-25 mm, L M H at 25-50 mm, M M H at >50 mm; a hole over 760 mm counts as area ÷ 0.5 m² holes, M if ≤25 mm deep, H if deeper [2]. Profile (est.): the top 10-30 mm near-vertical, then a 30-60° bowl. CEDR calls a pothole a steep depression, typically ≥30 mm deep and 100 mm to 1 m in equivalent diameter; potholes cluster and stop growing after a while [59]. The outline follows broken crack pieces (est.). A pothole "may or may not be filled with water or debris", and in winter water is highly likely [27]. A thin overlay (≤38-50 mm [20]) can instead lose its whole lift at the tack-coat interface: a flat-floored, sharp-edged area that shows the older, lighter surface (est.).
 - **Progression:** V3: a few L-M potholes → V4: M-H, merging, many patched.
 - **Interactions:** patched (4.15); bottom fills with water (4.24).
 - **Signature per map:** height: deep, steep-walled; AO strong; albedo: black walls, floor of debris (grey) or base; wet: water-filled.
 - **Severity scale:** LTPP depth L <25, M 25-50, H >50 mm [1]; PAVER diameter (100-760 mm) × depth (13-50+ mm) matrix [2].
-- **Sources:** [1][2][11][20][27][28]
+- **Sources:** [1][2][11][20][27][28][59]
 
 ### 4.15 Patches
 - **Mechanism:** maintenance replaces material within a footprint at a known time [1][27].
@@ -397,14 +399,14 @@ Two mechanisms make wheel-path troughs, and they look different.
 - **Shape and scale:** configurations [26]:
   - **Flush fill:** level with the surface.
   - **Reservoir:** routed 12-19 mm wide and deep, then filled flush or slightly recessed.
-  - **Overband (band-aid):** 75-125 mm wide, 3-6 mm thick, squeegeed.
+  - **Overband (band-aid):** 75-125 mm wide, 3-6 mm thick (3 mm typical), squeegeed, with a 25 mm wipe zone on each side [26].
   - **Capped:** left to self-level.
 
   Fresh sealant may be "blotted" with sand or limestone dust [26], giving it a grey dusted top.
 - **Progression:** V2: fresh, glossy black bands → V3: dusted, matte, worn through in WP (est.), with ruptures above the crack edges [26] → V4: pulled out in places (est.). Life is 2.5-9 years by material and configuration; fibre materials last ≤2 years [26].
 - **Interactions:** overbands "detract from the general appearance" [26]; they track onto tyres if opened to traffic early [26].
 - **Signature per map:** height: overband +3-6 mm with feathered edges, fills 0 to −2 mm (est.); albedo black, dusted grey later; roughness 0.25-0.45 fresh, rising as dust embeds (est.).
-- **Severity scale:** LTPP counts a sealed crack in good condition as low severity [1].
+- **Severity scale:** LTPP rates a sealed crack in good condition, whose width cannot be measured, as low severity [1].
 - **Sources:** [1][26][32]
 
 ### 4.17 Pumping and water bleeding
@@ -569,14 +571,18 @@ Region names refer to the `regions` block in section 9.
 | Chip seal as a light, clean gravel texture everywhere | Most chip seals are fog-sealed black at first; chips are lost off the wheel paths and at the centreline; WP darker where binder rises [24] | Fog-seal deposit worn off tips; chip-loss driver = NWP + centreline seam (4.25) |
 | Oil stains repeated at identical offsets in every stall | Each car drips differently, around the engine position (est.) | Stall-ID random offsets, sizes and ages |
 | One tile showing a lane, stalls and dashed lines together | The 12.2 m dash cycle does not fit a lane tile [7] | Lane tile = lane width; dashes and arrows as decals |
+| Potholes and patches inside the repeating lane tile (asphalt build, 2026-10) | A 3.66 m tile repeats every site every 3.66 m, a landmark along the road; in-tile holes also meet whatever lies beneath (a joint overband bridged 65 % of a V4 hole, and every mask-based hard check passed) | Engine decals: one parametric graph (1.0 m at 2048 px; `kind` pothole, saw-cut or throw-and-roll patch) placed per instance; run the pothole and patch targets on the decal |
+| Decal rim as a soft ring of plain surface (asphalt build, 2026-10) | A ring painted as plain surface at the surround's age ignores what runs under it: a +16 luma halo across a sealant overband, a −6 to −9 luma frame in V4 wheel paths and a crack-free collar (0.43-0.45 of the lane's crack relief) | Opacity = clamp(2 × footprint), only the outline's own anti-aliasing, in the decal's colour; lane cracks and stains run to the cut or broken edge; seat the decal on the lane's as-built + rut height |
+| Pumping stain drawn last, over everything (asphalt build, 2026-10) | Pumped fines stain the surface beside the crack [1]; walls and spalls stay dark (I5). Drawn last with a 150 mm halo, it lifted V4 crack walls to 96-100 luma and washed 42 % of the fatigue cells | Draw pumping right after the oil, under every crack overlay, with a ~80 mm halo (predicted: walls ~56-58 luma, 10-13 % of cells washed) |
+| Lane-centre oil as a flat band or a fused ribbon (asphalt build, 2026-10) | At 0.5-2 m the centre stain is separate 20-100 mm drops (4.20, est.) whose density peaks on the drip line between the WP [44] | Threshold a drop noise on a lateral density (biweight, radius 620 mm at the lane centre) to the power 1.5, one tone per drop; a density term much stronger than the noise spread fused the drops into a solid 300-450 mm ribbon |
 
 ## 7. PBR reference values
 
 | Component / state | Albedo (sRGB 0-255 / linear) | Roughness | Notes | Source |
 |---|---|---|---|---|
-| Fresh dense HMA (binder film) | 58 / visible 0.042; RGB [0.043, 0.041, 0.040] | 0.5-0.65 (est.: smooth binder film over rough macrotexture) | measured visible (photopic); nearly flat spectrum; solar 0.04-0.05 agrees [30] | [30][36] |
+| Fresh dense HMA (binder film) | 58 / visible 0.042; RGB [0.043, 0.041, 0.040] | 0.5-0.65 (est.: smooth binder film over rough macrotexture); 0.35-0.5 in the first weeks (est.: S1 falls about 3× by 7 months [57]) | measured visible (photopic); nearly flat spectrum; solar 0.04-0.05 agrees [30] | [30][36][57] |
 | Young HMA (1-2 yr) | 63-80 / 0.05-0.08 | 0.65-0.85 (est.) | interpolated between new and old; WP tips lighten first | (est.) |
-| Old / weathered HMA (≈5 yr+) | (98, 93, 80), luma 93 / visible 0.124; range 80-108 / 0.08-0.15 | 0.85-0.95 (est.) | measured "old black asphalt", warm (B/R 0.66) [36]; solar 0.12 at 5 yr [30], 0.15-0.20 weathered [31] | [30][31][36] |
+| Old / weathered HMA (≈5 yr+) | (98, 93, 80), luma 93 / visible 0.124; RGB [0.123, 0.109, 0.081]; range 80-108 / 0.08-0.15 | 0.85-0.95 (est.) | measured "old black asphalt", warm (B/R 0.66) [36]; solar 0.12 at 5 yr [30], 0.15-0.20 weathered [31] | [30][31][36] |
 | Late-aged, heavily worn | 85-124 / 0.09-0.20 (est.) | 0.9-0.95 (est.) | field reflectance 0.105-0.24 (350-2500 nm, includes NIR) [34]; exposed stone and debris dominate | [34] (est.) |
 | Exposed coarse aggregate faces | 108-160 / 0.15-0.35 (est.) | 0.75-0.9; polished 0.55-0.7 (est.) | solar 0.20-0.40 on California aggregates [30]; visible taken lower because mineral surfaces absorb more in the visible [32]; traprock about 0.08-0.15 (est.) | [30][32] (est.) |
 | Fines and sand (no binder) | 80-140 / 0.08-0.27 (est.) | 0.9-1.0 (est.) | solar 0.10-0.31 [30], visible taken lower | [30] (est.) |
@@ -734,9 +740,14 @@ Targets (mm unless noted; "hard" = fails the material; "–" = not applicable; L
 | hygiene | `seam` all maps ≤3 (strip tiles: `axis` along the road only); `normal_valid` directx; `height_usage` unique_levels ≥1024 and clipped_frac ≤0.001 | hard | hard | hard | hard | hard | I16 |
 | height_range | `height_usage` range_used (section 2 ranges) | ≥0.3 soft | same | same | same | same | 2 |
 
+**Target conflicts (asphalt build, 2026-10).** Three targets the build added pulled against each other or the physics:
+- *Cold-edge step ≤4 mm vs the overband.* A band laid before the cold-side raveling shields the surface under it, so its edge stands as a ledge over the raveled trench; ≤4 mm passes only a draped band. Target an edge-local step in [t + 0.3 d, t + 0.6 d + 0.5] mm instead (t sealant thickness, d ravel depth: V3 6.4-9.3, V4 7.2-11.9) and inset the inner ravel step 6-18 mm from the band.
+- *Oil lateral step ≤3 luma per 50 mm and a soft-edge ratio vs a drip line that peaks inside the centre band.* Scale the step limit with the drip line's depth (3.0 / 4.0 / 5.1 luma at V2-V4) and drop the soft-edge ratio, which cannot pass with ≤1 % of the oil outside the band.
+- *Stone-top height spread ≥0.2 mm vs V0 `agg_protrusion` ≥0.2 mm.* At 0.55 mm protrusion the build read a spread of 0.152 mm and V0 protrusion 0.195 mm; both cannot pass there. Raise protrusion to about 1.0 mm with 0-0.6 mm tilt, keep both targets and add V0 MPD in [0.39, 0.76] mm [52] (section 10).
+
 ## 10. Substance Designer build notes
 Material-specific only; general craft lives in `references/sd_craft.md` (recipes R1-R14).
-- **Two-tile pipeline.** The lane tile carries everything ≥3 px: layout, cracks, potholes, patches, ruts, raveled clusters ≥50 mm, colour and the masks. Stones (5-7 px on the lane tile) come from 1.0 m detail tiles per variant, one for the WP and one for the NWP (or one tile with a weathering-intensity input), blended in the engine by the lane tile's WP mask. Run I2 on each tile separately; run I4, agg_protrusion, ravel_depth, socket_darker and stone_cv on the detail tiles only.
+- **Two-tile pipeline.** The lane tile carries everything ≥3 px: layout, cracks, potholes, patches, ruts, raveled clusters ≥50 mm, colour and the masks. Stones (5-7 px on the lane tile) come from 1.0 m detail tiles per variant, one for the WP and one for the NWP (or one tile with a weathering-intensity input), blended in the engine by the lane tile's WP mask. Run I2 on each tile separately; run I4, agg_protrusion, ravel_depth, socket_darker and stone_cv on the detail tiles only. On a repeating lane tile, put potholes and patches in decals instead (section 6; asphalt build, 2026-10).
 - **Layout generator.** The lane tile has no tiled units, so its layout is a set of 1D bands across U (lane axis = V): a Linear Gradient across U, cut into bands with Histogram Scan or Levels at the section 2 pixel positions.
   - wheelpath: px 255-814 and 1234-1793; centre: px 814-1234 (3.66 m tile [3]);
   - lane lines split across U = 0/1, 28-42 px on each side;
@@ -766,11 +777,17 @@ Material-specific only; general craft lives in `references/sd_craft.md` (recipes
   - **Transverse crack spacing does not fit the lane tile.** Real spacing is 23.6 ± 10.3 m [28], but a square 3.66 m tile repeats any transverse crack every 3.66 m, which reads as cement-treated-base cracking (2.4-6 m [29]). Keep transverse cracks out of the base lane tile. Ship them as decals or as a second "lane + crack" tile to mix in sparsely (est.). Reflection cracks over 4.5-6 m slabs have the same problem.
   - **Soft wheel-path edges.** Drive damage from a softened copy of the WP mask (blur ≤150 mm beyond the strip, about 84 px; est.: lateral wander), but keep the hard layout mask for the checks; nwp_core leaves that margin out.
   - **Cracks under 3 px.** L cracks under 5.4 mm wide fall below 3 px on the lane tile. Draw them 3 px wide or as albedo and roughness darkening only, and keep height cracks ≥3 px.
-  - **Warps.** Warp the crack generators' inputs, never the lane, WP or marking masks; a warp after the layout moves lane lines and breaks I1.
+  - **Warps.** Warp the crack generators' inputs, never the lane, WP or marking masks; a warp after the layout moves lane lines and breaks I1. Gate a warped crack or seam line with an unwarped band, or the warp wraps specks across the tile border (asphalt build, 2026-10).
   - **Sealant from the crack mask.** Derive the overband by dilating the final crack mask with a Distance node (37-62 mm a side [26]); drawing it independently gives stray sealant (I10).
   - **Sand speckle.** Build the 0.3-2.36 mm fines from Fractal Sum Base min/max levels. High-scale FX-map noises have stalled Designer's GL engine on this setup.
   - **Height range.** Set `height_depth_mm` per variant (section 2) and use 16-bit; export `nowear` at the same range and offset, or the envelope check compares different scales.
   - **Dash cycles and stall heads.** The 12.2 m broken-line cycle [7] and stall head ends do not fit a repeating tile; put them in decals.
+  - **A decal replaces everything beneath it (asphalt build, 2026-10).** Inside its footprint the decal's maps are the surface: no lane sealant, crack, oil, ravel or detail stone shows through (4.15). A later decal replaces an earlier one inside its own footprint (patch on patch), and a later saw cut lands ≥50 mm beyond the earlier outline. Check opacity = 1 over the core and a lane + decal composite with no lane feature inside it.
+  - **Crack relief (asphalt build, 2026-10).** Soft masks (WP wander, area outline, selection) multiplied into the V-profile made creases 0.6-2.8 mm deep instead of 9.5 mm (wall slope p50 9.5-31°). Gate the profile by presence at 0.5, cut a cusp (steep upper walls narrowing to a 1-3 px tip), and fill old cracks level with dirt to clamp(0.4 D, 4.5, 10) mm below the surface (D crack depth), chosen per crack stretch, never per cell side.
+  - **U coordinate (asphalt build, 2026-10).** Gradient Linear 1 is a 256 px ramp upsampled with clamped edges: within 4 px of the border it reads 0.5/256 to 1 − 0.5/256, and the layout bands stepped 0.016-0.027 mm at U = 0, failing the normal and AO seams. Use an exact pixel-centre coordinate (Pixel Processor `$pos.x`) and keep ramps clear of the border.
+  - **Stone protrusion and MPD (asphalt build, 2026-10).** Stone tips 0.55 mm above the mastic rendered a V0 MPD of 0.23 mm, against 0.39-0.76 mm for new 9.5 mm mixes [52]. Use about 1.0 mm with 0-0.6 mm per-stone tilt (round-2 estimate: MPD ~0.49 mm), and measure V0 MPD as well as protrusion.
+  - **Stone count (asphalt build, 2026-10).** A Voronoi of scale s gives s² cells per m² on the 1 m tile. Scale 72 left 32 % of the coarse area wider than 12.5 mm for a 9.5 mm mix; the build moved to scale 100 with 58 % of the cells kept. A 30 % footprint cover leaves ~18 % exposed tops.
+  - **Deposit shares (asphalt build, 2026-10).** Measure a pothole's debris share on the geometric floor mask; a height threshold drops the heaps and reads about half.
 
 ## 11. Reference imagery
 Search terms, and what to measure (prefer raking light, top-down shots, and a coin, ruler or crack-width card):
@@ -790,7 +807,7 @@ Search terms, and what to measure (prefer raking light, top-down shots, and a co
 ## Sources
 1. Miller, J. S. & Bellinger, W. Y. *Distress Identification Manual for the Long-Term Pavement Performance Program*, 5th rev. ed., FHWA-HRT-13-092 (2014). https://www.fhwa.dot.gov/publications/research/infrastructure/pavements/ltpp/13092/13092.pdf. Distress definitions and severity bands, wheel-path rules, bleeding location, pothole and patch sizes.
 2. US Army Corps of Engineers ERDC-CERL (M. Y. Shahin, PI). *Asphalt Surfaced Roads & Parking Lots PAVER Distress Identification Manual* (2009). https://transportation.erdc.dren.mil/triservice/downloads/PAVER/Road%20Asphalt%20Distress%20Manual.pdf. Severity bands for weathering, raveling, rutting, depressions, corrugation, slippage, potholes and drop-off.
-3. Connecticut DOT & Connecticut Transportation Institute. *Network-Level Pavement Condition Data Collection Quality Management Plan*, v2.0 (2022). https://portal.ct.gov/dot/-/media/dot/policy/photolog/data-quality-management-plan_ctdot-version-20.pdf. AASHTO R 85 wheel paths: 1.0 m strips, inner edges 0.375 m from the lane centre.
+3. Connecticut DOT & Connecticut Transportation Institute. *Network-Level Pavement Condition Data Collection Quality Management Plan*, v2.0 (2022). https://portal.ct.gov/dot/-/media/dot/policy/photolog/data-quality-management-plan_ctdot-version-20.pdf. Wheel paths as defined in AASHTO PP 67-16, the provisional standard that became R 85: 1.0 m strips, inner edges 0.375 m from the lane centre.
 4. FHWA. *HPMS Field Manual*, pavement data section. https://www.fhwa.dot.gov/policyinformation/hpms/fieldmanual/page06.cfm. Federal wheel-path and cracking-percent definitions.
 5. eCFR. *23 CFR 490.313, Calculation of pavement condition measures*. https://www.ecfr.gov/current/title-23/chapter-I/subchapter-E/part-490/subpart-C/section-490.313. Rut and cracking rating thresholds (good / fair / poor).
 6. FHWA. *Lane Width: flexibility in the AASHTO guidelines* (CSS resources). https://www.fhwa.dot.gov/planning/css/resources/lanewidth. Lane widths 2.7-3.6 m.
@@ -845,3 +862,8 @@ Search terms, and what to measure (prefer raking light, top-down shots, and a co
 55. Kandhal, P. S. & Mallick, R. B. *Longitudinal Joint Construction Techniques for Asphalt Pavements*, NCAT Report 97-4 (1997). https://rosap.ntl.bts.gov/view/dot/13984/dot_13984_DS1.pdf. Joint crack extent and width at 1-4 years.
 56. Holcim UK. *Asphalt Care: New Asphalt Surfaces* (leaflet, 2023). https://holcim.co.uk/sites/uk/files/2023-02/superdrive-asphalt-aftercare-leaflet-2023.pdf. Gloss lost in weeks, dark grey in 6-12 months.
 57. Petrinska, I. *Road Surface Reflection Properties of Typical for Bulgaria Pavement Materials*, J. Tech. Univ. Gabrovo 52 (2016). https://izvestia.tugab.bg/images/Downloads/52_03-EE-06-min.pdf. Q0 and S1 against wear period.
+58. TRB webinar *Advances in Pavement Condition Surveys* (slides; NCHRP cracking-definitions segment presented by K. C. P. Wang, Oklahoma State Univ.) (7 Apr 2021). https://www.nationalacademies.org/cdn/materials/a067d287-6c12-4fe6-ae09-850d9860bad1. Survey: 20 agencies use a 39 in (1 m) wheel path.
+59. Kubanek, K. & Karcher, C. *Durable Pothole Repairs (POTHOLE)*, CEDR ERA-NET Road project presentation, KIT (11 Dec 2012). https://www.cedr.eu/download/other_public_files/research_programme/eranet_road/call_2011/design/pothole/06_neu-enr-design-peb-meeting-pothole.pdf. Pothole definition, typical size, growth and clustering.
+60. PennDOT. *Publication 242 Pavement Policy Manual*, 2015 ed., change 5 (copy hosted by Butler County, PA). https://butlercountypa.gov/DocumentCenter/View/1555/PennDOT-Publication-242-Pavement-Policy-Manual-PDF. Tables 6.4 (MFC classes), 9.4 and 9.5 (minimum and maximum layer thicknesses).
+61. New York State DOT. *Comprehensive Pavement Design Manual*, ch. 4 (rev. 1, 2002; course copy). https://people.sunypoly.edu/~barans/classes/ctc440/pdf/CPDM%20Chapter4.pdf. Table 4-1 conventional thickness guide.
+62. Illinois DOT. *Bureau of Local Roads & Streets Manual*, ch. 44 Pavement Design (Jan 2012; copy hosted by MnDOT NRRA). https://www.dot.state.mn.us/mnroad/nrra/structure-teams/geotechnical/files/local-roads-and-streets-manual.pdf. Minimum HMA and aggregate base.

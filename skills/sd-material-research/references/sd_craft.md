@@ -76,10 +76,27 @@ sk.nowear("concrete_materials.sbs::concrete_weathered", ["scaling", "spalling", 
 - Hygiene: `prune_dead` (a dry run by default; `prune_dead(False)` deletes only dead nodes sdkit named, never graph
   inputs, and lists the others), `layout`, `lint`, `status`, `snapshot`, `save_registry`.
 
+**From the asphalt build.** These were the asphalt build's own helpers (00_env.py, 00_decal_env.py) and were validated
+there; the sdkit ports match them in stub tests but have not yet run live in Designer. Values take numbers or specs.
+```python
+sk.pos_coord("L_u", 0)                         # exact (i + 0.5)/N along x (1: y); Gradient Linear 1 steps at the wrap
+sk.band("lane", "L_u", 0.2, ("get", "hi"))     # 1 on lo..hi, 1-px AA edges at res=2048; soft_lo/soft_hi give ramps
+sk.tri("crown", "L_u", 0.5, 0.25)              # 1 at centre, 0 at |src - centre| >= half
+sk.levels_fn("lv", "h", ("get", "lo"), 1.0)    # levels() whose points (and mid) may be specs
+age = sk.piecewise(("get", "age_years"), [(0, 0.1), (3, 0.5), (20, 0.8)])   # curve from a table; number x -> float
+sk.seeded("cr_n", "outline_seed", 3)           # $randomseed = int input + 3: one input re-rolls a set of nodes
+sk.gmap("tone", "tone_n", [[0, "#3b3938"], [1, "#726c5f"]])   # Gradient Map
+sk.to_color("m_c", "m")                        # grayscale -> black..white colour, for a colour Blend's source
+sk.flat("seal_c", "#67625a")                   # flat colour (Uniform Color, colour mode)
+sk.ensure_output("basecolor", "base", usage="baseColor")      # o_basecolor: created once, only re-wired on re-runs
+sk.reset("M_", "C_")                           # delete this stage's nodes by name prefix before re-running it
+```
+
 **Function specs** for `drive`, and for any value argument that takes a tuple:
 - numbers; `("get", id[, "float"|"int"|"color"|"bool"])`
 - `add sub mul div min max`; `("lerp", a, b, x)`; `("vec2", a, b)`
 - sugar: `("clamp", x, lo, hi)`, `("neg", a)`, `("mm", mm_spec)` → mm / height_depth_mm
+- `("int", n)`, `("tofloat", x)` (int → float), `("swz", vec, i)`; `("get", "$pos", "float2")` in a Pixel Processor
 
 There is **no pow and no clamp node** in 12.4.1. Build curves as the min/max of lines, e.g. the spall Position
 `min(0.0077+1.615E, 0.1918+0.958E, 0.459+0.29E)`.

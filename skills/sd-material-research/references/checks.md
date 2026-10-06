@@ -224,6 +224,43 @@ dry runs found the same failure modes in every material, so check each hard chec
   fails, and why the spec's own default passes it (soft edges, anti-aliasing, seeds, the estimated ranges of other
   parameters). A check that fails the spec's own default, or that no plausible mistake can fail, is not hard.
 
+`scripts/wrong_builds.py` replays those lines on the exported maps. Each case edits the maps in memory into the named
+wrong build and runs the check through matcheck's own functions; it behaves when the check passes the real maps and
+fails the edited ones. Keep the cases next to the configs, e.g. `<tools>/checks/wrong_build_cases.py`:
+
+```python
+import numpy as np
+import wrong_builds as wb          # edit helpers; `import matcheck as mc` for dilate, erode, ...
+
+def opengl(ctx):                   # returns [(render, map, array)]; render "" = the main render
+    n = ctx.main.map("normal").copy()
+    n[..., 1] = 1.0 - n[..., 1]
+    return [("", "normal", n)]
+
+def drift(ctx):                    # a drift nowear shares: passes mask_invariance against nowear, not against classic
+    return [("", "mortar", np.roll(ctx.main.map("mortar"), 3, 1)),
+            ("nowear", "mortar", np.roll(ctx.render("nowear").map("mortar"), 3, 1))]
+
+CASES = [("weathered", "normal_valid", "OpenGL normals (green flipped)", opengl),
+         ("weathered", "mortar_vs_classic", "mortar drifted 3 px in the variant and its nowear", drift),
+         ("weathered", "height_levels", "8-bit height",
+          lambda ctx: [("", "height", np.round(ctx.main.map("height") * 255) / 255.0)])]
+```
+```bash
+$PY <skill>/scripts/wrong_builds.py --cases <tools>/checks/wrong_build_cases.py --checks-dir <tools>/checks --out <tools>/review
+```
+- A case is `(config, check id, wrong build, edit)`. Arrays are in the map's own units (height 0-1 over
+  `height_depth_mm`). Edit a copy (`.copy()`, `np.roll`, `np.where`): a map changed in place fails the case. Helpers:
+  `wb.paint`, `wb.luma_shift`, `wb.height_units(ctx, mm)`, `wb.normal_from(ctx, h)` (the normal of an edited height),
+  `wb.stepped(a, step)` (a map that does not tile), `wb.once(ctx, key, fn)` (inputs several edits share).
+- A case on a check that is not hard in its config is skipped, so one loop can cover every variant. Optional:
+  `CONFIGS` (configs that must be covered even before they have cases) and `CROSS_CASES = {group: fn(load)}` for hard
+  checks across variants (a ladder), where `fn` yields `(check, wrong build, real_pass, wrong_pass, real, wrong)`.
+- `--only` takes configs, groups or check ids. It writes `wrong_builds.md` and `.json`. Exit code 0 when every case
+  behaves and every hard check has a case, 1 when a case misbehaves (the real build fails, or the wrong build passes
+  or reads vacuous) or a hard check has none, 2 on a config or cases-module error.
+- A case takes about 0.5 s at 2048 (a `normal_valid` case about 1 s), plus about 0.4 s per config to load its maps.
+
 ## Tips
 
 - **Give every process a mask output.** Without masks, the checks can only measure the result, not the cause.
