@@ -1002,17 +1002,31 @@ def ck_lowfreq(ctx, c):
     return worst, out
 
 
-def seam_rowmedian_z(a, axis, floor):
+def seam_block_px(n, want):
+    """Largest block size <= want (px) that divides n, so the last block still ends at the wrapped border."""
+    b = max(1, min(int(want), n // 4))
+    while n % b:
+        b -= 1
+    return b
+
+
+def seam_rowmedian_z(a, axis, floor, block=1):
     """Row-median seam statistic of one map (HxWxC) along one axis: for every adjacent pair i, the median over the rows
     (columns) of the signed second difference e = d_i - (d_(i-1) + d_(i+1)) / 2, with d_i = x_(i+1) - x_i. A step at
     the border adds the same amount to e in every row, so the border pair's median moves with it; sparse features
     (a crack or a hole that reaches the border) touch few rows and barely move a median. z = (m_border - median(m_inner))
-    / max(1.4826 MAD(m_inner), floor), worst channel, signed."""
+    / max(1.4826 MAD(m_inner), floor), worst channel, signed.
+    block > 1 first averages `block` adjacent columns (rows) along the tested axis, so the pairs are block | block and
+    the border pair is last block | first block: relief that runs along the border at a fine pitch (broom striations)
+    gives every single row a coherent median and inflates the inner tail, while a step keeps its full size in the block
+    means (concrete detail, 2026-10-07)."""
     best = 0.0
     for ch in range(a.shape[2]):
         x = a[..., ch].astype(np.float64)
         if axis == 0:
             x = x.T                      # the top|bottom pairs become columns
+        if block > 1:
+            x = x.reshape(x.shape[0], x.shape[1] // block, block).mean(axis=2)
         d = np.roll(x, -1, axis=1) - x   # d[:, i] = x[:, i+1] - x[:, i]; i = W-1 is the wrapped border pair
         e = d - 0.5 * (np.roll(d, 1, axis=1) + np.roll(d, -1, axis=1))
         m = np.median(e, axis=0)
@@ -1031,7 +1045,8 @@ def ck_seam(ctx, c):
     method rowmedian (opt-in) scores the border pair's row-median signed second difference instead (seam_rowmedian_z):
     it keeps its power on busy maps, where a crack or a hole crossing the border inflates the mean statistic's spread.
     Its scale has an absolute floor in map units: `floor_mm` for the height (default 0.005 mm), `floor` for the other
-    maps (default 0.5/255)."""
+    maps (default 0.5/255). `block_mm` (rowmedian only) averages blocks of that width along the tested axis first
+    (seam_rowmedian_z); use it for relief that runs parallel to the tested border at a fine pitch."""
     two_sided = c.get("two_sided", True)
     axes = {"both": ((1, "x"), (0, "y")), "x": ((1, "x"),), "y": ((0, "y"),)}
     if c.get("axis", "both") not in axes:
@@ -1039,6 +1054,8 @@ def ck_seam(ctx, c):
     method = c.get("method", "mean_abs")
     if method not in ("mean_abs", "rowmedian"):
         raise ConfigError("seam method must be mean_abs or rowmedian")
+    if c.get("block_mm") and method != "rowmedian":
+        raise ConfigError("seam block_mm needs method rowmedian")
     zs, det = [], {}
     for name in listify(c.get("maps", ["height", "basecolor"])):
         a = ctx.main.map(name)
@@ -1048,7 +1065,11 @@ def ck_seam(ctx, c):
             if method == "rowmedian":
                 floor = (float(c.get("floor_mm", 0.005)) / ctx.depth_mm if name == "height"
                          else float(c.get("floor", 0.5 / 255.0)))
-                z = seam_rowmedian_z(a, axis, floor)
+                block = 1
+                if c.get("block_mm"):
+                    block = seam_block_px(a.shape[axis], float(c["block_mm"]) / (ctx.mmx if axis == 1 else ctx.mmy))
+                    det["block_px_" + key] = block
+                z = seam_rowmedian_z(a, axis, floor, block)
                 d[key + "_z"] = round(float(z), 3)
             else:
                 diff = np.abs(np.roll(a, -1, axis=axis) - a)  # pair (i, i+1); the last pair is the wrapped border
