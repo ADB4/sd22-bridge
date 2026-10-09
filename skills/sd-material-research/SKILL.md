@@ -92,6 +92,8 @@ while the user answers. Round 2 follows `interview.md`. In both rounds:
 - **Without one:** run the research team in `references/research.md`. It writes a new sheet for next time.
 - The brick build skipped this stage, and its acceptance targets were invented reactively after reviews. Research
   first is the main fix.
+- The message that launches the research ends with the next-needed line ("Unattended run", Messages): the user can
+  leave until the post-research questions.
 
 ### 3. Spec
 Fill `assets/spec_template.md` into `<tools>/spec.md`:
@@ -115,7 +117,8 @@ too (`references/checks.md`, "Suite"). In the dry runs, every spec's weakest har
 
 **Gate:** the go question ("Unattended run"): a short summary (scale, layer model, the 3-6 key invariants in plain
 words, the variant ladder, what's estimated), the standing decisions SD-1 to SD-6 and the deadline, then one
-AskUserQuestion. It is the last question before the report.
+AskUserQuestion. It is the last question before the report; the reply to the go answer ends with the nothing-needed
+line ("Unattended run", Messages).
 
 ### 4. Build
 Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2; grep `sdkit.py`
@@ -197,7 +200,7 @@ logs each one so it can be reversed the next day, and stops green with an honest
 **The go question.** The spec gate is one AskUserQuestion: "Approve the spec and run unattended to a finished material
 (Recommended)" or "Change something first". Its text holds the spec summary (stage 3), the standing decisions and the
 deadline (default: the next 08:00 local). On the go answer write `<tools>/RUN.json`: `{mode: "unattended", go_utc,
-deadline_local, standing_decisions, continuation, owner, heartbeat, incidents: []}`. `owner` is the session id
+deadline_local, standing_decisions, continuation, owner, heartbeat, estimate, incidents: []}`. `owner` is the session id
 ($CLAUDE_CODE_SESSION_ID) that may call Designer, `heartbeat` the UTC the owner refreshes at every stamp, and
 `continuation` how a later session picks the run up (`none` until one is set).
 
@@ -248,8 +251,24 @@ apply:
 - a later one goes into the next apply's plan, or, when no apply is left, into the report as a requested change.
 Each gets a decisions.json row (`user_steer`).
 
+**Messages.** Every message that hands control back while work goes on ends with exactly one of two lines:
+- "Next needed from you: <what> at about <HH:MM local> (in <n> min). You can step away; this Mac shows a banner when I
+  ask."
+- After the go answer: "Nothing needed from you until the report, est ready <HH:MM>-<HH:MM> local. Keep the app open,
+  the Mac on power with the lid open, and Designer running. Notifications reach <where>."
+The time comes from `date +%H:%M`; the range sums the stage table's Target, then its Expect, over the steps left.
+`<where>` is "this Mac's desktop only", or "this Mac and your phone" when get_settings shows
+`connect_new_sessions_to_remote_control` on. While the user is present, repeat the line when the estimate moves by more
+than 30 min. Unattended, when a leg runs more than 50 % past Expect, write the new range into RUN.json `estimate` so
+the report shows the miss.
+
+**Notifications** (PushNotification), at most two a run:
+- "blocked: <step only you can do> since HH:MM", only after self-recovery has failed for 30 min;
+- "<material> ready: N highs open, M calls to check, see REPORT.md".
+The mid-run look's SendUserFile is neither, and nothing waits on it.
+
 **Stop point.** Round 2's final gate is green, or the last green state is restored. Then the report, docs once in the
-background, one notification, and RUN.json `mode: "done"`.
+background, the "ready" notification, and RUN.json `mode: "done"`.
 
 ## Designer rules that save hours
 - **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. After a
