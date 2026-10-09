@@ -56,6 +56,12 @@ Other entry points:
   the work survives the session. A file that must go to a scratchpad goes in a subfolder named after the material and
   variant (`<scratchpad>/<m>_<variant>/`): parallel sessions and agents can share one scratchpad.
 - Run `PY=$(bash <skill>/scripts/setup_env.sh)` (numpy, scipy, Pillow, OpenCV).
+- Preflight part 1, so the night never needs a restart: time the `designer_status` call above (over 15 s counts as
+  timeout), then `$PY <skill>/scripts/preflight_night.py part1 --tools <tools> --wake --designer-status
+  <ok|timeout|error>` (`review/preflight.json`). Exit 1, Designer started before the newest plugin file: ask once for a
+  restart (a touch row, kind restart), after every plugin change this session lands. Exit 2, not running or not
+  answering: `open -a` the app named in preflight.json, `sample <pid> 3` for a modal dialog on the main thread, and
+  tell the user now, while they are here. An existing material's package must show a file path in `list_packages`.
 - Stamp the run in `<tools>/stages.jsonl`, one JSON line per event, `{stage, event, utc, note}`:
   `$PY <skill>/scripts/runstate.py stamp --tools <tools> --stage <S> --event <e> [--note ...] [--extra '<json>']`.
   - Stages 0-5 stamp `start` and `end`. Review rounds stamp `panel_launch`, `lead_json` and `gate` (stage 6), then
@@ -115,10 +121,25 @@ fail": tiling is hard, a direction the physics fixes is hard, and each hard chec
 wrong build it catches, as a case in `checks/wrong_build_cases.py` (the suite is red without one). Write `SUITE.json`
 too (`references/checks.md`, "Suite"). In the dry runs, every spec's weakest hard checks proved only the mask wiring.
 
+**Readiness**, beside the spec writing once research has landed (stamps `readiness_start` and `readiness_end`), so
+that every approval card and power problem shows while the user can still settle it:
+- `$PY <skill>/scripts/preflight_night.py part2 --tools <tools> --keep-awake-setting <true|false|unknown>`: AC power,
+  lid, free disk, and the app's `keep_awake_while_working` from get_settings (read it, never set it).
+- `preflight_night.py caffeinate start --tools <tools> --until <deadline as local ISO, e.g. 2026-10-10T08:00:00>`: one
+  detached caffeinate to the deadline plus 3 h, its pid in RUN.json.
+- First material only: create the routines leg-a, leg-b and run-watchdog (`assets/routines.md`); a later material
+  only rewrites the pointer file. Then run the probe chain (`assets/routines.md`, Probe); it sets RUN.json
+  `continuation`.
+- From here on RUN.json changes only through `runstate.py set` and `incident`, so the go answer keeps what readiness
+  wrote. This session may call request_keep_awake (it holds only this session); legs never do.
+
 **Gate:** the go question ("Unattended run"): a short summary (scale, layer model, the 3-6 key invariants in plain
 words, the variant ladder, what's estimated), the standing decisions SD-1 to SD-6 and the deadline, then one
-AskUserQuestion. It is the last question before the report; the reply to the go answer ends with the nothing-needed
-line ("Unattended run", Messages).
+AskUserQuestion. Ask it once `review/preflight.json` and both probe files are written, or a probe leg is held by an
+approval card. Its text also gives the readiness result: the continuation route, any part-2 problem, and any card that
+would appear at night, which the user settles there (approve it for the routine, or choose auto mode for the project;
+the skill never changes that setting). It is the last question before the report; the reply to the go answer ends
+with the nothing-needed line ("Unattended run", Messages).
 
 ### 4. Build
 Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2; grep `sdkit.py`
@@ -199,10 +220,12 @@ logs each one so it can be reversed the next day, and stops green with an honest
 
 **The go question.** The spec gate is one AskUserQuestion: "Approve the spec and run unattended to a finished material
 (Recommended)" or "Change something first". Its text holds the spec summary (stage 3), the standing decisions and the
-deadline (default: the next 08:00 local). On the go answer write `<tools>/RUN.json`: `{mode: "unattended", go_utc,
-deadline_local, standing_decisions, continuation, owner, next_leg, estimate, incidents: []}`. `owner` is the session
-id ($CLAUDE_CODE_SESSION_ID) that may call Designer, `next_leg` the routine that takes over next, and `continuation`
-the route a later leg comes up by (`none` until the probe sets it); the owner's heartbeat is `review/heartbeat` (Legs).
+deadline (default: the next 08:00 local). On the go answer set `<tools>/RUN.json` with `runstate.py set` (readiness
+wrote it first): `mode` "unattended", `go_utc`, `deadline_local` (local ISO), `standing_decisions`, `owner`,
+`next_leg`, `estimate`; `continuation`, `caffeinate_pid` and `incidents` stay as readiness left them. `owner` is the
+session id ($CLAUDE_CODE_SESSION_ID) that may call Designer, `next_leg` the routine that takes over next, and
+`continuation` the route a later leg comes up by (`none` until the probe sets it); the owner's heartbeat is
+`review/heartbeat` (Legs).
 
 Standing decisions (spec.md §1 lists them too):
 - **SD-1** Design calls take the recommended option.
@@ -255,8 +278,9 @@ names as `owner` is the only Designer caller. While you own the run:
   list_task_runs and call `run_scheduled_task` on the leg routine with no run in progress. When it shows `running` and
   the new leg has stamped `up` (wait up to 3 min, then one retry and an incident), set `owner` to its session. Then
   make no Designer call and write no file.
-- A new leg stamps `up`, waits until `runstate.py owner-check` passes (3 min), checks caffeinate, and goes on from the
-  run block's next step. Every edit the run block prescribes is rebuilt behind the targeted suite plus wrong builds and
+- A new leg stamps `up`, waits until `runstate.py owner-check` passes (3 min), runs `preflight_night.py caffeinate
+  check --tools <tools>` (it restarts a dead caffeinate and logs an incident), and goes on from the run block's next
+  step. Legs never call request_keep_awake. Every edit the run block prescribes is rebuilt behind the targeted suite plus wrong builds and
   its guard rows before anything else: a hand-off once carried a defect that zeroed the groove fill with every hard
   check green.
 - A session woken while it is not the owner (`owner-check` exit 3) only logs a user message to `review/steer.jsonl`
@@ -294,7 +318,8 @@ the report shows the miss.
 The mid-run look's SendUserFile is neither, and nothing waits on it.
 
 **Stop point.** Round 2's final gate is green, or the last green state is restored. Then the report, docs once in the
-background, the "ready" notification, and RUN.json `mode: "done"`.
+background, the "ready" notification, and RUN.json `mode: "done"`; when docs end, `preflight_night.py caffeinate stop
+--tools <tools>`.
 
 ## Designer rules that save hours
 - **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. In an
@@ -340,6 +365,7 @@ background, the "ready" notification, and RUN.json `mode: "done"`.
   - `decisions.py`: the run's decision log and per-fix revert patches (stdlib)
   - `runstate.py`: RUN.json under a lock, stamps, the heartbeat, the owner check (stdlib)
   - `context_size.py`: this session's context size against the leg budget (stdlib)
+  - `preflight_night.py`: Designer freshness, power and the night's caffeinate (stdlib)
   - `setup_env.sh`
 - `assets/`:
   - `spec_template.md`, `context_prompt_template.md` (with the run block), `reference_template.md` (review

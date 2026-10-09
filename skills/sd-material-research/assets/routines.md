@@ -20,7 +20,7 @@ Use sd-material-research to continue the unattended run named in ~/Documents/All
 
 ## Probe (sitting 1, beside the spec writing)
 
-Sitting 1 writes the pointer, sets RUN.json `{"mode": "probe", "owner": "pending", "next_leg": "leg-a"}` and calls
+Sitting 1 writes the pointer, runs `runstate.py set mode=probe owner=pending next_leg=leg-a` and calls
 `run_scheduled_task` on leg-a. Each probe leg:
 1. Stamps `up` (`runstate.py stamp --stage - --event up --note "probe <leg>"`).
 2. Writes `<tools>/review/probe_<leg>.json`: get_session on itself (effort, model, permissionMode),
@@ -36,7 +36,8 @@ Sitting 1 waits up to 3 min per leg, reads both probe files and list_task_runs, 
 `routine` when both legs came up at xhigh with every tool and no card, else `compaction` (route B) or `fireAt` (route
 C) as the Legs rules say, and tells the user at the go question which one the night will use. An approval card that
 would still appear at night is settled there: the user approves it for the routine, or chooses auto mode for the
-project. The skill never changes that setting.
+project. The skill never changes that setting. A probe leg still held by a card after 3 min is named in the go
+question; once the user has approved it, re-read its probe file before setting `continuation`.
 
 ## run-watchdog
 

@@ -14,7 +14,8 @@ T is the material's tools folder. Files: T/review/preflight.json {"part1": {...}
 replaces only its own part (atomic write); T/RUN.json (through runstate.py, same folder as this script):
 caffeinate_pid, caffeinate_until (local ISO, the end of the caffeinate, extra hours included), incidents [{utc, by, text}].
 Subcommands:
-    part1  Designer process and plugin freshness. macOS: `ps -axo pid=,pri=,lstart=,comm=`; the main process is the
+    part1  Designer process and plugin freshness. macOS: `ps -axo pid=,pri=,lstart=,comm=` run with LC_ALL=C and
+           LANG=C (lstart's day and month names follow the locale); the main process is the
            one whose comm ends with "/Adobe Substance 3D Designer" (helpers such as crashpad_handler are ignored);
            recorded: pid, pri, napping (pri 4), started (local and UTC), app. Windows: tasklist, running and pid
            only (pri and start time "unknown", so stale_plugin is null). Plugin: --plugin, else
@@ -26,9 +27,12 @@ Subcommands:
            Verdict: not_answering (Designer not running, or status timeout or error), restart_needed (stale_plugin),
            else green.
     part2  macOS only (elsewhere "unsupported", exit 0): pmset -g batt (AC or battery), pmset -g custom (sleep and
-           displaysleep minutes per power source), ioreg AppleClamshellState (lid closed), free disk GB on the tools
-           folder's volume, and the app's keep-awake setting as passed (never set here). Problems: not on AC, lid
-           closed, free disk under 10 GB, keep-awake setting false. AC sleep above 0 is fine (caffeinate -s holds it).
+           displaysleep minutes per power source), ioreg AppleClamshellState (lid closed) and AppleClamshellCausesSleep
+           (Yes: closing the lid sleeps the Mac; No: an external display keeps it awake; recorded as
+           clamshell_causes_sleep, null when ioreg does not say), free disk GB on the tools folder's volume, and the
+           app's keep-awake setting as passed (never set here). Problems: not on AC, lid closed (unless CausesSleep is
+           No, which is a note instead), free disk under 10 GB, keep-awake setting false. AC sleep above 0 is fine
+           (caffeinate -s holds it). The findings come from part2_findings(), a pure function.
     caffeinate start   macOS only. `caffeinate -i -s -t N` detached (new session, no stdio), N = until + extra hours
            - now, at least 60 s; sets caffeinate_pid and caffeinate_until. A live caffeinate already in RUN.json: nothing.
     caffeinate check   alive: the pid exists and its comm ends with "caffeinate". Dead, RUN.json mode "unattended"
@@ -75,9 +79,9 @@ def local_iso(t):
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
 
 
-def sh(*cmd):
+def sh(*cmd, env=None):
     try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return ""
     return p.stdout.decode("utf-8", "replace")
@@ -157,6 +161,12 @@ def parse_clamshell(text):
     return (m.group(1) == "Yes") if m else None
 
 
+def parse_causes_sleep(text):
+    """AppleClamshellCausesSleep from ioreg: True (closing the lid sleeps the Mac), False, None when absent."""
+    m = re.search(r'"AppleClamshellCausesSleep"\s*=\s*(Yes|No)', text)
+    return (m.group(1) == "Yes") if m else None
+
+
 # ---- shared helpers ----
 
 def write_part(tools, part, data):
@@ -204,7 +214,8 @@ def newest_mtime(folder):
 
 def read_designer():
     if MAC:
-        r = find_designer(parse_ps(sh("ps", "-axo", "pid=,pri=,lstart=,comm=")))
+        c_env = dict(os.environ, LC_ALL="C", LANG="C")  # lstart's day and month names are locale-dependent
+        r = find_designer(parse_ps(sh("ps", "-axo", "pid=,pri=,lstart=,comm=", env=c_env)))
         if not r:
             return {"running": False}
         return {"running": True, "pid": r["pid"], "pri": r["pri"], "napping": r["pri"] == NAPPING_PRI,
@@ -270,6 +281,27 @@ def cmd_part1(args):
 
 # ---- part2 ----
 
+def part2_findings(batt, custom, lid_closed, causes_sleep, free_gb, keep_awake_setting):
+    """(problems, notes) for part2. An open or unknown lid is no problem; a closed lid is one unless
+    AppleClamshellCausesSleep is No (an external display keeps the Mac awake), which is only a note."""
+    problems, notes = [], []
+    if batt["on_ac"] is False:
+        problems.append("not on AC power (%s)" % batt["source"])
+    if lid_closed:
+        if causes_sleep is False:
+            notes.append("lid closed; an external display keeps the Mac awake (AppleClamshellCausesSleep No)")
+        else:
+            problems.append("lid is closed")
+    if free_gb < MIN_FREE_GB:
+        problems.append("free disk %.1f GB is under %d GB" % (free_gb, MIN_FREE_GB))
+    if keep_awake_setting == "false":
+        problems.append("the app's keep-awake setting is false")
+    ac_sleep = custom.get("AC Power", {}).get("sleep")
+    if ac_sleep:
+        notes.append("AC sleep is %d min; caffeinate -s holds it" % ac_sleep)
+    return problems, notes
+
+
 def cmd_part2(args):
     tools = tools_dir(args)
     if not MAC:
@@ -278,22 +310,14 @@ def cmd_part2(args):
         return 0
     batt = parse_batt(sh("pmset", "-g", "batt"))
     custom = parse_custom(sh("pmset", "-g", "custom"))
-    lid = parse_clamshell(sh("ioreg", "-r", "-k", "AppleClamshellState", "-d", "4"))
+    clamshell = sh("ioreg", "-r", "-k", "AppleClamshellState", "-d", "4")
+    lid = parse_clamshell(clamshell)
+    causes_sleep = parse_causes_sleep(clamshell)
     free_gb = round(shutil.disk_usage(tools).free / 1e9, 1)
-    problems, notes = [], []
-    if batt["on_ac"] is False:
-        problems.append("not on AC power (%s)" % batt["source"])
-    if lid:
-        problems.append("lid is closed")
-    if free_gb < MIN_FREE_GB:
-        problems.append("free disk %.1f GB is under %d GB" % (free_gb, MIN_FREE_GB))
-    if args.keep_awake_setting == "false":
-        problems.append("the app's keep-awake setting is false")
-    ac_sleep = custom.get("AC Power", {}).get("sleep")
-    if ac_sleep:
-        notes.append("AC sleep is %d min; caffeinate -s holds it" % ac_sleep)
+    problems, notes = part2_findings(batt, custom, lid, causes_sleep, free_gb, args.keep_awake_setting)
     rec = {"checked_utc": utc(), "platform": sys.platform, "status": "checked", "on_ac": batt["on_ac"],
-           "power_source": batt["source"], "pmset_custom": custom, "lid_closed": lid, "free_disk_gb": free_gb,
+           "power_source": batt["source"], "pmset_custom": custom, "lid_closed": lid,
+           "clamshell_causes_sleep": causes_sleep, "free_disk_gb": free_gb,
            "keep_awake_setting": args.keep_awake_setting, "problems": problems, "notes": notes}
     path = write_part(tools, "part2", rec)
     print("power: %s; lid closed: %s; free disk: %.1f GB; keep-awake setting: %s"
