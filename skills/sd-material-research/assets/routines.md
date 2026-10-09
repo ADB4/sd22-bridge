@@ -41,20 +41,32 @@ question; once the user has approved it, re-read its probe file before setting `
 
 ## run-watchdog
 
-Cron `*/30 * * * *`, `notifyOnCompletion` false. Created with the legs, on the first material. Stored prompt:
+Cron `*/30 * * * *`, `notifyOnCompletion` false. Created with the legs, on the first material. It restarts a run whose
+leg died, and never becomes a second Designer caller. Stored prompt:
 
 ```
-Use sd-material-research's watchdog rules (assets/routines.md, run-watchdog) for the run named in ~/Documents/Allegorithmic/Substance Designer/RUN_POINTER.json. Never call substance-designer tools. Write only RUN.json, through runstate.py.
+You are the run-watchdog of sd-material-research. Run: python3 ~/.claude/skills/sd-material-research/scripts/runstate.py watchdog. If its action is idle, ok or limit, end your turn now. Otherwise follow the run-watchdog rules in ~/.claude/skills/sd-material-research/assets/routines.md for that action. Never call substance-designer tools. Write only RUN.json, through runstate.py.
 ```
 
-Rules, in order:
-1. Read the pointer and RUN.json. End unless `mode` is `unattended` and now is between `go_utc` and the deadline.
-2. Heartbeat age: `runstate.py heartbeat-age --tools <tools>`.
-3. Age over 45 min, and list_task_runs shows no `running` run on leg-a or leg-b: the leg died.
-   `runstate.py incident --by watchdog --text "leg dead: heartbeat <age> min, starting <next_leg>"`, set `owner`
-   `pending`, and call `run_scheduled_task` on RUN.json's `next_leg`.
-4. Age over 90 min while a leg run shows `running`: the leg hangs and may still hold Designer. Do not start another
-   leg; send the "blocked" notification (`SKILL.md`, Notifications) once and record an incident.
-5. Otherwise end.
-Act at most twice a night (count the incidents `by` watchdog); the second action also sends the "blocked"
-notification.
+`runstate.py watchdog` reads the pointer, RUN.json and the heartbeat and writes nothing. It prints `idle` (no
+unattended run, or now is outside `go_utc` to the deadline), `limit` (the watchdog has acted twice this run), `ok`
+(heartbeat 45 min old or newer), `notify` or `check_runs` (heartbeat stale; `notify` when `continuation` is not
+`routine`), with `heartbeat_age_min`, `over_90`, `next_leg` and `second` (one watchdog action already taken). Then:
+- `notify`: no leg routine carries this run, so start nothing: record `runstate.py incident --by watchdog --text
+  "heartbeat <age> min, continuation <c>"`, send "blocked", end.
+- `check_runs`: list_task_runs on leg-a and leg-b.
+  - No run `running`: the leg died. `runstate.py incident --by watchdog --text "leg dead: heartbeat <age> min,
+    starting <next_leg>"`, `runstate.py set owner=pending`, note T (`date -u +%FT%TZ`), call `run_scheduled_task` on
+    `next_leg`, then `runstate.py wait-up --since T` (3 min) and set `owner` to the session it prints and `next_leg`
+    to the other leg routine, as a hand-off does (`SKILL.md`, Legs). When `second` is true, also send "blocked".
+    When wait-up times out: an incident, "blocked", end.
+  - A run `running` and `over_90`: the leg hangs and may still hold Designer. Start nothing: record
+    `runstate.py incident --by watchdog --text "leg hung: <leg> running, heartbeat <age> min"`, send "blocked", end.
+  - A run `running`, heartbeat not over 90 min: end.
+Every runstate.py call takes `--tools <tools>` from the pointer. "blocked" is the notification in `SKILL.md`,
+Notifications ("blocked: <leg dead | leg hung | run stalled>, heartbeat <age> min, since HH:MM"); it goes out at most
+once a run: send it only when no watchdog incident ends in `notified`, and end the incident you record with
+`: notified` when you send it.
+
+The heartbeat shows that the owner's session is alive (its background loop writes it every 15 min), not that its turn
+is making progress, so a hung turn in a live session is not caught here; its gap shows in the report's path clock.

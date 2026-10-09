@@ -274,10 +274,10 @@ names as `owner` is the only Designer caller. While you own the run:
   `lead.json` with its runner result saved, or a stage end. At 500k hand off at the next point where every job you
   launched has written complete files. A Workflow you launched may keep running, its files are the interface; stop
   background agents, shells and Monitors (TaskStop) or let them finish.
-- Hand-off: stamp `handoff`, write the run block, `runstate.py set owner=pending next_leg=<the other leg>`, check
-  list_task_runs and call `run_scheduled_task` on the leg routine with no run in progress. When it shows `running` and
-  the new leg has stamped `up` (wait up to 3 min, then one retry and an incident), set `owner` to its session. Then
-  make no Designer call and write no file.
+- Hand-off: stamp `handoff`, write the run block, `runstate.py set owner=pending`, note T (`date -u +%FT%TZ`), check
+  list_task_runs and call `run_scheduled_task` on RUN.json `next_leg` (it has no run in progress). `runstate.py
+  wait-up --tools <tools> --since T` (3 min; on a timeout, one retry and an incident) prints the new leg's `up` row:
+  set `owner` to its session and `next_leg` to the other leg routine. Then make no Designer call and write no file.
 - A new leg stamps `up`, waits until `runstate.py owner-check` passes (3 min), runs `preflight_night.py caffeinate
   check --tools <tools>` (it restarts a dead caffeinate and logs an incident), and goes on from the run block's next
   step. Legs never call request_keep_awake. Every edit the run block prescribes is rebuilt behind the targeted suite plus wrong builds and
@@ -285,6 +285,10 @@ names as `owner` is the only Designer caller. While you own the run:
   check green.
 - A session woken while it is not the owner (`owner-check` exit 3) only logs a user message to `review/steer.jsonl`
   and ends its turn.
+- A leg that dies: the run-watchdog routine (`assets/routines.md`) runs every 30 min. When the heartbeat is over 45 min
+  old and no leg run shows `running`, it starts `next_leg` and hands it the run as above; a leg that still shows
+  `running` gets only the "blocked" notification. It never calls Designer and acts at most twice a run, so keep the
+  heartbeat loop running whenever you own the run.
 - RUN.json `continuation` is the route the sitting-1 probe chose. `routine` is the above. `compaction` (route B): one
   session with `autoCompactWindow` about 440000 in the repo's `.claude/settings.local.json`, the run block current at
   every stage end and re-read after a compaction. `fireAt` (route C): the next leg from `create_scheduled_task` with
