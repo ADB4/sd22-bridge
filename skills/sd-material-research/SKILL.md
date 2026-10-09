@@ -167,8 +167,9 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
   by SD-1 and SD-2 and log it ("Unattended run"); a call or a draft's open question that comes up during the apply is
   settled the same way, at once. In an attended run (an existing material, or on request) the plan gate asks the
   calls in one AskUserQuestion batch instead, the settled option first.
-- Apply one build-measure batch per graph: edit the graph's plan items into their stage scripts in dependency order,
-  run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
+- Apply one build-measure batch per graph: edit the graph's plan items into their stage scripts in dependency order
+  (per item, `decisions.py snap` its scripts before the edit and `decisions.py patch` after: the per-fix revert patch,
+  `references/review.md` §1), run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
   (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
   that an edited node or preset parameter feeds (an edit to a shared node touches every preset). While the next graph
   builds, run the targeted set in the background: `suite.py` with `--configs` the touched configs and cross-case groups,
@@ -289,6 +290,7 @@ background, one notification, and RUN.json `mode: "done"`.
   - `calibrate.py`: Histogram Scan Position from quantiles
   - `make_brief.py`: a review round's delta brief and panel args (stdlib)
   - `pathclock.py`: stages.jsonl against Target and Expect, waits, long delegated runs (stdlib)
+  - `decisions.py`: the run's decision log and per-fix revert patches (stdlib)
   - `setup_env.sh`
 - `assets/`:
   - `spec_template.md`, `context_prompt_template.md`, `reference_template.md` (review REFERENCE.md)

@@ -34,14 +34,14 @@ only on material that already passes its numeric checks.
    `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is settled and after the last batch's targeted checks, and put
    `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, or on a
    Designer job past its expected time). After a split, `apply.split` holds its stamps (§6); `started` is the plan-gate
-   answer. `decisions` holds the last gate's design calls and their answers, verbatim. Keep these field names
-   (`fixcheck.py` reads them):
+   answer. `decisions` holds the last gate's design calls and their settled options, `{id, question, answer}` with the
+   decision log's id. Keep these field names (`fixcheck.py` reads them):
    ```json
    {"apply": {"started": "2026-10-05T01:00:00Z", "ended": "2026-10-05T01:40:00Z", "stall_min": 0,
               "split": {"panel_launch": "2026-10-05T00:10:00Z", "context_prompt": "2026-10-05T00:13:00Z",
                         "new_session": "2026-10-05T00:15:00Z", "lead_json": "2026-10-05T00:57:00Z",
                         "first_call": "2026-10-05T01:02:00Z"}},
-    "decisions": [{"question": "...", "answer": "..."}],
+    "decisions": [{"id": "D1-1", "question": "...", "answer": "..."}],
     "items": [{"id": "P1", "title": "...", "change": "nodes, params, script",
                "status": "done | partial | not_done", "note": "what was not done and why",
                "acceptance": [{"check": "joint_half_depth", "variant": "classic", "target": [9.5, 11],
@@ -55,6 +55,20 @@ only on material that already passes its numeric checks.
    correct those rows (status, after, note) and every `drifted` after, then run it again. It also names a variant
    matcheck could not re-measure (`measure_failed`): fix its config or export first. Exit 2 is a ledger or usage
    error. `make_brief.py` waits for exit 0.
+
+   **Decision log** `review/decisions.json` (run-level and append-only, so it also holds stage 4's technical calls
+   made before any ledger exists; `scripts/decisions.py`, whose docstring is the reference). One row per call or
+   choice the run settles without the user: design calls at the auto gate, draft questions, look trades (seeds and
+   calibrations too), technical defaults, user steers and user edits. `decisions.py add --row '<json>'` assigns the id
+   `D<round>-<k>` (round 0 before the first review) and the time. A row: `kind` (design_call, requirement_trade,
+   look_trade, draft_question, technical, deviation_from_user_answer, not_made_needs_user, user_steer, user_edit),
+   `question`, `options`, `recommended`, `chosen`, `rule` (recommended, no_pattern, smallest_pattern,
+   requirement_trade, technical_default, user), `gave_up` (the target given up and why, one line), `items`, `scripts`
+   and `revert` {`alternative` (the lead's option text plus the draft's alternative section, else "draft at
+   reversal"), `est_min`, `graphs`}. Every applied plan item keeps its own patch: `decisions.py snap` its stage
+   scripts before the edit and `decisions.py patch` after (`review/patches/r<round>/<item>.patch`); `revert-plan`
+   names an item's patch, the later items that touched the same files and the rebuild, and `revert` undoes one item
+   and keeps the rest (file copies and patches, never commits).
 5. Round 1: write `review/REFERENCE.md` from `assets/reference_template.md`; later rounds: check that the apply
    brought it up to date (§2). Then set its `Valid for:` to each manifest's `exported_at` from step 1's export. Write
    the lens table `review/round<N>/lenses.json` (§3). On a green suite (step 3) and, from round 2, a fixcheck exit 0
