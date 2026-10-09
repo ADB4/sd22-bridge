@@ -218,9 +218,10 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
   `references/review.md` §5).
 - **Final gate:** after the last change, export every variant plus its `nowear` at 2048 in one foreground `sdcall.py`
   job (stage 5), then run the full suite into `review/round<N+1>` in the background, then `fixcheck.py` on its ledger
-  (`references/review.md` §5); draft the report meanwhile and finalize it only on a green `suite.json`. The report
-  states what was verified after the last change, in physical terms ("joint 10.5 mm at half depth; 0 damaged pixels
-  below the mortar; damage 4.3 %"). Send the comparison images (SendUserFile).
+  (`references/review.md` §5); draft the report meanwhile (an unattended run writes it with `morning_report.py`, Stop
+  point) and finalize it only on a green `suite.json`. The report states what was verified after the last change, in
+  physical terms ("joint 10.5 mm at half depth; 0 damaged pixels below the mortar; damage 4.3 %"). Send the comparison
+  images (SendUserFile).
 - Write `<tools>/CONTEXT_PROMPT.md` from the template: requirements, architecture, how to edit, a measured-state
   table, open items, and the invariants to re-check. Also save a project memory note with the requirements as
   acceptance criteria.
@@ -333,9 +334,21 @@ the report shows the miss.
 - "<material> ready: N highs open, M calls to check, see REPORT.md".
 The mid-run look's SendUserFile is neither, and nothing waits on it.
 
-**Stop point.** Round 2's final gate is green, or the last green state is restored. Then the report, docs once in the
-background, the "ready" notification, and RUN.json `mode: "done"`; when docs end, `preflight_night.py caffeinate stop
---tools <tools>`.
+**Stop point.** Round 2's final gate is green, or the last green state is restored. Then, in this order:
+1. Stamp `report_start`. With `runstate.py set`, record `proposed_commits` (a JSON list of `{repo, files, message}`,
+   one per commit the run would make; none is made, SD-6) and, when the run stopped early, `stop_reason`.
+2. Launch the final eye pass in the background (one agent, box 15 min, beside the docs): it reads the final gate's
+   `*_tiled3x3_albedo.png` of every preset and writes `review/eye_final.json` (`[{preset, sees, files}]`).
+3. Run `$PY <skill>/scripts/morning_report.py --tools <tools>`. It writes `<tools>/REPORT.md`: the verdict (8 lines or
+   fewer), the images to look at first, every decisions.json row with its "reverse <id>", what needs the user, the
+   open defects by severity under the pre-apply severity caveat, the eye pass, incidents, the proposed commits and the
+   path clock, in 500 prose words or fewer, then a numbered answer batch. Exit 1 means the prose is still over the
+   cap: say so in the final message. When `eye_final.json` lands, run it again (it replaces the file whole).
+4. Send the report's "Look first" images (SendUserFile), then the "ready" notification. `runstate.py set mode=done`,
+   stamp `report_end`, run the docs once in the background, and when they end, `preflight_night.py caffeinate stop
+   --tools <tools>`.
+The last leg's final message is the verdict and the answer batch as the script prints them, so a typed reply works
+("1 none, 2 yes", "reverse D2-3"). It asks nothing else.
 
 ## Designer rules that save hours
 - **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. In an
@@ -358,6 +371,11 @@ background, the "ready" notification, and RUN.json `mode: "done"`; when docs end
   full cheat sheet is in `sd_craft.md` §5.
 - **Only touch the material's own package.** Never edit or save other packages, and save the material's own package
   after each completed stage.
+- **User rules.** No commit or push during a run (SD-6). Commits are asked once, in the morning answer batch, one
+  option per commit; nothing is ever pushed, and no push is offered. A next-day reversal ("reverse D2-3") runs
+  unattended: `decisions.py revert-plan --id`, then per graph one batch (revert the row's items, latest first, and
+  build its `revert.alternative`, drafting it first when it says "draft at reversal"), the final gate, a `user_steer`
+  row, and `morning_report.py --addendum --kind reversal` with the suite and guard results. No new panel unless asked.
 
 ## Bundled files
 - `references/method.md`: the physical reasoning (layout, layers, envelope, process cards, invariants, scale).
@@ -383,6 +401,7 @@ background, the "ready" notification, and RUN.json `mode: "done"`; when docs end
   - `runstate.py`: RUN.json under a lock, stamps, the heartbeat, the owner check (stdlib)
   - `context_size.py`: this session's context size against the leg budget (stdlib)
   - `preflight_night.py`: Designer freshness, power and the night's caffeinate (stdlib)
+  - `morning_report.py`: the run's REPORT.md and answer batch; `--addendum` after a reversal or a user edit (stdlib)
   - `setup_env.sh`
 - `assets/`:
   - `spec_template.md`, `context_prompt_template.md` (with the run block), `reference_template.md` (review
