@@ -132,14 +132,19 @@ const PLAN = {
       variants: { type: 'array', items: { type: 'string' } }, source_ids: { type: 'array', items: { type: 'string' } },
       depends_on: { type: 'array', items: { type: 'integer' } }, acceptance: { type: 'string' }, guard_rails: { type: 'string' },
     }, required: ['priority', 'title', 'why', 'change', 'variants', 'source_ids', 'depends_on', 'acceptance', 'guard_rails'] } },
-    design_calls: { type: 'array', description: 'every choice only the user can make; the plan gate asks them in one batch', items: { type: 'object', properties: {
+    design_calls: { type: 'array', description: 'every choice between looks, a requirement trade or a deviation; the standing decisions SD-1 and SD-2 settle each one, nobody is asked', items: { type: 'object', properties: {
       question: { type: 'string' },
       options: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'object', properties: {
         label: { type: 'string' }, consequence: { type: 'string', description: 'what the material looks or measures like with this option' },
-      }, required: ['label', 'consequence'] } },
+        adds_pattern: { type: 'string', enum: ['yes', 'no', 'unknown'], description: 'yes/no by a measured tile-period stat (more than max(5 %, tolerance) above the current build); yes by wording only when a named pattern cannot be measured; no for an option that leaves the build as it is; else unknown' },
+        pattern_evidence: { type: 'string', description: 'the stat with its before and after and where it was measured (draft, model or 1K probe), or the line naming the pattern and why it could not be measured, or "no change", or "unknown"' },
+      }, required: ['label', 'consequence', 'adds_pattern', 'pattern_evidence'] } },
       recommended: { type: 'string', description: 'label of the recommended option, which is listed first' },
+      settled: { type: 'string', description: 'label of the option SD-1 and SD-2 pick; every fix the call touches is written for it' },
+      rule: { type: 'string', enum: ['recommended', 'no_pattern', 'smallest_pattern'] },
+      changes_spec: { type: 'boolean', description: 'true when an option changes a spec value, a requirement reading or a check target (a requirement trade)' },
       affects: { type: 'string', description: 'fix priorities, R-ids and variants the answer changes' },
-    }, required: ['question', 'options', 'recommended', 'affects'] } },
+    }, required: ['question', 'options', 'recommended', 'settled', 'rule', 'changes_spec', 'affects'] } },
     spot_checks: { type: 'array', description: 'one row per UNVERIFIED high or medium finding, and per FIX STATUS row marked not_checked (id = its fix)', items: { type: 'object', properties: {
       id: { type: 'string' }, lens: { type: 'string' },
       outcome: { type: 'string', enum: ['confirmed', 'downgraded', 'rejected', 'not_measured', 'landed', 'partial', 'not_landed'] },
@@ -353,10 +358,22 @@ Every carried item in the brief that is not a ledger item (last round's deferred
 gets one outcome: planned (its id in a fix's source_ids), re-deferred (a deferred entry that starts with its id, e.g.
 "r2:deferred:2: ...") or closed (a keep_as_is or conflicts_resolved entry that starts with its id and gives the reason).
 Spot-check an OWNED ITEM REPORTS row marked not_checked before you close its item.
-Every choice only the user can make (between looks, a requirement trade, a deviation) goes in design_calls: the question,
-2-4 options with the recommended one first, and what the answer changes. Write each fix a call touches for the recommended
-option. The plan gate asks every call in one batch; nothing is asked during the apply.
-At most ${R >= 3 ? 3 : 4} design calls (AskUserQuestion takes 4 questions${R >= 3 ? '; from round 3 the ask for another round takes one' : ''}); put any further call in deferred.
+Every choice between looks, a requirement trade or a deviation goes in design_calls: the question, 2-4 options with the
+recommended one first, and what the answer changes. Nobody is asked: the standing decisions settle each call.
+- Per option, adds_pattern (yes, no, unknown) and pattern_evidence. A measured tile-period stat decides: yes when the
+  draft, a model or a 1K-scale numpy model puts row or column-mean harmonics at k = 1..3, the column-mean envelope CV or
+  lowfreq std above the current build by more than max(5 % of the current value, the check's tolerance), else no. An
+  option whose text names a new repeat, lane, band, lattice or tiling landmark: measure it with a model before you
+  decide; only if it cannot be measured, yes by its wording. An option that leaves the build as it is: no. Anything
+  else unmeasured: unknown.
+- SD-1: take the recommended option. SD-2, for a call with any yes (a look trade): unknown counts as yes; take the
+  first option in your order that is no (rule no_pattern); if none is, the smallest measured increase (rule
+  smallest_pattern). A call with no yes follows SD-1 (rule recommended). Put the label in settled, and write each fix
+  the call touches for it.
+- changes_spec: true when an option changes a spec value, a requirement reading or a check target.
+- A fix may change a value the user gave verbatim only through a design call with changes_spec true, and never
+  retargets, relaxes or demotes a check to turn it green.
+At most 4 design calls; put any further call in deferred, starting "design call:".
 ${filing(`${RD}/lead.json`)}
 
 CONFIRMED FINDINGS (with verifier notes):

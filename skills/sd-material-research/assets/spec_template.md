@@ -7,6 +7,14 @@ Write the user's words verbatim, numbered. Then list:
 - the interview answers
 - the defaults applied (and that they were applied, not chosen)
 - any intentional deviations from physics the user chose, each with the invariant it relaxes
+- the standing decisions approved at the go question (`SKILL.md`, Unattended run) and the deadline (default the next
+  08:00 local):
+  - SD-1 design calls take the recommended option
+  - SD-2 look trades follow the no-pattern rule
+  - SD-3 two full review rounds, then apply and stop
+  - SD-4 after round 1, only highs are fixed
+  - SD-5 REFERENCE and the spec are updated once, at the end
+  - SD-6 no commit or push during the run
 
 ## 2. Scale and conventions
 | Item | Value | Why |

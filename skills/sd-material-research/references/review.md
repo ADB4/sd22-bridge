@@ -31,7 +31,7 @@ only on material that already passes its numeric checks.
    and why. One row per plan item, even when one batch applied several; a row without a measured after value counts
    as `not_landed`. The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
    build, 2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
-   `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is answered and after the last batch's targeted checks, and put
+   `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is settled and after the last batch's targeted checks, and put
    `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, or on a
    Designer job past its expected time). After a split, `apply.split` holds its stamps (§6); `started` is the plan-gate
    answer. `decisions` holds the last gate's design calls and their answers, verbatim. Keep these field names
@@ -240,9 +240,12 @@ calibration from the verifier, not a high rejection rate.
 - Cap the list (10 / 8 / 5 by round), and give every fix acceptance checks and guard rails.
 - Re-measure every `unverified` high or medium before planning it (`spot_checks`); defer an unverified low unless its
   numbers reproduce.
-- Put every choice only the user can make (between looks, a requirement trade, a deviation) in `design_calls`: the
-  question, 2-4 options, the recommended one, and what the answer changes. At most 4 calls (AskUserQuestion takes 4
-  questions), 3 from round 3 on, where the ask for another round joins the batch; any further call goes in deferred.
+- Put every choice between looks, a requirement trade or a deviation in `design_calls`: the question, 2-4 options
+  with the recommended one first, what the answer changes, and per option `adds_pattern` with `pattern_evidence`
+  (`SKILL.md`, Unattended run, SD-2). The lead applies SD-1 and SD-2 itself: `settled` names the option they pick and
+  `rule` says how (`recommended`, `no_pattern` or `smallest_pattern`); `changes_spec` marks a call that changes a spec
+  value, a requirement reading or a check target. Every fix a call touches is written for the settled option. At most
+  4 calls; any further call goes in deferred as `design call: ...`, for the report.
 - List keep-as-is, deferred and rejected items.
 - Plan, re-defer or close every carried item that is not a ledger item, starting the entry with its id;
   `make_brief.py` warns next round about any it left open.
@@ -256,9 +259,11 @@ calibration from the verifier, not a high rejection rate.
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
   - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
     per-agent table, `panel_min`, and `round<N>/ledger.json`'s `apply`, §6)
-- Show the user the scorecard and the plan before building the fixes, and ask the plan's `design_calls` there, in one
-  batch (`SKILL.md` stage 7); none during the apply. If they said not to stop, take each call's recommended
-  option and list it in the report.
+- **Auto gate** (unattended, the default): check each call's `settled` against SD-1 and SD-2, measure a named
+  pattern the lead could not (a 1K probe), re-settle a call the lead got wrong (its fixes are then rewritten for the
+  new option), read `review/steer.jsonl` (`SKILL.md`, Unattended run: Mid-run look), log one decisions.json row per
+  call (§1), and start the apply. Nobody is asked. In an attended run the plan gate shows the user the scorecard and
+  the plan and asks the calls in one batch, the settled option first.
 
 **Stop when:**
 - all hard checks pass in every variant;
@@ -318,15 +323,15 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
   3. Prepare the next ledger's rows in `review/round<N+1>/ledger.json` from the drafts, status `not_done` until
      applied (ids filled in when the plan lands, `apply.split` as the stamps come), and the hand-off notes.
   4. When `lead.json` lands: reconcile, one draft per plan item, rewritten to the lead's `change` and the verifier's
-     `better_fix` and `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then hold the plan gate
-     from `lead.json` (scorecard, plan, every design call). While the user answers, write findings.md (§5) from
-     `review_result.json`, and the next ledger's rows. Apply only once findings.md is newer than `lead.json`.
+     `better_fix` and `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then the auto gate (§5)
+     from `lead.json`; meanwhile write findings.md (§5) from `review_result.json`, and the next ledger's rows. Apply
+     only once findings.md is newer than `lead.json`.
 
   Drafts stay drafts until the plan gate: none runs in Designer and none is copied into `build/` before it.
-- **Split at lens launch** (`SKILL.md` stage 6), on the Workflow route only and unless the user said not to stop. On
-  the Agent-tool fallback, or when told not to stop, one session runs the panel, waits, drafts, reconciles, holds the
-  plan gate and applies. Two sessions share the tools folder, so each keeps to its part. The Workflow call prints
-  `Run ID: <run id>` and `Transcript dir: <session dir>/subagents/workflows/<run id>`: `<session dir>` is the printed
+- **Split at lens launch** (`SKILL.md` stage 6): only in an attended run when the user asks for it, on the Workflow
+  route. Otherwise (unattended, the default, and always on the Agent-tool fallback) one session runs the panel, waits,
+  drafts, reconciles, settles the plan at the auto gate and applies. Two sessions share the tools folder, so each
+  keeps to its part. The Workflow call prints `Run ID: <run id>` and `Transcript dir: <session dir>/subagents/workflows/<run id>`: `<session dir>` is the printed
   dir minus `/subagents/workflows/<run id>` (the old session's `~/.claude/projects/<project>/<session id>/`), and its
   basename is the session id. A stamp is `date -u +%Y-%m-%dT%H:%M:%SZ`.
   - **Old session.** Stamp just before the Workflow call (panel launch). When the call returns, write the panel
@@ -401,4 +406,5 @@ trade adds its row before it is used.
 | Time-boxed lenses and verifiers (§6) | every high or medium gets a verdict at xhigh by the verifier's own method: what a box left goes to the re-verify agent (§4); verifiers take lows after them | a finding a boxed lens never reached; a ledger item a boxed lens never reached (fix_status `not_checked`); an overstated low the verifier's box cut (it reaches the lead `unverified`, never re-verified); verifiers changed 11 of 35 severities (`win`) and 10 of 25 on brick (`mac-tx`) | a high or medium reaching the lead `unverified`; lows reaching the lead `unverified` (`stats.unverified` above `stats.unverified_high_medium`); `stats.severity_changed` per verified high or medium below those rates (widen `box_verify`); a lens whose `box` is not `not_hit` or whose `not_reached` is non-empty (`stats.lenses_boxed`); fix_status `not_checked` rows |
 | Delta brief and section-scoped REFERENCE reads (§2) | the requirements, cheat sheet, rubric and verifier checklist are in every delta; verifiers, the re-verify agent and the lead read all of REFERENCE.md | a cross-section fact a lens skipped; wrong premises on Histogram Scan direction and Blend divide once caused wrong fixes (§2) | the lead's `premises_corrected` (`stats.premises_corrected`) rising round over round, or a verdict's `premise_errors` citing a REFERENCE section its lens didn't read |
 | Fix drafts from verdict files while the panel runs (§6) | drafts start from confirmed verdicts, take the verifier's fix, are rewritten to the lead's plan, and never run in Designer before the plan gate | an overstated number or wrong premise in a draft; about 18 brick fixes were rewritten by verifiers (§4) | a draft that reaches Designer before the plan gate (`make_brief.py` warns on `build/` files edited between the last panel's first lens start and the apply's start; it only sees edits not overwritten later in the apply), or one that differs from the verifier's fix |
+| Auto design calls (`SKILL.md`, Unattended run) | every call is settled by SD-1 or SD-2, logged in `decisions.json` with its alternative and a per-fix revert patch; requirement trades are listed first in the report | a call the user would have decided otherwise, seen only the next day; a look trade whose pattern no stat or wording showed | a call reversed the next day; a `smallest_pattern` flag |
 | Section-scoped sheet reads (`SKILL.md` stage 2) | invariants (§5) and targets (§9) are read in full | an interaction held in a skipped process card (asphalt I10: sealant only on cracks) | a sheet §5 invariant of the layout or a chosen process missing from `spec.md`, in its §6 without a check id, or on its left-out list while a preset has the process or feature it governs |

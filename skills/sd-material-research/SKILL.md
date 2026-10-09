@@ -23,11 +23,11 @@ into a method that works for any material.
 | 0 | Orient | this file | tools folder, environment | — | xhigh | 4 | 4 |
 | 1 | Interview | `references/interview.md`, the sheet's §8 | answers | user answers | xhigh | 5 | 4 |
 | 2 | Research | `references/research.md`, `references/materials/<m>.md` by section | `research/notes.md`, or a new sheet | — | xhigh | 22 | 24 |
-| 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | user approves | xhigh | 5 | 5 |
+| 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | the go question | xhigh | 5 | 5 |
 | 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass | xhigh | 45 | 55 |
 | 5 | Measure | `references/checks.md` | scorecards, previews | suite green | xhigh | 3 | 2 |
-| 6 | Review | `references/review.md` | `review/round<N>/findings.md` | user approves the plan | xhigh | R1 42, R2 42 | R1 47, R2 50 est |
-| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied | xhigh | R1 85, R2 70 | R1 115 est, R2 130 est |
+| 6 | Review | `references/review.md` | `review/round<N>/findings.md` | auto gate | xhigh | R1 42, R2 42 | R1 47, R2 50 est |
+| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | stop point | xhigh | R1 85, R2 70 | R1 115 est, R2 130 est |
 
 Target and Expect are minutes of wall time on the run's path. Expect comes from the concrete (M8) stamps; `est` marks a
 value with no M8 stamp behind it. Steps between stages, target / expect: readiness and probes 5 / 8 est (beside stage
@@ -39,6 +39,8 @@ stamp it in stages.jsonl, and never ask for /effort. Below xhigh, record an inci
 Agent-tool fallback panel below xhigh: hand off to the other leg once, and if that leg is also below xhigh, stop and
 report. The user sets the Code tab's effort picker to xhigh once; the repo's `.claude/settings.local.json` (gitignored)
 holds `effortLevel` and `maxEffortLevel` at xhigh.
+
+From the spec gate on, the run is unattended until the report: read "Unattended run" below before stage 3.
 
 Other entry points:
 - **Existing material** (critique, extend or fix it): research, then write a spec from the sheet plus the user's
@@ -111,8 +113,9 @@ fail": tiling is hard, a direction the physics fixes is hard, and each hard chec
 wrong build it catches, as a case in `checks/wrong_build_cases.py` (the suite is red without one). Write `SUITE.json`
 too (`references/checks.md`, "Suite"). In the dry runs, every spec's weakest hard checks proved only the mask wiring.
 
-**Gate:** show the user a short summary (scale, layer model, the 3-6 key invariants in plain words, the variant
-ladder, what's estimated) and wait for the go-ahead. Skip this only if they said not to stop.
+**Gate:** the go question ("Unattended run"): a short summary (scale, layer model, the 3-6 key invariants in plain
+words, the variant ladder, what's estimated), the standing decisions SD-1 to SD-6 and the deadline, then one
+AskUserQuestion. It is the last question before the report.
 
 ### 4. Build
 Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2; grep `sdkit.py`
@@ -155,15 +158,15 @@ Follow `references/review.md`:
 
 Run the panel as a Workflow (`assets/workflows/review_round.js`); use the Agent tool only when Workflow is unavailable.
 Reviewers never call Designer. While the panel runs, write fix drafts to `review/drafts/round<N>/` from the lens and
-verdict files as they land, never in chat; drafts stay drafts until the plan gate. **Split at a Workflow lens launch**
-unless the user said not to stop: write the panel hand-off into `CONTEXT_PROMPT.md`, ask the user to open a new
-session and keep this one open, then only wait; the new session drafts, holds the plan gate and applies
-(`references/review.md` §6).
+verdict files as they land, never in chat; drafts stay drafts until the plan gate. No split at lens launch: the
+session that launched the panel drafts, settles the plan at the auto gate and applies ("Unattended run"). The split in
+`references/review.md` §6 is for an attended run, and only when the user asks for it.
 
 ### 7. Iterate and hand off
-- At the plan gate, show the user the scorecard and the plan, and ask every design call in it (a choice between
-  looks, a requirement trade, a deviation) in one AskUserQuestion batch, recommended option first. Ask nothing during
-  the apply: a call that comes up there leaves its fix undone, noted in the ledger, for the next gate.
+- At the auto gate, settle every design call in the plan (a choice between looks, a requirement trade, a deviation)
+  by SD-1 and SD-2 and log it ("Unattended run"); a call or a draft's open question that comes up during the apply is
+  settled the same way, at once. In an attended run (an existing material, or on request) the plan gate asks the
+  calls in one AskUserQuestion batch instead, the settled option first.
 - Apply one build-measure batch per graph: edit the graph's plan items into their stage scripts in dependency order,
   run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
   (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
@@ -172,7 +175,7 @@ session and keep this one open, then only wait; the new session drafts, holds th
   `--kinds matcheck,wrong_builds` and `--beside-designer`, into `review/round<N+1>` after you read the last set's
   `suite_partial.json` (each set replaces it). Items that miss their acceptance go into a second batch for that graph.
 - Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
-  apply: `date -u` when the plan gate is answered and after the last batch's targeted checks, into the ledger's
+  apply: `date -u` when the plan gate is settled and after the last batch's targeted checks, into the ledger's
   `apply` (`references/review.md` §1). Then review again with fewer lenses. Three rounds is typical. The stopping
   rule is in `references/review.md` §5.
 - **Final gate:** after the last change, export every variant plus its `nowear` at 2048 in one foreground `sdcall.py`
@@ -183,6 +186,68 @@ session and keep this one open, then only wait; the new session drafts, holds th
 - Write `<tools>/CONTEXT_PROMPT.md` from the template: requirements, architecture, how to edit, a measured-state
   table, open items, and the invariants to re-check. Also save a project memory note with the requirements as
   acceptance criteria.
+
+## Unattended run
+
+From the spec gate to the report the user is away. The run settles every call itself by the standing decisions,
+logs each one so it can be reversed the next day, and stops green with an honest report.
+
+**The go question.** The spec gate is one AskUserQuestion: "Approve the spec and run unattended to a finished material
+(Recommended)" or "Change something first". Its text holds the spec summary (stage 3), the standing decisions and the
+deadline (default: the next 08:00 local). On the go answer write `<tools>/RUN.json`: `{mode: "unattended", go_utc,
+deadline_local, standing_decisions, continuation, owner, heartbeat, incidents: []}`. `owner` is the session id
+($CLAUDE_CODE_SESSION_ID) that may call Designer, `heartbeat` the UTC the owner refreshes at every stamp, and
+`continuation` how a later session picks the run up (`none` until one is set).
+
+Standing decisions (spec.md §1 lists them too):
+- **SD-1** Design calls take the recommended option.
+- **SD-2** Look trades follow the no-pattern rule below.
+- **SD-3** Two full review rounds, then apply and stop.
+- **SD-4** After round 1, only highs are fixed.
+- **SD-5** REFERENCE and the spec are updated once, at the end.
+- **SD-6** No commit or push during the run.
+
+**After the go answer**, until the stop point:
+- No AskUserQuestion, no stop question, no split at lens launch.
+- The plan gate is an auto gate: when `lead.json` lands, take each design call's option by SD-1 and SD-2 (`settled`,
+  `references/review.md` §5) and go on. A draft's open question, or a call that comes up mid-apply, is settled the
+  same way at once, never left for a gate. Technical choices (check method, sequencing, file layout) take the default.
+- Every settled call or choice gets a row in `review/decisions.json` (`references/review.md` §1).
+
+**SD-2, the no-pattern rule.** Per option, `adds_pattern` is yes, no or unknown:
+- yes or no by measurement: its draft, its model or a 1K probe puts one of these tile-period stats (row or column-mean
+  harmonics at k = 1..3, the column-mean envelope CV, lowfreq std) above the current build by more than max(5 % of
+  the current value, the check's tolerance), or not. These stats decide, no others.
+- An option whose text names a new repeat, lane, band, lattice or tiling landmark at any setting is measured before
+  the call is settled; only when it cannot be measured does the wording decide (yes).
+- An option that leaves the build as it is: no. Anything else unmeasured: unknown.
+A call with a yes among its options is a look trade, and SD-2 overrides SD-1 there: unknown counts as yes, and the run
+takes the first option, in the lead's order, that is no. If none is no, it takes the smallest measured increase and
+flags it in the report. A call with no yes follows SD-1. Seeds and calibrations chosen against a look-related target are
+look trades too: only a check that passed its null test on an unworn or no-op build may steer them.
+
+**What the run never does on its own:** change a value the user gave verbatim (requirements, interview answers)
+outside a lead design call, or retarget, relax or demote a check to turn it green. Such a change is reverted and logged
+`not_made_needs_user`, and the run goes on. A lead design call that changes a spec value, a requirement reading or a
+check target is taken under SD-1, logged `requirement_trade` and listed first in the report. A wrong-build case may be
+corrected to match its own documented description, only when the corrected case still passes the real build and fails
+its named wrong build; log the correction.
+
+**Deadline.** Never start a step that cannot end green by the deadline minus 1 h, estimated from the stage table's
+Expect and this run's stamps (`pathclock.py`). Stop green and report instead.
+
+**Mid-run look.** When stage 5's suite is green, send the tiled and compare sheets (SendUserFile, status proactive)
+with one line: "Look if you like; reply to steer, otherwise I continue." Never wait for a reply. Any session that gets
+a user message during the run, owner or not, appends it verbatim to `<tools>/review/steer.jsonl` (`{utc, session,
+text}`) and answers in one line where it will be used. The owner reads that file at each auto gate and before each
+apply:
+- a message from before the round 1 auto gate is input at that gate: it overrides SD-1 and SD-2 for the calls it
+  addresses and may add or drop a plan item;
+- a later one goes into the next apply's plan, or, when no apply is left, into the report as a requested change.
+Each gets a decisions.json row (`user_steer`).
+
+**Stop point.** Round 2's final gate is green, or the last green state is restored. Then the report, docs once in the
+background, one notification, and RUN.json `mode: "done"`.
 
 ## Designer rules that save hours
 - **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. After a
