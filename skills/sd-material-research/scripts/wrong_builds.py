@@ -28,7 +28,7 @@ wrong_builds.json of each folder, in the order given, and writes the merged repo
 equals one serial run.
 
 Cases modules `import wrong_builds as wb` for the edit helpers (paint, luma_shift, height_units, normal_from, stepped,
-once) and `import matcheck as mc` for the region tools (mc.dilate, mc.erode, ...).
+column_band, once) and `import matcheck as mc` for the region tools (mc.dilate, mc.erode, ...).
 """
 import argparse
 import importlib.util
@@ -126,6 +126,21 @@ def stepped(a, step):
     edge = np.concatenate([a[:, :8], a[:, -8:]], axis=1)
     sign = -1.0 if float(np.mean(edge)) > 0.5 else 1.0          # away from the end the border columns sit near
     return np.clip(a + sign * ramp * step, 0.0, 1.0) if a.max() <= 1.0 else a + sign * ramp * step
+
+
+def column_band(a, amp=None, k=1):
+    """The map with a cosine of k cycles per tile across U added to every row: a column band, the stripe that repeats
+    with every tile (what a tile_harmonic check names as its wrong build). amp is in the map's own units; default 15 %
+    of the map's p5-p95 range (all colour channels pooled), plainly visible. Clipped to 0-1 on a 0-1 map."""
+    if amp is None:
+        lo, hi = np.percentile(a[..., :3] if a.ndim == 3 else a, [5, 95])
+        amp = 0.15 * float(hi - lo)
+    band = amp * np.cos(2.0 * np.pi * k * np.arange(a.shape[1]) / a.shape[1])[None, :]
+    band = band[..., None] if a.ndim == 3 else band
+    out = a + band.astype(a.dtype)
+    if a.ndim == 3 and a.shape[2] == 4:
+        out[..., 3] = a[..., 3]                                   # alpha stays
+    return np.clip(out, 0.0, 1.0) if a.max() <= 1.0 else out
 
 
 def once(ctx, key, fn):

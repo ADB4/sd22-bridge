@@ -1002,6 +1002,60 @@ def ck_lowfreq(ctx, c):
     return worst, out
 
 
+def harmonic_profile(prof, ks):
+    """(amplitude, variance) of DFT harmonics ks (k cycles per tile, k < n/2) of a 1-D profile: amplitude 2|F_k|/n in
+    the profile's units, variance amplitude^2 / 2. The mean drops out (k >= 1)."""
+    n = prof.size
+    amp = 2.0 * np.abs(np.fft.rfft(prof))[list(ks)] / n
+    return amp, amp ** 2 / 2.0
+
+
+def ck_tile_harmonic(ctx, c):
+    """Tile-period stripes: DFT harmonics k = 1.. (k cycles per tile) of the column-mean and row-mean profiles of a map,
+    as the M8 round 3 lenses measured them (fixcheck_verify/v1b_harm.py): amplitude 2|F_k|/n of the axis-mean profile,
+    in % of the map's mean (the region's mean with a region). One U-only stripe cycle per tile repeats with every
+    tile, so col_k1 is the tell. details: col_k<k> / row_k<k> (that amplitude, %), max_amp (largest over the chosen
+    axes and ks), share_col_k<k> / share_row_k<k> (the variance the harmonic carries, amplitude^2 / 2, over the
+    variance of the map in the region), max_share. `stat` picks the value: max_amp (default) or any of those keys;
+    the share needs no non-zero mean (signed maps, height). Columns (rows) with no region pixel count at the region
+    mean. A map that does not tile gives a large k 1: a linear ramp across U has share 6 / pi^2 = 0.61 at k 1."""
+    v = ctx.map_values(c.get("map", "basecolor"), c.get("space", "linear"), c.get("channel", "luma"))
+    R = ctx.region(c["region"]) if c.get("region") else None
+    axis = c.get("axis", "both")
+    if axis not in ("col", "row", "both"):
+        raise ConfigError("tile_harmonic axis must be col, row or both")
+    ks = [int(k) for k in listify(c.get("ks", [1, 2, 3]))]
+    if not ks or any(k < 1 or 2 * k >= min(v.shape) for k in ks):
+        raise ConfigError("tile_harmonic ks must be whole numbers from 1 to below half the map size")
+    sel = R if R is not None else np.ones(v.shape, bool)
+    out = {"n_key": int(sel.sum())}
+    if not out["n_key"]:
+        return float("nan"), out
+    x = v.astype(np.float64)
+    m, var = float(x[sel].mean()), float(x[sel].var())
+    amps, shares = {}, {}
+    for key, ax in (("col", 0), ("row", 1)):                       # col: mean over rows, one value per column
+        if axis in (key, "both"):
+            cnt = sel.sum(axis=ax)
+            prof = np.where(cnt > 0, (x * sel).sum(axis=ax) / np.maximum(cnt, 1), m)
+            if not cnt.all():
+                out[key + "_empty"] = int((cnt == 0).sum())
+            amp, hv = harmonic_profile(prof, ks)
+            for k, a, w in zip(ks, amp, hv):
+                amps["%s_k%d" % (key, k)] = float(a / abs(m) * 100.0) if m else float("nan")
+                shares["share_%s_k%d" % (key, k)] = float(w / var) if var > 1e-18 else (0.0 if w < 1e-18 else float("nan"))
+    out.update(mean=round(m, 6), var=round(var, 8), max_amp=max(amps.values(), key=lambda t: -1 if t != t else t),
+               max_share=max(shares.values(), key=lambda t: -1 if t != t else t))
+    out.update(amps)
+    out.update(shares)
+    stat = str(c.get("stat", "max_amp"))
+    if stat not in out or stat in ("n_key", "mean", "var") or stat.endswith("_empty"):
+        raise ConfigError("tile_harmonic stat '%s' unknown (use max_amp, max_share, col_k<k>, row_k<k>, share_col_k<k> "
+                          "or share_row_k<k>, for a chosen axis and k)" % stat)
+    val = float(out[stat])
+    return val, {k: (round(t, 6) if isinstance(t, float) else t) for k, t in out.items()}
+
+
 def seam_block_px(n, want):
     """Largest block size <= want (px) that divides n, so the last block still ends at the wrapped border."""
     b = max(1, min(int(want), n // 4))
@@ -1459,8 +1513,8 @@ CHECKS = {
     "run_length": ck_run_length, "components": ck_components, "coverage": ck_coverage,
     "concentration": ck_concentration, "height_diff": ck_height_diff, "order": ck_order,
     "mask_invariance": ck_mask_invariance, "envelope": ck_envelope, "per_element": ck_per_element,
-    "slope": ck_slope, "lowfreq": ck_lowfreq, "seam": ck_seam, "value_range": ck_value_range,
-    "value_order": ck_value_order, "orientation": ck_orientation, "spacing": ck_spacing,
+    "slope": ck_slope, "lowfreq": ck_lowfreq, "tile_harmonic": ck_tile_harmonic, "seam": ck_seam,
+    "value_range": ck_value_range, "value_order": ck_value_order, "orientation": ck_orientation, "spacing": ck_spacing,
     "ridge": ck_ridge, "normal_valid": ck_normal_valid, "height_usage": ck_height_usage,
     "edge_profile": ck_edge_profile, "boundary_profile": ck_boundary_profile, "dispersion": ck_dispersion,
     "step": ck_step,
@@ -1608,7 +1662,8 @@ def run_check(ctx, c):
 
 
 SPACES = ("raw", "linear", "srgb255", "mm")
-AXES = {"run_length": ("x", "y", "both"), "seam": ("x", "y", "both"), "step": ("x", "y", "both"), "spacing": ("x", "y")}
+AXES = {"run_length": ("x", "y", "both"), "seam": ("x", "y", "both"), "step": ("x", "y", "both"), "spacing": ("x", "y"),
+        "tile_harmonic": ("col", "row", "both")}
 NORMAL_FORMATS = ("directx", "opengl")
 
 

@@ -119,7 +119,9 @@ Then generate `checks/<variant>.json` from the acceptance table, using the schem
 only mask-level ones. Before the gate, put every hard check through `references/checks.md`, "Hard checks that can
 fail": tiling is hard, a direction the physics fixes is hard, and each hard check reads the rendered maps and names the
 wrong build it catches, as a case in `checks/wrong_build_cases.py` (the suite is red without one). Write `SUITE.json`
-too (`references/checks.md`, "Suite"). In the dry runs, every spec's weakest hard checks proved only the mask wiring.
+too (`references/checks.md`, "Suite"), then `$PY <skill>/scripts/guards.py configs --checks-dir <tools>/checks`: the
+standard guard checks (soft, never demoted) that the apply's regression gate reads. In the dry runs, every spec's
+weakest hard checks proved only the mask wiring.
 
 **Readiness**, beside the spec writing once research has landed (stamps `readiness_start` and `readiness_end`), so
 that every approval card and power problem shows while the user can still settle it:
@@ -193,13 +195,23 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
   settled the same way, at once. In an attended run (an existing material, or on request) the plan gate asks the
   calls in one AskUserQuestion batch instead, the settled option first.
 - Apply one build-measure batch per graph: edit the graph's plan items into their stage scripts in dependency order
-  (per item, `decisions.py snap` its scripts before the edit and `decisions.py patch` after: the per-fix revert patch,
-  `references/review.md` §1), run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
+  (per item, `decisions.py snap` its scripts and `guards.py rows --item <id> --scorecards <the last scorecards>` before
+  the edit, `decisions.py patch` after: the per-fix revert patch and the item's guard rows, `references/review.md` §1),
+  run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
   (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
   that an edited node or preset parameter feeds (an edit to a shared node touches every preset). While the next graph
   builds, run the targeted set in the background: `suite.py` with `--configs` the touched configs and cross-case groups,
-  `--kinds matcheck,wrong_builds` and `--beside-designer`, into `review/round<N+1>` after you read the last set's
-  `suite_partial.json` (each set replaces it). Items that miss their acceptance go into a second batch for that graph.
+  `--kinds matcheck,wrong_builds,previews` and `--beside-designer`, into `review/round<N+1>` after you read the last
+  set's `suite_partial.json` (each set replaces it). Items that miss their acceptance go into a second batch for that
+  graph.
+- **Regression gate**, after each targeted set, since no panel reviews the last apply: fill the batch's ledger rows and
+  run `fixcheck.py`; exit 1 on a `regressed` or `guard_broken` row stops that item. Meanwhile a background eye agent
+  (10-min box) reads the tiled 3x3 albedo sheet of every touched preset, plus the lit and compare sheets where a guard
+  row moved, against each item's `tell`, and writes `review/round<N+1>/eye.json` `{item, tell_seen,
+  finding_still_visible, files}`; read only the sheets it flags. A flag or a seen tell acts at once: one repair (20 min
+  or less), then the item's per-fix revert (`decisions.py`), rebuilt behind the targeted set, and the item becomes the
+  residual "reverted: created <tell>". An eye agent's "looks fine" stays provisional. A 1K per-item probe is only for
+  attributing a tell seen in a batch.
 - Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
   apply: `date -u` when the plan gate is settled and after the last batch's targeted checks, into the ledger's
   `apply` (`references/review.md` §1). Two full rounds; round 2 applies highs only (SD-3, SD-4; the stop rule is in
@@ -362,7 +374,8 @@ background, the "ready" notification, and RUN.json `mode: "done"`; when docs end
   - `wrong_builds.py`: each hard check against its named wrong build
   - `previews.py`: lit views and sheets
   - `suite.py`: the three above in parallel, gated (stdlib)
-  - `fixcheck.py`: re-measures the fix ledger (stdlib)
+  - `fixcheck.py`: re-measures the fix ledger, flags regressed rows and broken guards (stdlib)
+  - `guards.py`: the standard guard checks and an item's guard rows (stdlib)
   - `calibrate.py`: Histogram Scan Position from quantiles
   - `make_brief.py`: a review round's delta brief and panel args (stdlib)
   - `pathclock.py`: stages.jsonl against Target and Expect, waits, long delegated runs (stdlib)

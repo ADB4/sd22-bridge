@@ -137,7 +137,13 @@ const PLAN = {
       priority: { type: 'integer' }, title: { type: 'string' }, why: { type: 'string' }, change: { type: 'string' },
       variants: { type: 'array', items: { type: 'string' } }, source_ids: { type: 'array', items: { type: 'string' } },
       depends_on: { type: 'array', items: { type: 'integer' } }, acceptance: { type: 'string' }, guard_rails: { type: 'string' },
-    }, required: ['priority', 'title', 'why', 'change', 'variants', 'source_ids', 'depends_on', 'acceptance', 'guard_rails'] } },
+      tell: { type: 'string', description: 'the visible defect this change could create, one line' },
+      guards: { type: 'array', description: 'bounds that become ledger guard rows (fixcheck guard_broken), never demoted to notes; [] when the standard guards cover the fix', items: { type: 'object', properties: {
+        check: { type: 'string', description: 'a check id in that variant\'s config' }, variant: { type: 'string' },
+        bound: { type: 'array', minItems: 2, maxItems: 2, items: { type: ['number', 'null'] }, description: '[lo, hi], null for an open end' },
+      }, required: ['check', 'variant', 'bound'] } },
+      intended_lowfreq: { type: 'array', items: { type: 'string' }, description: 'check ids (or check@variant) of a tile-period feature this fix means to add, e.g. a one-cycle meander; exempts their guard rows only because it is declared here, before the build; [] when none' },
+    }, required: ['priority', 'title', 'why', 'change', 'variants', 'source_ids', 'depends_on', 'acceptance', 'guard_rails', 'tell', 'guards', 'intended_lowfreq'] } },
     design_calls: { type: 'array', description: 'every choice between looks, a requirement trade or a deviation; the standing decisions SD-1 and SD-2 settle each one, nobody is asked', items: { type: 'object', properties: {
       question: { type: 'string' },
       options: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'object', properties: {
@@ -359,7 +365,10 @@ ${ALL_REF}
 You are the lead material artist for round ${R}. Merge duplicates (keep source ids; agreement across lenses = confidence),
 re-measure any disputed number yourself, correct wrong premises (Histogram Scan centre = 1 - Position; Blend divide = dst/src),
 resolve conflicts with the user's requirements in writing, and order fixes by dependency (layout -> height/structure ->
-process masks -> colour -> micro-detail). Each fix gets acceptance checks and guard rails. ${R === 1
+process masks -> colour -> micro-detail). Each fix gets acceptance checks and guard rails.
+Each fix names its tell: the visible defect this change could create, in one line.
+Its guards are {check, variant, bound: [lo, hi], null for an open end} on checks in that variant's config (may be empty): they become ledger guard rows that fixcheck judges, and the run cannot demote one to a note.
+Its intended_lowfreq lists the checks (a check id or check@variant) of a tile-period feature the fix means to add, e.g. a one-cycle meander (may be empty): it exempts a row only when declared here, before the build. ${R === 1
   ? 'Round 1 plans highs and mediums, at most 10 fixes; a low enters only as a check defect a planned fix needs.'
   : 'Round ' + R + ' fixes highs only: plan verified highs, hard requirement or invariant breaks, and the check defects those fixes need, at most 5 fixes.'}
 Every confirmed or spot-checked finding you do not plan goes in residuals (one row each, why_open, next_lever): it is

@@ -44,17 +44,28 @@ only on material that already passes its numeric checks.
     "decisions": [{"id": "D1-1", "question": "...", "answer": "..."}],
     "items": [{"id": "P1", "title": "...", "change": "nodes, params, script",
                "status": "done | partial | not_done", "note": "what was not done and why",
+               "tell": "the visible defect this change could create", "intended_lowfreq": [], "trades": [],
                "acceptance": [{"check": "joint_half_depth", "variant": "classic", "target": [9.5, 11],
-                               "before": 10.1, "after": 10.5}]}]}
+                               "before": 10.1, "after": 10.5},
+                              {"check": "guard_harm_basecolor", "variant": "classic", "role": "guard",
+                               "bound": [null, 0.92], "before": 0.73, "after": 0.70}]}]}
    ```
+   `before` is the value on the export just before the item's batch, not the round's baseline. Guard rows (`role`
+   guard, a `bound`) come from the plan's `guards`, from `guards.py rows` (the standard guards: each touched preset's
+   tile-period stripe and low-frequency std, bound at max(1.25 x before, before + a floor)), and from any shape or tone
+   target round 1's lead gave for a family the fix touches. A guard row is never demoted to a note. `tell`,
+   `intended_lowfreq` and `trades` copy the plan's fix fields; only what the plan or a decisions.json row declared
+   before the build exempts a row.
    Each acceptance `check` is a check id in that `variant`'s config, so it can be re-measured: when a fix needs a new
    measure, add it to the config as a soft check in the apply (no target needed when the row has one). On a green
    suite, run `$PY <skill>/scripts/fixcheck.py --ledger <tools>/review/round<N>/ledger.json` (about 0.1 s on the
    round's scorecards; `references/checks.md`, "Fixcheck") and read `round<N>/fixcheck/fixcheck.json`. Exit 1 names a
    `done` item that did not land (`done_not_landed`) or an `after` the re-measure contradicts (`claim_contradicted`):
    correct those rows (status, after, note) and every `drifted` after, then run it again. It also names a variant
-   matcheck could not re-measure (`measure_failed`): fix its config or export first. Exit 2 is a ledger or usage
-   error. `make_brief.py` waits for exit 0.
+   matcheck could not re-measure (`measure_failed`): fix its config or export first. It also exits 1 on a `regressed`
+   row (farther from its target than before by more than max(5 % of before, the tolerance)) or a `guard_broken` one:
+   in an apply that is the regression gate (`SKILL.md` stage 7), never a row to correct. Exit 2 is a ledger or usage
+   error. `make_brief.py` and the final gate wait for exit 0.
 
    **Decision log** `review/decisions.json` (run-level and append-only, so it also holds stage 4's technical calls
    made before any ledger exists; `scripts/decisions.py`, whose docstring is the reference). One row per call or

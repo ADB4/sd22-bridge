@@ -4,7 +4,7 @@ How to use it: references/checks.md, "Fixcheck". This docstring is the reference
 
 Usage:
     python fixcheck.py --ledger <tools>/review/round<N>/ledger.json [--scorecards DIR] [--checks-dir DIR] [--out DIR]
-                       [--rerun] [--python PY]
+                       [--decisions FILE] [--rerun] [--python PY]
 
 Options:
     --ledger      the fix ledger (review.md §1 step 4): items[].id, status (done, partial, not_done), title and
@@ -12,6 +12,7 @@ Options:
     --scorecards  folder of scorecard_<variant>.json (default: the ledger's folder, where the suite writes them)
     --checks-dir  folder of the checks configs (default: <tools>/checks, tools = the ledger's ../..)
     --out         fixcheck/ is written here (default: the ledger's folder)
+    --decisions   the decision log read for exemptions (default: <tools>/review/decisions.json, none when absent)
     --rerun       re-run matcheck for every variant, fresh scorecard or not
     --python      the python matcheck runs under (default: this one; it needs numpy, so start fixcheck with $PY)
 The configs are <checks-dir>/*.json with a `checks` list, each named by its `variant` (else its file stem); two
@@ -37,17 +38,39 @@ has rows and every row holds or drifted. Flags, per item and listed at the top o
     measure_failed      a variant the item's rows read could not be re-measured: matcheck did not start, crashed,
                         timed out (900 s), exited 2 (config error) or another code without a scorecard, or wrote none
                         or an unreadable one. Its rows are unmeasured; fix the config or the export and run again.
-partial and not_done items are reported, not failed (unless measure_failed).
+partial and not_done items are reported, not failed (unless measure_failed or a regression flag, below).
+Regression flags, from the ledger's before and the re-measured value (the ledger's after when there is none, so every
+item of every status, done and partial alike, is checked). Row distance: for a target [lo, hi] (null = an open end), dist(v) is 0 inside it,
+else the distance to the nearest bound. Row roles: an acceptance row has "role": "target" (default) or "guard"; a guard
+row has "bound": [lo, hi] (null = an open end) instead of, or besides, a "target"; "bound" on a target row, or a guard
+row with neither, is a ledger error. Its target judgement (statuses above) is unchanged; a guard row with no target
+(bound only) does not count toward landed.
+    regressed     before and after are numbers, the row has a target, and dist(after) > dist(before) +
+                  max(0.05 * |before|, tol), tol = the row's "tolerance" if it has one, else the check's "tolerance"
+                  in its config, else 0 (a zero before therefore allows only tol). No numeric before: never regressed.
+                  The row also gets dist_before, dist_after, regress_allowed (the max above) and regress_excess.
+    guard_broken  a guard row whose numeric `after` is outside its bound (SLACK as in meets)
+Exemptions, declared before the build only. A row is exempt from both flags when its check id is in the item's
+"intended_lowfreq" list, or the item's "trades" list (strings "<check>@<variant>" or "<check>"; intended_lowfreq takes
+both forms too), or when a row of the decision log names the item in its `items` and the check (its id as a whole word
+in `question`, `chosen`, `gave_up` or `note`, or in an optional `checks` list) with a `utc` earlier than the ledger's
+apply.started (review.md §1 step 4; with no stamp no decision row counts as declared before). A not_made_needs_user row
+decides nothing and never exempts. Exempt rows keep the flag on the row and are reported as exempt with the reason.
 Writes fixcheck.json and fixcheck.md in <out>/fixcheck/ (a folder of its own: a panel lens keyed fixcheck writes
 round<N>/fixcheck.json); both are deleted first, so a failed run leaves none. fixcheck.json: rc, counts {status: n},
 landed, not_landed, done_not_landed [item ids], claim_contradicted [{item, check, variant}], measure_failed [{variant,
-error}], measured {variant: {source scorecard or rerun, scorecard, config, why, rc, argv, seconds, error}}, warnings,
-items [{id, title, status, verdict landed or not_landed, flags, note, rows [{check, variant, target, target_from,
-before, after, value, meets, after_meets, tolerance, status, note, claim_contradicted}]}], plus ledger, checks_dir,
+error}], regression_counts {regressed, guard_broken, exempt} (non-exempt rows with each flag; rows exempt from one),
+measured {variant: {source scorecard or rerun, scorecard, config, why, rc, argv, seconds, error}}, warnings,
+items [{id, title, status, verdict landed or not_landed, flags, note, regressed [row ids check@variant], guard_broken
+[row ids], exempt [{row, flag, reason}], rows [{check, variant, role, target, bound, target_from, before, after, value,
+meets, after_meets, tolerance, status, note, claim_contradicted, dist_before, dist_after, regress_allowed,
+regress_excess, regressed, guard_broken, exempt (the reason or null)}]}], plus ledger, checks_dir,
 scorecards, out, rerun, python, started, seconds. Standard library only, Python 3.7 or newer: matcheck runs in a
 subprocess under --python, which needs numpy (the analysis venv).
-Exit code: 0 no flag; 1 a done_not_landed, claim_contradicted or measure_failed; 2 a usage, checks-dir or ledger error
-(nothing written).
+fixcheck.md shows a short Regressions table (every regressed, guard_broken or exempt row) before the item tables. An
+item's flags also name regressed and guard_broken when it has a non-exempt row.
+Exit code: 0 no flag; 1 a done_not_landed, claim_contradicted or measure_failed item, or a non-exempt regressed or
+guard_broken row; 2 a usage, checks-dir or ledger error (nothing written).
 """
 import argparse
 import datetime
@@ -71,6 +94,8 @@ THREADS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXP
            "VECLIB_MAXIMUM_THREADS")
 TIMEOUT = 900  # seconds per matcheck run
 SLACK = 1e-12  # matcheck.evaluate's
+REGRESS_FRAC = 0.05  # a row may move this share of |before| farther from its target before it is regressed
+ROLES = ("target", "guard")
 
 
 class Fail(Exception):
@@ -166,6 +191,33 @@ def meets(value, target):
     return (lo is None or value >= lo - SLACK) and (hi is None or value <= hi + SLACK)
 
 
+def dist(v, target):
+    """0 inside [lo, hi] (null = an open end), else the distance to the nearest bound."""
+    lo, hi = target
+    return lo - v if lo is not None and v < lo else v - hi if hi is not None and v > hi else 0.0
+
+
+def row_id(check, variant):
+    return "%s@%s" % (fmt(check), fmt(variant))
+
+
+def parse_utc(text):
+    """A datetime (aware, UTC) from a stamp like 2026-10-05T01:00:00Z, else None."""
+    if not isinstance(text, str):
+        return None
+    try:
+        d = datetime.datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+
+
+def names_check(entries, cid, variant):
+    """True when a list of "<check>@<variant>" or "<check>" strings names this row."""
+    return isinstance(entries, list) and any(isinstance(e, str) and e.strip() in (cid, "%s@%s" % (cid, variant))
+                                             for e in entries)
+
+
 def half_unit(v):
     """Half a unit of the last digit as the number was written (0.40 -> 0.005, 12 -> 0.5, 1.5e-05 -> 5e-07)."""
     m = re.fullmatch(r"-?\d*(?:\.(\d*))?(?:[eE]([+-]?\d+))?", getattr(v, "text", None) or repr(float(v)))
@@ -202,10 +254,26 @@ def read_ledger(path):
             errs.append("item %s: acceptance must be a list of {check, variant, target, before, after}" % iid)
             continue
         for k, a in enumerate(acc):
-            t = a.get("target")
+            t, b, role, tol = a.get("target"), a.get("bound"), a.get("role", "target"), a.get("tolerance")
+            where = "item %s row %d (%s)" % (iid, k + 1, fmt(a.get("check")))
             if t is not None and not is_target(t):
-                errs.append("item %s row %d (%s): a target is [low, high] with null for an open end, not %s"
-                            % (iid, k + 1, fmt(a.get("check")), json.dumps(plain(t))))
+                errs.append("%s: a target is [low, high] with null for an open end, not %s"
+                            % (where, json.dumps(plain(t))))
+            if role not in ROLES:
+                errs.append("%s: role must be target or guard, not %s" % (where, json.dumps(plain(role))))
+            elif b is not None and not is_target(b):
+                errs.append("%s: a bound is [low, high] with null for an open end, not %s"
+                            % (where, json.dumps(plain(b))))
+            elif b is not None and role != "guard":
+                errs.append("%s: a bound belongs to a row with role guard" % where)
+            elif role == "guard" and b is None and t is None:
+                errs.append("%s: a guard row needs a bound (or a target)" % where)
+            if tol is not None and not (number(tol) and tol >= 0):
+                errs.append("%s: tolerance must be a number of 0 or more, not %s" % (where, json.dumps(plain(tol))))
+        for key in ("intended_lowfreq", "trades"):
+            v = it.get(key)
+            if v is not None and not (isinstance(v, list) and all(isinstance(x, str) for x in v)):
+                errs.append("item %s: %s must be a list of strings (<check> or <check>@<variant>)" % (iid, key))
     if errs:
         raise Fail("; ".join("%s: %s" % (path, e) for e in errs))
     return led
@@ -389,11 +457,75 @@ def judge(a, vi, card, err):
     return row
 
 
+# ----------------------------------------------------------------------------- regressions
+
+
+def read_decisions(path, warns):
+    """The decision log's rows ([] when the file is absent or unreadable: a warning says so)."""
+    if not os.path.isfile(path):
+        return []
+    try:
+        rows = load_json(path)["rows"]
+        if not isinstance(rows, list):
+            raise TypeError("rows is not a list")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        warns.append("%s: unreadable (%s): no decision row can exempt a row" % (path, e))
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def declared_before(decs, apply_start, item_id, cid, variant):
+    """The id of a decision row that names this item and check and was logged before the apply began, else None."""
+    if apply_start is None:
+        return None
+    pat = re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(cid))
+    for d in decs:
+        when = parse_utc(d.get("utc"))
+        if (d.get("kind") == "not_made_needs_user" or when is None or when >= apply_start
+                or item_id not in (d.get("items") or [])):
+            continue
+        if names_check(d.get("checks"), cid, variant) or any(isinstance(d.get(k), str) and pat.search(d[k])
+                                                          for k in ("question", "chosen", "gave_up", "note")):
+            return str(d.get("id") or "?")
+    return None
+
+
+def regression(a, it, check, decs, apply_start, value=None):
+    """The regression fields of one acceptance row (check: its config entry or None). after is the re-measured value
+    when there is one, else the ledger's own after, so a later batch that undid a fix shows at the final gate."""
+    cid, variant, before = a.get("check"), a.get("variant"), a.get("before")
+    after = value if number(value) else a.get("after")
+    t, b = a.get("target"), a.get("bound")
+    t = t if t is not None and t != [None, None] else None
+    out = {"role": a.get("role", "target"), "bound": plain(b), "dist_before": None, "dist_after": None,
+           "regress_allowed": None, "regress_excess": None, "regressed": False, "guard_broken": False, "exempt": None}
+    if t is not None and number(before) and number(after):
+        tol = next((x for x in (a.get("tolerance"), (check or {}).get("tolerance")) if number(x) and x >= 0), 0.0)
+        db, da = dist(before, t), dist(after, t)
+        allowed = max(REGRESS_FRAC * abs(before), tol)
+        out.update(dist_before=db, dist_after=da, regress_allowed=allowed, regress_excess=da - db - allowed,
+                   regressed=da > db + allowed + SLACK)
+    out["guard_broken"] = b is not None and number(after) and not meets(after, b)
+    if out["regressed"] or out["guard_broken"]:
+        c = cid if isinstance(cid, str) else ""
+        if names_check(it.get("intended_lowfreq"), c, variant):
+            out["exempt"] = "intended_lowfreq"
+        elif names_check(it.get("trades"), c, variant):
+            out["exempt"] = "trades"
+        else:
+            d = declared_before(decs, apply_start, it["id"], c, variant) if c else None
+            if d:
+                out["exempt"] = "decision %s, logged before the apply" % d
+    for k in ("dist_before", "dist_after", "regress_allowed", "regress_excess"):
+        out[k] = round(out[k], 9) if out[k] is not None else None
+    return out
+
+
 # ----------------------------------------------------------------------------- report
 
 
 def write_md(path, rep, tools):
-    c = rep["counts"]
+    c, rc_ = rep["counts"], rep["regression_counts"]
     lines = ["# Fixcheck: %s" % rel(rep["ledger"], tools), "",
              "%d items: %d landed, %d not landed. Done but not landed: %s. Claims contradicted: %s. "
              "Measure failed: %s. Exit code %d."
@@ -401,7 +533,9 @@ def write_md(path, rep, tools):
                 ", ".join(rep["done_not_landed"]) or "none",
                 ", ".join("%s %s (%s)" % (x["item"], x["check"], x["variant"]) for x in rep["claim_contradicted"])
                 or "none", ", ".join(x["variant"] for x in rep["measure_failed"]) or "none", rep["rc"]),
-             "Rows: %s." % ", ".join("%s %d" % (s, c[s]) for s in STATUSES), ""]
+             "Rows: %s." % ", ".join("%s %d" % (s, c[s]) for s in STATUSES),
+             "Regressions: %d regressed, %d guard broken, %d exempt." % (
+                 rc_["regressed"], rc_["guard_broken"], rc_["exempt"]), ""]
     for v, m in sorted(rep["measured"].items()):
         if m["source"] == "scorecard":
             lines.append("- %s: %s" % (v, rel(m["scorecard"], tools)))
@@ -410,6 +544,20 @@ def write_md(path, rep, tools):
                                                                m["error"] or rel(m["scorecard"], tools)))
     lines += ["- **Warning**: %s" % w for w in rep["warnings"]]
     if rep["measured"] or rep["warnings"]:
+        lines.append("")
+    flagged = [(it, r) for it in rep["items"] for r in it["rows"] if r["regressed"] or r["guard_broken"]]
+    if flagged:
+        lines += ["## Regressions", "",
+                  "| item | status | check | variant | flag | target | bound | before | after | allowed | exempt |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|"]
+        for it, r in flagged:
+            flag = " + ".join(f for f in ("regressed" if r["regressed"] else "", "guard_broken" if r["guard_broken"]
+                                          else "") if f)
+            lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+                cell(it["id"]), it["status"], cell(fmt(r["check"])), cell(fmt(r["variant"])), flag,
+                fmt_target(r["target"]) if r["target"] else "-", fmt_target(r["bound"]) if r["bound"] else "-",
+                cell(fmt(r["before"])), cell(fmt(r["after"])), cell(fmt(r["regress_allowed"])),
+                cell(r["exempt"] or "no")))
         lines.append("")
     lines += ["| item | status | verdict | flags | rows | title |", "|---|---|---|---|---|---|"]
     for it in rep["items"]:
@@ -439,6 +587,7 @@ def main(argv=None):
     ap.add_argument("--scorecards", help="folder of scorecard_<variant>.json (default: the ledger's folder)")
     ap.add_argument("--checks-dir", help="folder of the checks configs (default: <tools>/checks)")
     ap.add_argument("--out", help="fixcheck/ is written here (default: the ledger's folder)")
+    ap.add_argument("--decisions", help="decision log for exemptions (default: <tools>/review/decisions.json)")
     ap.add_argument("--rerun", action="store_true", help="re-run matcheck for every variant, fresh or not")
     ap.add_argument("--python", default=sys.executable, help="python for matcheck (default: this one)")
     a = ap.parse_args(argv)
@@ -449,6 +598,7 @@ def main(argv=None):
     tools = os.path.normpath(os.path.join(here, "..", ".."))
     scdir = os.path.abspath(a.scorecards or here)
     checks_dir = os.path.abspath(a.checks_dir or os.path.join(tools, "checks"))
+    decpath = os.path.abspath(a.decisions or os.path.join(tools, "review", "decisions.json"))
     fdir = os.path.join(os.path.abspath(a.out or here), "fixcheck")
     jp, mdp = os.path.join(fdir, "fixcheck.json"), os.path.join(fdir, "fixcheck.md")
     remove(jp)
@@ -501,6 +651,10 @@ def main(argv=None):
             print("%s: re-run (%s): rc %s, %s s%s" % (v, why, info["rc"], info["seconds"],
                                                      ": " + info["error"] if info["error"] else ""), flush=True)
         cards[v] = card
+    decs = read_decisions(decpath, warns)
+    apply_start = parse_utc((led.get("apply") or {}).get("started") if isinstance(led.get("apply"), dict) else None)
+    if decs and apply_start is None:
+        warns.append("the ledger has no readable apply.started: no decision row counts as declared before the build")
     items, counts = [], {s: 0 for s in STATUSES}
     for it in led["items"]:
         out_rows = []
@@ -512,24 +666,40 @@ def main(argv=None):
                 r = judge(x, None, None, "no config in %s has variant %s" % (checks_dir, v))
             else:
                 r = judge(x, vinfo[v], cards.get(v), (measured.get(v) or {}).get("error"))
+            cid = x.get("check")
+            cfgc = vinfo[v][1].get(cid) if isinstance(v, str) and v in vinfo and isinstance(cid, str) else None
+            r.update(regression(x, it, cfgc, decs, apply_start, r.get("value")))
             counts[r["status"]] += 1
             out_rows.append(r)
-        landed = bool(out_rows) and all(r["status"] in ("holds", "drifted") for r in out_rows)
+        aims = [r for r in out_rows if r["role"] != "guard" or r["target"]]   # a bound-only guard row aims at nothing
+        landed = bool(aims) and all(r["status"] in ("holds", "drifted") for r in aims)
         flags = (["done_not_landed"] if it["status"] == "done" and not landed else []) + \
                 (["claim_contradicted"] if any(r["claim_contradicted"] for r in out_rows) else []) + \
                 (["measure_failed"] if any((measured.get(r["variant"]) or {}).get("error") for r in out_rows
                                            if isinstance(r["variant"], str)) else [])
+        reg = [r for r in out_rows if r["regressed"] and not r["exempt"]]
+        gb = [r for r in out_rows if r["guard_broken"] and not r["exempt"]]
+        flags += (["regressed"] if reg else []) + (["guard_broken"] if gb else [])
         items.append({"id": it["id"], "title": plain(it.get("title", "")), "status": it["status"],
                       "verdict": "landed" if landed else "not_landed", "flags": flags,
-                      "note": "" if out_rows else "no acceptance rows: nothing re-measured", "rows": out_rows})
+                      "note": "" if out_rows else "no acceptance rows: nothing re-measured",
+                      "regressed": [row_id(r["check"], r["variant"]) for r in reg],
+                      "guard_broken": [row_id(r["check"], r["variant"]) for r in gb],
+                      "exempt": [{"row": row_id(r["check"], r["variant"]), "flag": f, "reason": r["exempt"]}
+                                 for r in out_rows if r["exempt"] for f in ("regressed", "guard_broken") if r[f]],
+                      "rows": out_rows})
     dnl = [i["id"] for i in items if "done_not_landed" in i["flags"]]
     cc = [{"item": i["id"], "check": r["check"], "variant": r["variant"]} for i in items for r in i["rows"]
           if r["claim_contradicted"]]
     mf = [{"variant": v, "error": m["error"]} for v, m in sorted(measured.items()) if m.get("error")]
-    rc = 1 if dnl or cc or mf else 0  # a re-measure that could not run never reads as exit 0
+    rcount = {"regressed": sum(len(i["regressed"]) for i in items),
+              "guard_broken": sum(len(i["guard_broken"]) for i in items),
+              "exempt": sum(1 for i in items for r in i["rows"] if r["exempt"])}
+    # a re-measure that could not run never reads as exit 0
+    rc = 1 if dnl or cc or mf or rcount["regressed"] or rcount["guard_broken"] else 0
     rep = {"ledger": ledger, "checks_dir": checks_dir, "scorecards": scdir, "out": fdir, "rerun": a.rerun,
            "python": a.python, "started": started, "seconds": None, "rc": rc, "counts": counts,
-           "landed": [i["id"] for i in items if i["verdict"] == "landed"],
+           "regression_counts": rcount, "landed": [i["id"] for i in items if i["verdict"] == "landed"],
            "not_landed": [i["id"] for i in items if i["verdict"] != "landed"],
            "done_not_landed": dnl, "claim_contradicted": cc, "measure_failed": mf, "measured": measured,
            "warnings": warns, "items": items}
@@ -543,6 +713,10 @@ def main(argv=None):
              ", ".join("%s %s (%s)" % (x["item"], x["check"], x["variant"]) for x in cc) or "none",
              ", ".join(x["variant"] for x in mf) or "none"))
     print("rows: %s" % ", ".join("%s %d" % (s, counts[s]) for s in STATUSES))
+    print("regressions: %d regressed, %d guard broken, %d exempt%s"
+          % (rcount["regressed"], rcount["guard_broken"], rcount["exempt"],
+             "".join("; %s: %s" % (i["id"], ", ".join(i["regressed"] + i["guard_broken"])) for i in items
+                     if i["regressed"] or i["guard_broken"])))
     for w in warns:
         print("warning: %s" % w)
     print("wrote %s/fixcheck.{json,md} in %.2f s, exit %d" % (fdir, rep["seconds"], rc))
