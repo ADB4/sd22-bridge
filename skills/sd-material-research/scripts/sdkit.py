@@ -12,7 +12,8 @@
   Uids are stored in the .sbs, so the map stays valid across sessions.
 - sk.graph_snapshot(key, path) records a graph (nodes, parameters, connections, presets, input defaults) and a digest
   of its build; sk.graph_diff(path) lists what changed since a snapshot. export_outputs writes the digest into the
-  manifest as graph_digest, and its exported_at is UTC with a Z.
+  manifest as graph_digest, and its exported_at is UTC with a Z. sk.edit_diff(edit_dir) does step 1 of "Iterate on a
+  finished material" (SKILL.md): it diffs every graph of the package against the newest saved snapshot and records new ones.
 - Designer is single-threaded: one run_python at a time. Keep each call under ~45 s. The MCP client gives up at ~60 s
   while Designer keeps working, so never retry a call that timed out. For long jobs use scripts/sdcall.py from a shell.
 """
@@ -1148,6 +1149,122 @@ def graph_diff(snapshot_path, key=None):
     if old.get("graph") != new["graph"]:
         raise ValueError("snapshot %s is of graph %r, not %r" % (snapshot_path, old.get("graph"), new["graph"]))
     return diff_snapshots(old, new)
+
+
+def _newest_snapshot(tools, gid, skip_dir):
+    """The newest (by mtime) review/round*/ or review/edit*/ graph_<gid>.snapshot.json under tools, leaving out the
+    files inside skip_dir; None when there is none."""
+    review = os.path.join(tools, "review")
+    skip = os.path.realpath(skip_dir)
+    best = None
+    try:
+        names = os.listdir(review)
+    except OSError:
+        return None
+    for name in names:
+        if not re.match(r"^(round|edit)\d+$", name):
+            continue
+        d = os.path.join(review, name)
+        f = os.path.join(d, "graph_%s.snapshot.json" % gid)
+        if os.path.realpath(d) == skip or not os.path.isfile(f):
+            continue
+        m = re.match(r"^(round|edit)(\d+)$", name)
+        # a tie (copied or checked-out folder) goes to the highest edit, then the highest round, as guards.py baseline
+        cand = (os.path.getmtime(f), 1 if m.group(1) == "edit" else 0, int(m.group(2)), f)
+        if best is None or cand > best:
+            best = cand
+    return best[-1] if best else None
+
+
+def _rel_tools(tools, path):
+    try:
+        return os.path.relpath(path, tools).replace(os.sep, "/")
+    except ValueError:  # Windows: another drive
+        return path.replace(os.sep, "/")
+
+
+def edit_diff(edit_dir, keys=None, save=True):
+    """Step 1 of 'Iterate on a finished material' in one call: what did the user change in Designer since the last
+    recorded state. edit_dir: absolute, or relative to the tools folder (created when missing). keys: the graph keys
+    to check ("<package file>::<graph id>"); default every SDSBSCompGraph of the current graph's package. save: save
+    the package first (once per package), because presets are read from the file. For each key, the newest (by mtime)
+    review/round*/ or review/edit*/ graph_<id>.snapshot.json outside edit_dir is the 'against' state; graph_diff
+    compares the live graph with it, then the live graph is recorded as edit_dir/graph_<id>.snapshot.json.
+    Writes edit_dir/edit_diff.json (atomically) and returns the same dict: {"utc", "edit_dir" (relative to the tools
+    folder), "graphs" {graph id: {"key", "against" (relative to tools, or null), "changed" (true when the digest
+    moved or any diff list is non-empty, presets and input defaults included; null with no 'against'), "diff" (the
+    graph_diff dict or null)}}, "build_newer" [files under build/ (.py and .json, not *.result.json or *.done) newer
+    than the oldest 'against' used, relative to tools: scripts the edit may need to be written back into]}.
+    Raises RuntimeError without configure() or, for the default keys, use(). Nothing is written until every key has
+    resolved and diffed; the snapshots then go in and edit_diff.json last, and a failure in that phase removes what
+    this call wrote, so a retry never finds a half-written edit_dir as its newest state."""
+    tools = S.get("tools")
+    if not tools:
+        raise RuntimeError("call sk.configure first")
+    edit_dir = os.path.abspath(os.path.join(tools, os.path.expanduser(edit_dir)))
+    if keys is None:
+        if not S.get("graph"):
+            raise RuntimeError("call sk.use first")
+        pkg = C._graph(S["graph"]).getPackage()
+        base = os.path.basename(C._try(pkg.getFilePath) or "")
+        keys = ["%s::%s" % (base, C._gid(r)) for r in C._graphs_in(pkg) if C._cls(r) == "SDSBSCompGraph"]
+    for k in keys:
+        graph(k)  # a bad key raises here, before anything is written
+    if save:
+        saved = set()
+        for k in keys:
+            path = C._try(graph(k).getPackage().getFilePath)
+            if path not in saved:
+                saved.add(path)
+                globals()["save"](k)  # the parameter `save` hides the function
+    graphs, againsts = {}, []
+    for k in keys:  # every diff first, nothing written yet
+        gid = C._gid(graph(k))
+        against = _newest_snapshot(tools, gid, edit_dir)
+        diff = graph_diff(against, k) if against else None
+        changed = None
+        if diff is not None:
+            changed = bool(diff.get("digest_changed")) or any(isinstance(v, list) and v for v in diff.values())
+            againsts.append(os.path.getmtime(against))
+        graphs[gid] = {"key": k, "against": _rel_tools(tools, against) if against else None, "changed": changed,
+                       "diff": diff}
+    newer = []
+    if againsts:
+        cutoff = min(againsts)
+        for root, dirs, files in os.walk(os.path.join(tools, "build")):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in files:
+                if f.endswith((".py", ".json")) and not f.endswith(".result.json") and not f.endswith(".done"):
+                    if os.path.getmtime(os.path.join(root, f)) > cutoff:
+                        newer.append(_rel_tools(tools, os.path.join(root, f)))
+    out = {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "edit_dir": _rel_tools(tools, edit_dir),
+           "graphs": graphs, "build_newer": sorted(newer)}
+    existed = os.path.isdir(edit_dir)
+    written = []
+    try:  # the write phase: all snapshots, then edit_diff.json last; a failure leaves edit_dir as it was
+        os.makedirs(edit_dir, exist_ok=True)
+        for g in graphs.values():
+            snap = os.path.join(edit_dir, "graph_%s.snapshot.json" % C._gid(graph(g["key"])))
+            written.append(snap)
+            graph_snapshot(g["key"], path=snap)
+        path = os.path.join(edit_dir, "edit_diff.json")
+        written.append(path + ".tmp")
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(out, fh, indent=1, default=str)
+        os.replace(path + ".tmp", path)
+    except BaseException:
+        for f in written + [os.path.join(edit_dir, "edit_diff.json")]:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        if not existed:
+            try:
+                os.rmdir(edit_dir)
+            except OSError:
+                pass
+        raise
+    return out
 
 
 # ----------------------------------------------------------------------------- variants

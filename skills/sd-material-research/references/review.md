@@ -321,11 +321,11 @@ reached: all hard checks pass in every variant; every hard requirement is `met` 
 `mostly_met`; 0 highs; the last round's fixes landed. A requirement judged by eye alone (M8's R13) is reported per
 variant and never blocks the stop.
 
-**Final gate.** The last change is followed by a 2048 export of every variant and its `nowear`, then a full suite (no
-`--configs` or `--kinds`) into `review/round<N+1>`, the folder whose ledger records the last apply, and `fixcheck.py`
-on that ledger (§1 steps 2-4). Draft the report while the suite runs; finalize it only on that `suite.json` with
-`green` true, `rc` 0 and `full` true. The report says what was verified after the last change, and which fixes landed,
-and that round 2's apply was not reviewed by a panel.
+**Final gate.** The last change is followed by a 2048 export of every variant and its `nowear` (and each graph's
+snapshot, `SKILL.md` stage 7), then a full suite (no `--configs` or `--kinds`) into `review/round<N+1>`, the folder
+whose ledger records the last apply, and `fixcheck.py` on that ledger (§1 steps 2-4). Draft the report while the
+suite runs; finalize it only on that `suite.json` with `green` true, `rc` 0 and `full` true. The report says what was
+verified after the last change, and which fixes landed, and that round 2's apply was not reviewed by a panel.
 
 ## 6. Running it
 

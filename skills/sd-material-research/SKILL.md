@@ -48,6 +48,8 @@ Other entry points:
   their graph, and never save their package unasked.
 - **Continuing a material**: read its `CONTEXT_PROMPT.md`, `spec.md` and the latest scorecards, then pick up at
   stage 7. A leg of an unattended run reads RUN.json and the run block first ("Unattended run", Legs).
+- **A finished material the user changed** (a parameter or preset tweaked in Designer, or a change they describe):
+  "Iterate on a finished material" below. No panel and no question.
 
 ### 0. Orient
 - Call `designer_status` and `list_packages`.
@@ -223,7 +225,9 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
   `apply` (`references/review.md` §1). Two full rounds; round 2 applies highs only (SD-3, SD-4; the stop rule is in
   `references/review.md` §5).
 - **Final gate:** after the last change, export every variant plus its `nowear` at 2048 in one foreground `sdcall.py`
-  job (stage 5), then run the full suite into `review/round<N+1>` in the background, then `fixcheck.py` on its ledger
+  job (stage 5), and in the same job record every graph of the package with `sk.graph_snapshot(key,
+  path="<tools>/review/round<N+1>/graph_<gid>.snapshot.json")` (what a later user edit is diffed against). Then run
+  the full suite into `review/round<N+1>` in the background, then `fixcheck.py` on its ledger
   (`references/review.md` §5); draft the report meanwhile (an unattended run writes it with `morning_report.py`, Stop
   point) and finalize it only on a green `suite.json`. The report states what was verified after the last change, in
   physical terms ("joint 10.5 mm at half depth; 0 damaged pixels below the mortar; damage 4.3 %"). Send the comparison
@@ -356,6 +360,50 @@ The mid-run look's SendUserFile is neither, and nothing waits on it.
 The last leg's final message is the verdict and the answer batch as the script prints them, so a typed reply works
 ("1 none, 2 yes", "reverse D2-3"). It asks nothing else.
 
+## Iterate on a finished material
+
+The user changed a material this skill built: a parameter or preset in Designer, a build file, or a change they
+describe. Re-measure it against the last green state and report. There is no panel and no question, and the edit is
+kept: a regression or a broken guard is reported, never reverted, because the edit is the user's. This runs only when
+no run owns Designer (RUN.json absent or `mode` done). Expect about 15 minutes, most of it the eye agent.
+1. **Find the change.** Set K = 1 + the highest `review/edit<k>` (1 when there is none) and
+   E = `<tools>/review/edit<K>`. In one `sdcall.py` job, run `sk.edit_diff("review/edit<K>")`. It saves the package
+   (presets are read from the file), diffs every graph of the package against its newest snapshot under
+   `review/round*/` and `review/edit*/`, records the new snapshots in E, and writes `E/edit_diff.json`. Files in its
+   `build_newer` are user edits too. Nothing changed: say so in one line and stop. A graph with no earlier snapshot
+   (`against` null): take the change from the user's words.
+2. **Touched variants.** A node, connection, base-parameter or input-default change touches every variant exported
+   from that graph, or from a graph that instances it (the manifests' `graph`). A preset change touches the variants
+   rendered from that preset.
+3. **Write it back**, so a scripted rebuild keeps it and it stays reversible. Let N be the newest round number. Run
+   `decisions.py snap --round N --item U<K> --files <files>`, then write each changed value into the stage script or
+   preset file that sets it. To find it, grep `build/` for the node's registry name; a value the script never set gets
+   a line next to the node's creation. Then run `decisions.py patch --round N --item U<K>`. Added or removed nodes and
+   connections go into the stage script of that part. A file the user edited is already written: skip this step for
+   it, and name it in the decision row's note. A stage script in `build_newer`, or an added or removed node, is then
+   rebuilt from its earliest changed stage, only after the write-back (a rebuild discards live edits that are not in
+   the scripts). A rebuild gives the nodes new uids, so record each rebuilt graph again with
+   `sk.graph_snapshot(key, path="E/graph_<gid>.snapshot.json")`, or the next edit's diff lists every node.
+4. **Measure.** Export the touched variants and their `nowear` at 2048 in one foreground `sdcall.py` job. Then run
+   `suite.py SUITE.json --out <tools>/review/edit<K> --configs <the touched configs, their cross-case groups and the
+   commands that read them> --kinds matcheck,wrong_builds,previews,commands` in the background, and read its
+   `suite_partial.json`.
+5. **Compare.** Run `guards.py baseline --tools <tools> --edit K --variants <touched>`. It writes `E/ledger.json` with
+   item `U<K>`: a target row for every scored check, the before from the newest green scorecard of that variant
+   (it picks the folder) and the after from the edit's, plus the R-13 guard rows. Then run
+   `fixcheck.py --ledger E/ledger.json`, where exit 1 names the `regressed` and `guard_broken` rows. Meanwhile a
+   background eye agent (10-min box) compares each touched variant's `*_tiled3x3_albedo.png` and lit sheet in E with
+   the same files in the baseline folder (the ledger's `baseline`). It writes `E/eye.json`
+   `[{variant, sees, new_defect, files}]`.
+6. **Log and report.** Add a `user_edit` row with `decisions.py add --round N`: the question is what the user changed,
+   chosen the values, rule `user`, items `U<K>`, scripts the files written back. When the eye agent is back (or its
+   box is over), run `morning_report.py --tools <tools> --addendum --kind user_edit --edit K --text "<what changed>"`.
+   It builds the rows from E (the decision id, the suite, fixcheck's flagged rows, the eye's verdicts) and creates
+   REPORT.md when there is none. Reply with the addendum's lines and send the sheets the eye flagged (SendUserFile).
+   For a red check or a broken guard, give its before and after and the stage that likely moved it.
+The next edit is measured against this one when its suite is green, else against the last green state. To undo
+the write-back: `decisions.py revert --round N --item U<K>`, then a rebuild.
+
 ## Designer rules that save hours
 - **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. In an
   unattended run only the leg RUN.json names as `owner` calls Designer (Legs). After a split (attended runs) only the
@@ -414,7 +462,8 @@ The last leg's final message is the verdict and the answer batch as the script p
   - `previews.py`: lit views and sheets
   - `suite.py`: the three above in parallel, gated (stdlib)
   - `fixcheck.py`: re-measures the fix ledger, flags regressed rows and broken guards (stdlib)
-  - `guards.py`: the standard guard checks and an item's guard rows (stdlib)
+  - `guards.py`: the standard guard checks, an item's guard rows, and a user edit's ledger against the last green
+    state (stdlib)
   - `calibrate.py`: Histogram Scan Position from quantiles
   - `make_brief.py`: a review round's delta brief and panel args (stdlib)
   - `findings.py`: a review round's findings.md from the lens, verdict and lead files, in seconds (stdlib)

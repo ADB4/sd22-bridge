@@ -50,6 +50,8 @@ After any graph change:
    its `fixcheck/fixcheck.json` (`references/review.md` §1 step 4)
 6. compare against the table below
 
+A change the user made after the run (Designer or a build file): `SKILL.md`, "Iterate on a finished material".
+
 ## Current measured state (2048)
 | check | variant A | variant B | variant C |
 |---|---|---|---|

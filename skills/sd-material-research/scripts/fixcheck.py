@@ -7,8 +7,9 @@ Usage:
                        [--decisions FILE] [--rerun] [--python PY]
 
 Options:
-    --ledger      the fix ledger (review.md §1 step 4): items[].id, status (done, partial, not_done), title and
-                  acceptance[].check, variant, target ([lo, hi], null = an open end), before, after
+    --ledger      the fix ledger (review.md §1 step 4): items[].id, status (done, partial, not_done; user_edit in a
+                  ledger from guards.py baseline), title and acceptance[].check, variant, target ([lo, hi], null = an
+                  open end), before, after. A ledger at <tools>/review/edit<K>/ledger.json needs no other flag.
     --scorecards  folder of scorecard_<variant>.json (default: the ledger's folder, where the suite writes them)
     --checks-dir  folder of the checks configs (default: <tools>/checks, tools = the ledger's ../..)
     --out         fixcheck/ is written here (default: the ledger's folder)
@@ -38,7 +39,7 @@ has rows and every row holds or drifted. Flags, per item and listed at the top o
     measure_failed      a variant the item's rows read could not be re-measured: matcheck did not start, crashed,
                         timed out (900 s), exited 2 (config error) or another code without a scorecard, or wrote none
                         or an unreadable one. Its rows are unmeasured; fix the config or the export and run again.
-partial and not_done items are reported, not failed (unless measure_failed or a regression flag, below).
+partial, not_done and user_edit items are reported, not failed (unless measure_failed or a regression flag, below).
 Regression flags, from the ledger's before and the re-measured value (the ledger's after when there is none, so every
 item of every status, done and partial alike, is checked). Row distance: for a target [lo, hi] (null = an open end), dist(v) is 0 inside it,
 else the distance to the nearest bound. Row roles: an acceptance row has "role": "target" (default) or "guard"; a guard
@@ -54,7 +55,8 @@ Exemptions, declared before the build only. A row is exempt from both flags when
 "intended_lowfreq" list, or the item's "trades" list (strings "<check>@<variant>" or "<check>"; intended_lowfreq takes
 both forms too), or when a row of the decision log names the item in its `items` and the check (its id as a whole word
 in `question`, `chosen`, `gave_up` or `note`, or in an optional `checks` list) with a `utc` earlier than the ledger's
-apply.started (review.md §1 step 4; with no stamp no decision row counts as declared before). A not_made_needs_user row
+apply.started (review.md §1 step 4; with no stamp no decision row counts as declared before; a user edit's ledger, kind
+user_edit, has no apply stamp and no warning about it). A not_made_needs_user row
 decides nothing and never exempts. Exempt rows keep the flag on the row and are reported as exempt with the reason.
 Writes fixcheck.json and fixcheck.md in <out>/fixcheck/ (a folder of its own: a panel lens keyed fixcheck writes
 round<N>/fixcheck.json); both are deleted first, so a failed run leaves none. fixcheck.json: rc, counts {status: n},
@@ -89,7 +91,7 @@ if sys.version_info < (3, 7):  # before anything an older Python cannot run; the
 HERE = os.path.dirname(os.path.abspath(__file__))
 MATCHECK = os.path.join(HERE, "matcheck.py")
 STATUSES = ("holds", "drifted", "misses", "no_after", "no_target", "no_check", "unmeasured", "no_variant")
-ITEM_STATUSES = ("done", "partial", "not_done")
+ITEM_STATUSES = ("done", "partial", "not_done", "user_edit")
 THREADS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
            "VECLIB_MAXIMUM_THREADS")
 TIMEOUT = 900  # seconds per matcheck run
@@ -247,7 +249,7 @@ def read_ledger(path):
             errs.append("item id %s appears twice" % iid)
         ids.add(iid)
         if it.get("status") not in ITEM_STATUSES:
-            errs.append("item %s: status must be done, partial or not_done, not %s"
+            errs.append("item %s: status must be done, partial, not_done or user_edit, not %s"
                         % (iid, json.dumps(plain(it.get("status")))))
         acc = it.get("acceptance", [])
         if not isinstance(acc, list) or not all(isinstance(a, dict) for a in acc):
@@ -653,7 +655,7 @@ def main(argv=None):
         cards[v] = card
     decs = read_decisions(decpath, warns)
     apply_start = parse_utc((led.get("apply") or {}).get("started") if isinstance(led.get("apply"), dict) else None)
-    if decs and apply_start is None:
+    if decs and apply_start is None and led.get("kind") != "user_edit":
         warns.append("the ledger has no readable apply.started: no decision row counts as declared before the build")
     items, counts = [], {s: 0 for s in STATUSES}
     for it in led["items"]:

@@ -5,7 +5,7 @@ run). It reads files only, never calls Designer and never commits. This docstrin
 
 Usage:
     python morning_report.py --tools T [--out T/REPORT.md] [--rounds N ...] [--stages FILE] [--cap 500]
-    python morning_report.py --tools T --addendum --kind user_edit --text "..." [--rows JSON] [--out T/REPORT.md]
+    python morning_report.py --tools T --addendum --kind user_edit --text "..." [--edit K] [--rows JSON] [--out T/REPORT.md]
 
 T is the material's tools folder. It is only read. The report goes to --out (default T/REPORT.md) and is replaced whole;
 stdout gets the report path, the prose word count and the answer batch. --rounds keeps only those review/round<N>
@@ -76,12 +76,25 @@ Addendum. --addendum appends "## Addendum <utc> (<kind>)" to the existing report
 the --text (what changed, and the decisions row id), then --rows: a JSON list of objects (a table), an object (keys
 decision or decision_id, suite, guards [objects] become a "Decisions row" line, a "Targeted suite" line and a table; other
 keys a one-row table), or a list of scalars. Use it after a user edit: what changed, the targeted suite and guard
-results, the decisions row id. Addenda are not counted against the cap.
+results, the decisions row id. Addenda are not counted against the cap. For --kind user_edit on a material with no
+report yet, the file is created first ("# <material> report", a line saying no morning report was written for this
+material and that the file holds its edit addenda; material = RUN.json `material`, else the tools folder's name without
+a trailing _tools) and the line "created <path>" is printed; any other kind still needs the report.
+--edit K (an integer of 1 or more; only with --addendum --kind user_edit; <tools>/review/edit<K> must be a folder) builds
+the rows from that edit's folder instead of a hand-written --rows: the Decisions row line (the last decisions.json row of
+kind user_edit whose items hold U<K>, else "none logged"), the Targeted suite line (edit<K>/suite.json, else
+suite_partial.json: green with its rc, or red with each red job and its first reason) and a table of rows row, before,
+after, target, flag: first a fixcheck summary (regressed, guard broken, outside target, of n rows, exit rc, from
+edit<K>/fixcheck/fixcheck.json), then each fixcheck row that is regressed, guard_broken or misses its target, with the
+exempt reason when it has one, then one row per entry of edit<K>/eye.json (new defect or no new defect, with what the eye
+agent saw). A file that is absent or unreadable becomes a "missing:" or "unreadable:" cell, never an error. --rows given
+as well is rendered after the --edit block.
 
 Standard library only, Python 3.9 or newer; os.path and UTF-8 throughout, so it runs on Windows. pathclock.py and
 decisions.py are imported from this script's folder.
 Exit code: 0 report written within the cap; 1 written but the prose is still over the cap after shortening; 2 usage
-error (no tools folder, no report to append to, bad --rows).
+error (no tools folder, no report to append to except for a user_edit addendum, bad --rows, bad --edit:
+--edit without --addendum or with another --kind, K below 1, a missing edit folder).
 """
 import argparse
 import datetime
@@ -1301,8 +1314,116 @@ def render_rows(rows):
     return out
 
 
+def fmt4(v):
+    return "%.4g" % v if num(v) else ("-" if v is None else str(v))
+
+
+def fmt_range(t):
+    if isinstance(t, (list, tuple)) and len(t) == 2:
+        return "[%s, %s]" % tuple("-" if x is None else fmt4(x) for x in t)
+    return "-"
+
+
+def edit_decision(ctx, k):
+    try:
+        import decisions
+        rows = decisions.load_rows(ctx.tools)
+    except decisions.Fail:  # a corrupt log is not the same as no row
+        return "unreadable: review/decisions.json"
+    except Exception:
+        rows = []
+    found = [r for r in rows if isinstance(r, dict) and r.get("kind") == "user_edit"
+             and "U%d" % k in list_of(r.get("items"))]
+    return str(found[-1].get("id")) if found else "none logged"
+
+
+def edit_suite(ctx, k, ed):
+    for name in ("suite.json", "suite_partial.json"):
+        path = os.path.join(ed, name)
+        if not os.path.isfile(path):
+            continue
+        rel = ctx.rel(path)
+        obj, err = read_json(path)
+        if not isinstance(obj, dict):
+            return "unreadable: %s" % rel
+        rc = obj.get("rc")
+        if obj.get("green") is True and type(obj.get("rc")) is int and obj["rc"] == 0:
+            return "green (%s, rc %s)" % (rel, rc)
+        reds = []
+        for r in list_of(obj.get("red")):
+            if isinstance(r, dict):
+                why = list_of(r.get("reasons"))
+                reds.append("%s: %s" % (one_line(r.get("job")), one_line(why[0]) if why else "no reason given"))
+        return "red (%s, rc %s)%s" % (rel, rc, ": " + "; ".join(reds) if reds else "")
+    return "missing: review/edit%d/suite_partial.json" % k
+
+
+def edit_guard_rows(ctx, k, ed):
+    out = []
+    rel = "review/edit%d/fixcheck/fixcheck.json" % k
+    path = os.path.join(ed, "fixcheck", "fixcheck.json")
+
+    def row(name, before, after, target, flag):
+        return {"row": name, "before": before, "after": after, "target": target, "flag": flag}
+
+    obj, err = read_json(path)
+    if not isinstance(obj, dict):
+        out.append(row("fixcheck", "-", "-", "-", ("missing: " if err == "absent" else "unreadable: ") + rel))
+    else:
+        rows = [r for it in list_of(obj.get("items")) if isinstance(it, dict)
+                for r in list_of(it.get("rows")) if isinstance(r, dict)]
+        rcn = obj.get("regression_counts") if isinstance(obj.get("regression_counts"), dict) else {}
+        misses = sum(1 for r in rows if r.get("status") == "misses")
+        out.append(row("fixcheck", "-", "-", "-", "%s regressed, %s guard broken, %d outside target, of %d rows (exit %s)"
+                       % (rcn.get("regressed", "?"), rcn.get("guard_broken", "?"), misses, len(rows), obj.get("rc"))))
+        for r in rows:
+            words = [w for w, on in (("regressed", r.get("regressed")), ("guard broken", r.get("guard_broken")),
+                                     ("outside target", r.get("status") == "misses")) if on]
+            if not words:
+                continue
+            flag = ", ".join(words)
+            if r.get("exempt"):
+                flag += " (exempt: %s)" % one_line(r.get("exempt"))
+            after = r.get("value") if num(r.get("value")) else r.get("after")
+            tgt = r.get("target") if r.get("target") is not None else r.get("bound")
+            out.append(row("%s@%s" % (r.get("check"), r.get("variant")), fmt4(r.get("before")), fmt4(after),
+                           fmt_range(tgt), flag))
+    eye, err = read_json(os.path.join(ed, "eye.json"))
+    if err:
+        out.append(row("eye", "-", "-", "-", ("missing: review/edit%d/eye.json (not back)" % k) if err == "absent"
+                       else "unreadable: review/edit%d/eye.json" % k))
+        return out
+    ebase = "review/edit%d/eye.json" % k
+    entries = eye
+    if isinstance(eye, dict):
+        entries = next((eye[x] for x in ("variants", "presets", "items", "rows", "entries")
+                        if isinstance(eye.get(x), list)), None)
+    if not isinstance(entries, list):
+        out.append(row("eye", "-", "-", "-", "unreadable: %s (unrecognised shape)" % ebase))
+        return out
+    if not entries:
+        out.append(row("eye", "-", "-", "-", "no entries in %s" % ebase))
+        return out
+    if not any(isinstance(e, dict) for e in entries):
+        out.append(row("eye", "-", "-", "-", "unreadable: %s (unrecognised shape)" % ebase))
+        return out
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        name = next((str(e[x]) for x in ("variant", "preset", "item", "name") if e.get(x)), "-")
+        out.append(row("eye %s" % name, "-", "-", "-", "%s: %s" % (
+            "new defect" if e.get("new_defect") is True else "no new defect", one_line(e["sees"]) if e.get("sees") is not None else "")))
+    return out
+
+
+def edit_rows(ctx, k):
+    ed = ctx.p("review", "edit%d" % k)
+    return {"decision": edit_decision(ctx, k), "suite": edit_suite(ctx, k, ed), "guards": edit_guard_rows(ctx, k, ed)}
+
+
 def do_addendum(args, ctx):
-    if not os.path.isfile(ctx.out):
+    exists = os.path.isfile(ctx.out)
+    if not exists and args.kind != "user_edit":
         sys.stderr.write("morning_report.py: %s does not exist; write the report first\n" % ctx.out)
         return 2
     if not args.text or not args.text.strip():
@@ -1312,9 +1433,21 @@ def do_addendum(args, ctx):
         sys.stderr.write("morning_report.py: --kind %r: use letters, digits and '_'\n" % args.kind)
         return 2
     rows_lines = []
+    if args.edit is not None:
+        if args.kind != "user_edit":
+            sys.stderr.write("morning_report.py: --edit needs --addendum --kind user_edit\n")
+            return 2
+        if args.edit < 1:
+            sys.stderr.write("morning_report.py: --edit must be an integer of 1 or more\n")
+            return 2
+        if not os.path.isdir(ctx.p("review", "edit%d" % args.edit)):
+            sys.stderr.write("morning_report.py: %s is not a folder\n" % ctx.p("review", "edit%d" % args.edit))
+            return 2
+        rows_lines = render_rows(edit_rows(ctx, args.edit))
     if args.rows:
         try:
-            rows_lines = render_rows(json.loads(args.rows))
+            extra = render_rows(json.loads(args.rows))
+            rows_lines = rows_lines + ([""] if rows_lines else []) + extra
         except ValueError as e:
             sys.stderr.write("morning_report.py: --rows is not valid JSON: %s\n" % e)
             return 2
@@ -1322,12 +1455,28 @@ def do_addendum(args, ctx):
     if rows_lines:
         chunk += [""] + rows_lines
     data = "\n".join(chunk) + "\n"
+    if not exists:  # a user edit of a material that never had a morning report: the file starts here
+        os.makedirs(os.path.dirname(os.path.abspath(ctx.out)), exist_ok=True)
+        with open(ctx.out, "wb") as f:
+            f.write(("# %s report\n\nNo morning report was written for this material; this file holds its edit "
+                     "addenda.\n" % material_name(ctx)).encode("utf-8"))
+        print("created %s" % ctx.out)
     with open(ctx.out, "ab") as f:
         f.write(("\n" if _lacks_final_newline(ctx.out) else "").encode("utf-8"))
         f.write(data.encode("utf-8"))
     print(ctx.out)
     print("addendum appended (%d lines); the rest of the report is unchanged" % len(chunk))
     return 0
+
+
+def material_name(ctx):
+    """RUN.json `material` when it is a non-empty string, else the tools folder's name without a trailing _tools."""
+    run, _ = read_json(ctx.p("RUN.json"))
+    name = run.get("material") if isinstance(run, dict) else None
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    base = os.path.basename(ctx.tools.rstrip("/\\"))
+    return base[:-len("_tools")] if base.endswith("_tools") and len(base) > len("_tools") else base
 
 
 def _lacks_final_newline(path):
@@ -1348,9 +1497,12 @@ def main(argv=None):
     ap.add_argument("--rounds", nargs="+", type=int, metavar="N", help="read only these review/round<N> folders")
     ap.add_argument("--stages", help="stamps file (default <tools>/stages.jsonl)")
     ap.add_argument("--cap", type=int, default=CAP, help="prose word cap (default %d)" % CAP)
-    ap.add_argument("--addendum", action="store_true", help="append a dated Addendum section to the existing report")
+    ap.add_argument("--addendum", action="store_true", help="append a dated Addendum section to the report (for "
+                    "--kind user_edit, create the report first when there is none)")
     ap.add_argument("--kind", default="user_edit", help="addendum kind (default user_edit)")
     ap.add_argument("--text", help="addendum text: what changed, and the decisions row id")
+    ap.add_argument("--edit", type=int, metavar="K", help="with --addendum --kind user_edit: build the rows from "
+                    "<tools>/review/edit<K> (decisions row, targeted suite, fixcheck and eye rows)")
     ap.add_argument("--rows", help="addendum rows as JSON (a list of objects, an object, or a list)")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
@@ -1363,6 +1515,9 @@ def main(argv=None):
         sys.stderr.write("morning_report.py: --cap must be 1 or more\n")
         return 2
     ctx = Ctx(args.tools, args.out, args.rounds, args.stages, args.cap)
+    if args.edit is not None and not args.addendum:
+        sys.stderr.write("morning_report.py: --edit needs --addendum --kind user_edit\n")
+        return 2
     if args.addendum:
         return do_addendum(args, ctx)
     doc, A = build(ctx)
