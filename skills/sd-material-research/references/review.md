@@ -304,8 +304,7 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
   `timing` table and `panel_min` come from those stamps and stay in `review_result.json`; findings.md TIMING lists
   them with `round<N>/ledger.json`'s `apply` (§1), the apply this round reviewed. This round's split stamps show in
   the next round's TIMING.
-- **Agent tool** (fallback, only when Workflow is unavailable; launch it only when this session's records show xhigh,
-  `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
+- **Agent tool** (fallback, only when Workflow is unavailable, and never below xhigh, `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
   verifier per non-empty lens, given all its findings, highs first; one re-verify agent for every high or medium
   without a verdict or in a `not_checked` list; then the lead.
 - **While the panel runs,** work from its files, in this order. Run no suite or numpy jobs beside it (its agents
@@ -320,9 +319,8 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
      applied (ids filled in when the plan lands, `apply.split` as the stamps come), and the hand-off notes.
   4. When `lead.json` lands: reconcile, one draft per plan item, rewritten to the lead's `change` and the verifier's
      `better_fix` and `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then hold the plan gate
-     from `lead.json` (scorecard, plan, every design call; any `/effort` switch goes in the same message). While the
-     user answers, write findings.md (§5) from `review_result.json`, and the next ledger's rows. Apply only once
-     findings.md is newer than `lead.json`.
+     from `lead.json` (scorecard, plan, every design call). While the user answers, write findings.md (§5) from
+     `review_result.json`, and the next ledger's rows. Apply only once findings.md is newer than `lead.json`.
 
   Drafts stay drafts until the plan gate: none runs in Designer and none is copied into `build/` before it.
 - **Split at lens launch** (`SKILL.md` stage 6), on the Workflow route only and unless the user said not to stop. On
@@ -335,13 +333,12 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
     hand-off (`assets/context_prompt_template.md`) at the top of `<tools>/CONTEXT_PROMPT.md`, add one pointer line
     with no status to the material's project memory note (`panel hand-off for round <N> at <tools>/CONTEXT_PROMPT.md;
     skip it if it says Spent`), give the user the hand-off's kick-off line in a code block and ask them to open the
-    new session now in a new window or tab, run `/effort xhigh` there first, and leave this one open (no `/exit`,
-    `/clear` or archive) until it says the panel finished. After that: no Designer call, no file write, no new work.
+    new session now in a new window or tab, and leave this one open (no `/exit`, `/clear` or archive) until it says
+    the panel finished. After that: no Designer call, no file write, no new work.
     Stay open until the panel's completion notice: an idle session keeps its panel running, but closing it mid-run was
     never tested and may stop the panel. On the notice, only say the panel finished.
   - **New session.** Stamp first (new session start), and take the hand-off's write time with
-    `date -u -r "<tools>/CONTEXT_PROMPT.md" +%Y-%m-%dT%H:%M:%SZ`. Confirm xhigh on this session's records (`SKILL.md`
-    Effort; here the JSONL under `~/.claude/projects/` that holds the kick-off line; if not, ask and wait). Do items
+    `date -u -r "<tools>/CONTEXT_PROMPT.md" +%Y-%m-%dT%H:%M:%SZ`. Stamp this session's effort. Do items
     1-3 above for the files already there, then watch the round folder with a Monitor (`timeout_ms` 1800000, its cap;
     re-arm it on each expiry and skip lines for files already handled). It prints one line per panel file as it lands.
     After `lead.json` it waits up to 2 min for `$WF` and ends on `run ended` or `no runner result 2 min after
@@ -401,7 +398,6 @@ trade adds its row before it is used.
 | Trade | Still caught | Could be missed | Signal |
 |---|---|---|---|
 | One build-measure batch per graph (`SKILL.md` stage 7) | fixes that didn't land: each ledger row keeps its measured before/after values, `fixcheck.py` re-measures them (§1 step 4), and a full suite follows the last change | which fix in a batch caused a regression; brick's ledger found 2 of 10 and 1 of 8 fixes fully landed (§1) | fixcheck flags (`done_not_landed`, `claim_contradicted`); more `partial`, `not_landed`, `regressed` or `not_checked` fix_status rows next round |
-| High effort for scripted stages (`SKILL.md`, Effort) | design turns stay at xhigh (spec, panel); no past catch is tied to xhigh (round-3 speed review) | reasoning depth in check-fix and fix turns | a lower share of hard checks passing at the first 1K export, more fix cycles, wrong builds regressing, or the developer's eval re-run below 30/30 |
 | Time-boxed lenses and verifiers (§6) | every high or medium gets a verdict at xhigh by the verifier's own method: what a box left goes to the re-verify agent (§4); verifiers take lows after them | a finding a boxed lens never reached; a ledger item a boxed lens never reached (fix_status `not_checked`); an overstated low the verifier's box cut (it reaches the lead `unverified`, never re-verified); verifiers changed 11 of 35 severities (`win`) and 10 of 25 on brick (`mac-tx`) | a high or medium reaching the lead `unverified`; lows reaching the lead `unverified` (`stats.unverified` above `stats.unverified_high_medium`); `stats.severity_changed` per verified high or medium below those rates (widen `box_verify`); a lens whose `box` is not `not_hit` or whose `not_reached` is non-empty (`stats.lenses_boxed`); fix_status `not_checked` rows |
 | Delta brief and section-scoped REFERENCE reads (§2) | the requirements, cheat sheet, rubric and verifier checklist are in every delta; verifiers, the re-verify agent and the lead read all of REFERENCE.md | a cross-section fact a lens skipped; wrong premises on Histogram Scan direction and Blend divide once caused wrong fixes (§2) | the lead's `premises_corrected` (`stats.premises_corrected`) rising round over round, or a verdict's `premise_errors` citing a REFERENCE section its lens didn't read |
 | Fix drafts from verdict files while the panel runs (§6) | drafts start from confirmed verdicts, take the verifier's fix, are rewritten to the lead's plan, and never run in Designer before the plan gate | an overstated number or wrong premise in a draft; about 18 brick fixes were rewritten by verifiers (§4) | a draft that reaches Designer before the plan gate (`make_brief.py` warns on `build/` files edited between the last panel's first lens start and the apply's start; it only sees edits not overwritten later in the apply), or one that differs from the verifier's fix |

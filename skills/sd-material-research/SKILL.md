@@ -24,24 +24,16 @@ into a method that works for any material.
 | 1 | Interview | `references/interview.md`, the sheet's §8 | answers | user answers | xhigh |
 | 2 | Research | `references/research.md`, `references/materials/<m>.md` by section | `research/notes.md`, or a new sheet | — | xhigh |
 | 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | user approves | xhigh |
-| 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass | high (trial) |
-| 5 | Measure | `references/checks.md` | scorecards, previews | suite green | high (trial) |
+| 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass | xhigh |
+| 5 | Measure | `references/checks.md` | scorecards, previews | suite green | xhigh |
 | 6 | Review | `references/review.md` | `review/round<N>/findings.md` | user approves the plan | xhigh |
-| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied | high (trial) |
+| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied | xhigh |
 
-Effort: xhigh for judgement (interview, research, spec, panel), high for scripting a settled spec. High is on trial.
-On the next material, build the first graph at high and the second at xhigh, run every other stage at xhigh, and note
-per graph in `CONTEXT_PROMPT.md` its share of hard checks passing at the first 1K export, its fix cycles and the wrong
-builds its hard checks catch. With one core graph (wrappers only instance it), keep every stage at xhigh, note in
-`CONTEXT_PROMPT.md` that the trial was skipped, and run it on the next material with two built graphs. Stop rule: back
-to xhigh everywhere if the high graph does worse on any of these or the evals (re-run by the developer,
-`evals/README.md`) drop below 30/30; if both arms are recorded and the high graph does no worse, stages 4, 5 and 7 go
-to high. The user switches with `/effort`: ask at the spec gate (high, for the first graph) and before the second
-graph (back to xhigh), and confirm each switch on this session's next records (the JSONL under `~/.claude/projects/`
-that holds your last AskUserQuestion text, not the newest file). If they said not to stop, skip the trial and stay at
-xhigh. The panel's Workflow pins its agents at xhigh. The Agent-tool fallback inherits the session's effort: launch no
-fallback lens or verifier until this session's records show xhigh; if they don't, ask and wait. A new semantics probe,
-or a fix that failed twice, goes back to xhigh.
+Effort is xhigh for every stage (ML-01 verdict). Read your effort from $CLAUDE_EFFORT (get_session self as fallback),
+stamp it in stages.jsonl, and never ask for /effort. Below xhigh, record an incident and continue. Never run the
+Agent-tool fallback panel below xhigh: hand off to the other leg once, and if that leg is also below xhigh, stop and
+report. The user sets the Code tab's effort picker to xhigh once; the repo's `.claude/settings.local.json` (gitignored)
+holds `effortLevel` and `maxEffortLevel` at xhigh.
 
 Other entry points:
 - **Existing material** (critique, extend or fix it): research, then write a spec from the sheet plus the user's

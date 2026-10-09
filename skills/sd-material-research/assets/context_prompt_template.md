@@ -74,8 +74,8 @@ one, replacing an older panel block. After the plan gate the new session rewrite
 (`references/review.md` §6), so a resumed session skips it. The end-of-material hand-off (above) drops it.
 
 Kick-off line for the new session. The old session gives it to the user in a code block and tells them: open it in a new
-window or tab, run `/effort xhigh` there first, and keep the old session open (no `/exit`, `/clear` or archive) until it
-says the panel finished; closing it may stop the panel.
+window or tab and keep the old session open (no `/exit`, `/clear` or archive) until it says the panel finished;
+closing it may stop the panel.
 ```
 Use sd-material-research to resume <material> round <N> under its running review panel: read "<tools>/CONTEXT_PROMPT.md", the panel hand-off first.
 ```
@@ -92,10 +92,8 @@ the only Designer caller. Follow `references/review.md` §6, new session.
   gate waived by the user>; fixcheck: <rc, items not landed; none in round 1>.
 - Ledger: `review/round<N>/ledger.json` (the last apply; none in round 1). This round's apply goes in
   `review/round<N+1>/ledger.json`, with `apply.split`.
-- Drafts: `review/drafts/round<N>/`. Effort trial: <graph: arm, records so far>.
-- Next: stamp your start; confirm xhigh on the JSONL that holds the kick-off line (`SKILL.md` Effort; if not, ask and
-  wait); draft from the lens and verdict files as they land (a Monitor on `review/round<N>/`); wait for `lead.json`;
-  reconcile the drafts; the plan gate from `lead.json` (every design call in one batch, and in the same message the
-  `/effort` switch the trial line names, if any); while the user answers, save `review_result.json` once the run
-  ends and write findings.md and the next ledger's rows; on the answer, mark this block spent; apply only once
-  findings.md is newer than `lead.json`.
+- Drafts: `review/drafts/round<N>/`.
+- Next: stamp your start and your effort (`SKILL.md` Effort); draft from the lens and verdict files as they land (a
+  Monitor on `review/round<N>/`); wait for `lead.json`; reconcile the drafts; the plan gate from `lead.json` (every design call in one batch); while the user answers, save
+  `review_result.json` once the run ends and write findings.md and the next ledger's rows; on the answer, mark this
+  block spent; apply only once findings.md is newer than `lead.json`.
