@@ -18,16 +18,21 @@ into a method that works for any material.
 
 ## Stages
 
-| # | Stage | Read | Produces | Gate | Effort |
-|---|---|---|---|---|---|
-| 0 | Orient | this file | tools folder, environment | — | xhigh |
-| 1 | Interview | `references/interview.md`, the sheet's §8 | answers | user answers | xhigh |
-| 2 | Research | `references/research.md`, `references/materials/<m>.md` by section | `research/notes.md`, or a new sheet | — | xhigh |
-| 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | user approves | xhigh |
-| 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass | xhigh |
-| 5 | Measure | `references/checks.md` | scorecards, previews | suite green | xhigh |
-| 6 | Review | `references/review.md` | `review/round<N>/findings.md` | user approves the plan | xhigh |
-| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied | xhigh |
+| # | Stage | Read | Produces | Gate | Effort | Target | Expect |
+|---|---|---|---|---|---|---|---|
+| 0 | Orient | this file | tools folder, environment | — | xhigh | 4 | 4 |
+| 1 | Interview | `references/interview.md`, the sheet's §8 | answers | user answers | xhigh | 5 | 4 |
+| 2 | Research | `references/research.md`, `references/materials/<m>.md` by section | `research/notes.md`, or a new sheet | — | xhigh | 22 | 24 |
+| 3 | Spec | `references/method.md`, `assets/spec_template.md`, `references/checks.md` | `spec.md`, `checks/<variant>.json` | user approves | xhigh | 5 | 5 |
+| 4 | Build | `references/sd_craft.md` | graphs, `build/NN_*.py`, `registry.json` | stage checks pass | xhigh | 45 | 55 |
+| 5 | Measure | `references/checks.md` | scorecards, previews | suite green | xhigh | 3 | 2 |
+| 6 | Review | `references/review.md` | `review/round<N>/findings.md` | user approves the plan | xhigh | R1 42, R2 42 | R1 47, R2 50 est |
+| 7 | Iterate, hand off | `assets/context_prompt_template.md` | fixes, `CONTEXT_PROMPT.md`, memory note | user is satisfied | xhigh | R1 85, R2 70 | R1 115 est, R2 130 est |
+
+Target and Expect are minutes of wall time on the run's path. Expect comes from the concrete (M8) stamps; `est` marks a
+value with no M8 stamp behind it. Steps between stages, target / expect: readiness and probes 5 / 8 est (beside stage
+3), each auto gate 2 / 2 est, round boundary 3 / 4, each final gate 6 / 6, report 5 / 5 est, each leg hand-off 6 / 6
+est, docs at the end 55 / 55 (in the background, off the path). `scripts/pathclock.py` holds the same numbers.
 
 Effort is xhigh for every stage (ML-01 verdict). Read your effort from $CLAUDE_EFFORT (get_session self as fallback),
 stamp it in stages.jsonl, and never ask for /effort. Below xhigh, record an incident and continue. Never run the
@@ -49,6 +54,19 @@ Other entry points:
   the work survives the session. A file that must go to a scratchpad goes in a subfolder named after the material and
   variant (`<scratchpad>/<m>_<variant>/`): parallel sessions and agents can share one scratchpad.
 - Run `PY=$(bash <skill>/scripts/setup_env.sh)` (numpy, scipy, Pillow, OpenCV).
+- Stamp the run in `<tools>/stages.jsonl`: append one JSON line per event, `{stage, event, utc, note}`, with `utc`
+  from `date -u +%Y-%m-%dT%H:%M:%SZ`.
+  - Stages 0-5 stamp `start` and `end`. Review rounds stamp `panel_launch`, `lead_json` and `gate` (stage 6), then
+    `apply_end` and `final_gate` (stage 7). Readiness stamps `readiness_start` and `readiness_end`, the report
+    `report_start` and `report_end`, docs at the end `docs_start` and `docs_end`.
+  - A leg that hands off stamps `handoff`; the next leg's first stamp is `up`. A pause for anything else is `pause`
+    and its end `resume`. A problem you continue past is `incident`.
+  - Each session or leg adds `session` (the first 8 characters of $CLAUDE_CODE_SESSION_ID) and `effort` to its first
+    stamp.
+  - Every user touch is a row: `{stage, event: "touch", kind, utc, asked_utc, answered_utc, recommended_taken, note}`,
+    with `kind` one of question, restart, paste, approval, commit or other.
+  - `$PY <skill>/scripts/pathclock.py <tools>/stages.jsonl` reports each step against Target and Expect, the waits,
+    and every delegated run over 10 min.
 
 ### 1. Interview
 Ask before starting; the user wants to be asked. Send round 1 after reading this file alone (sub-type and setting,
@@ -205,6 +223,7 @@ session and keep this one open, then only wait; the new session drafts, holds th
   - `fixcheck.py`: re-measures the fix ledger (stdlib)
   - `calibrate.py`: Histogram Scan Position from quantiles
   - `make_brief.py`: a review round's delta brief and panel args (stdlib)
+  - `pathclock.py`: stages.jsonl against Target and Expect, waits, long delegated runs (stdlib)
   - `setup_env.sh`
 - `assets/`:
   - `spec_template.md`, `context_prompt_template.md`, `reference_template.md` (review REFERENCE.md)
