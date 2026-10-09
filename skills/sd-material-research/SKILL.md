@@ -47,7 +47,7 @@ Other entry points:
   intent, then export (`sk.export_outputs`) and measure and review their graph, then propose fixes. Ask before editing
   their graph, and never save their package unasked.
 - **Continuing a material**: read its `CONTEXT_PROMPT.md`, `spec.md` and the latest scorecards, then pick up at
-  stage 7.
+  stage 7. A leg of an unattended run reads RUN.json and the run block first ("Unattended run", Legs).
 
 ### 0. Orient
 - Call `designer_status` and `list_packages`.
@@ -56,8 +56,8 @@ Other entry points:
   the work survives the session. A file that must go to a scratchpad goes in a subfolder named after the material and
   variant (`<scratchpad>/<m>_<variant>/`): parallel sessions and agents can share one scratchpad.
 - Run `PY=$(bash <skill>/scripts/setup_env.sh)` (numpy, scipy, Pillow, OpenCV).
-- Stamp the run in `<tools>/stages.jsonl`: append one JSON line per event, `{stage, event, utc, note}`, with `utc`
-  from `date -u +%Y-%m-%dT%H:%M:%SZ`.
+- Stamp the run in `<tools>/stages.jsonl`, one JSON line per event, `{stage, event, utc, note}`:
+  `$PY <skill>/scripts/runstate.py stamp --tools <tools> --stage <S> --event <e> [--note ...] [--extra '<json>']`.
   - Stages 0-5 stamp `start` and `end`. Review rounds stamp `panel_launch`, `lead_json` and `gate` (stage 6), then
     `apply_end` and `final_gate` (stage 7). Readiness stamps `readiness_start` and `readiness_end`, the report
     `report_start` and `report_end`, docs at the end `docs_start` and `docs_end`.
@@ -200,9 +200,9 @@ logs each one so it can be reversed the next day, and stops green with an honest
 **The go question.** The spec gate is one AskUserQuestion: "Approve the spec and run unattended to a finished material
 (Recommended)" or "Change something first". Its text holds the spec summary (stage 3), the standing decisions and the
 deadline (default: the next 08:00 local). On the go answer write `<tools>/RUN.json`: `{mode: "unattended", go_utc,
-deadline_local, standing_decisions, continuation, owner, heartbeat, estimate, incidents: []}`. `owner` is the session id
-($CLAUDE_CODE_SESSION_ID) that may call Designer, `heartbeat` the UTC the owner refreshes at every stamp, and
-`continuation` how a later session picks the run up (`none` until one is set).
+deadline_local, standing_decisions, continuation, owner, next_leg, estimate, incidents: []}`. `owner` is the session
+id ($CLAUDE_CODE_SESSION_ID) that may call Designer, `next_leg` the routine that takes over next, and `continuation`
+the route a later leg comes up by (`none` until the probe sets it); the owner's heartbeat is `review/heartbeat` (Legs).
 
 Standing decisions (spec.md §1 lists them too):
 - **SD-1** Design calls take the recommended option.
@@ -241,6 +241,32 @@ its named wrong build; log the correction.
 **Deadline.** Never start a step that cannot end green by the deadline minus 1 h, estimated from the stage table's
 Expect and this run's stamps (`pathclock.py`). Stop green and report instead.
 
+**Legs.** The run continues across sessions (legs) started by the routines in `assets/routines.md`. The leg RUN.json
+names as `owner` is the only Designer caller. While you own the run:
+- Stamp with `$PY <skill>/scripts/runstate.py stamp --tools <tools> --stage <S> --event <e>` (it adds your session and
+  effort to your first stamp and refreshes `review/heartbeat`), keep `runstate.py heartbeat --loop 900` running in a
+  background shell, and change RUN.json only through `runstate.py set` and `incident`. At every stage end, rewrite the
+  run block at the top of `CONTEXT_PROMPT.md` (`assets/context_prompt_template.md`).
+- At every stamp run `context_size.py`. At 400k hand off at the next clean point: a green targeted set, a final gate,
+  `lead.json` with its runner result saved, or a stage end. At 500k hand off at the next point where every job you
+  launched has written complete files. A Workflow you launched may keep running, its files are the interface; stop
+  background agents, shells and Monitors (TaskStop) or let them finish.
+- Hand-off: stamp `handoff`, write the run block, `runstate.py set owner=pending next_leg=<the other leg>`, check
+  list_task_runs and call `run_scheduled_task` on the leg routine with no run in progress. When it shows `running` and
+  the new leg has stamped `up` (wait up to 3 min, then one retry and an incident), set `owner` to its session. Then
+  make no Designer call and write no file.
+- A new leg stamps `up`, waits until `runstate.py owner-check` passes (3 min), checks caffeinate, and goes on from the
+  run block's next step. Every edit the run block prescribes is rebuilt behind the targeted suite plus wrong builds and
+  its guard rows before anything else: a hand-off once carried a defect that zeroed the groove fill with every hard
+  check green.
+- A session woken while it is not the owner (`owner-check` exit 3) only logs a user message to `review/steer.jsonl`
+  and ends its turn.
+- RUN.json `continuation` is the route the sitting-1 probe chose. `routine` is the above. `compaction` (route B): one
+  session with `autoCompactWindow` about 440000 in the repo's `.claude/settings.local.json`, the run block current at
+  every stage end and re-read after a compaction. `fireAt` (route C): the next leg from `create_scheduled_task` with
+  fireAt now + 2 min, only when the probe showed no approval card for it. If routes A and B both fail the probe, say at
+  the go question that the run will likely stop after round 1's apply, with a report. Hand-offs assume this machine.
+
 **Mid-run look.** When stage 5's suite is green, send the tiled and compare sheets (SendUserFile, status proactive)
 with one line: "Look if you like; reply to steer, otherwise I continue." Never wait for a reply. Any session that gets
 a user message during the run, owner or not, appends it verbatim to `<tools>/review/steer.jsonl` (`{utc, session,
@@ -271,8 +297,9 @@ The mid-run look's SendUserFile is neither, and nothing waits on it.
 background, the "ready" notification, and RUN.json `mode: "done"`.
 
 ## Designer rules that save hours
-- **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. After a
-  split (stage 6) only the new session calls Designer, and it never acts on a `findings.md` older than `lead.json`.
+- **One Designer caller at a time.** Subagents never call substance-designer tools; they read exported files. In an
+  unattended run only the leg RUN.json names as `owner` calls Designer (Legs). After a split (attended runs) only the
+  new session calls Designer, and it never acts on a `findings.md` older than `lead.json`.
   Who calls Designer and who owns the CPU:
 
 | Phase | Calls Designer | Owns the CPU |
@@ -311,8 +338,11 @@ background, the "ready" notification, and RUN.json `mode: "done"`.
   - `make_brief.py`: a review round's delta brief and panel args (stdlib)
   - `pathclock.py`: stages.jsonl against Target and Expect, waits, long delegated runs (stdlib)
   - `decisions.py`: the run's decision log and per-fix revert patches (stdlib)
+  - `runstate.py`: RUN.json under a lock, stamps, the heartbeat, the owner check (stdlib)
+  - `context_size.py`: this session's context size against the leg budget (stdlib)
   - `setup_env.sh`
 - `assets/`:
-  - `spec_template.md`, `context_prompt_template.md`, `reference_template.md` (review REFERENCE.md)
+  - `spec_template.md`, `context_prompt_template.md` (with the run block), `reference_template.md` (review
+    REFERENCE.md), `routines.md` (the leg routines)
   - `workflows/research_sheet.js`, `workflows/review_round.js`
 - `evals/`: spec dry-run test cases (`evals.json`) and how to run them (`README.md`).

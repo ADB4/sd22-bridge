@@ -66,7 +66,26 @@ Re-check the hard invariants after every change: <list check ids>.
 
 ---
 
-# Panel hand-off (written at lens launch)
+# Run block (unattended run)
+
+The owner leg keeps this block first in `<tools>/CONTEXT_PROMPT.md` and rewrites it at every stage end and at a
+hand-off (`SKILL.md`, Unattended run, Legs); RUN.json mirrors it. A new leg reads it and RUN.json before anything else.
+At the stop point the report replaces it.
+
+## Run block: <material>, written <UTC> by leg <session id, 8 chars>
+- Mode unattended, deadline <local>; standing decisions SD-1 to SD-6 (`spec.md` §1); continuation <route>; owner
+  <id | pending>, next leg <leg-a | leg-b>; caffeinate pid <pid> until <local>.
+- Last stamp: <stage event UTC> (`stages.jsonl`). Report estimated <HH:MM-HH:MM> local.
+- Next step: <the exact step, with its files>; then <the step after>.
+- Running: <workflow run ids with their output files, or none>.
+- Prescribed edits, each rebuilt first behind the targeted suite plus wrong builds: <item: script, old -> new; guard
+  rows {check, variant, bound}>.
+- Decisions so far: <ids> (`review/decisions.json`); unread steer messages: <n> (`review/steer.jsonl`).
+- Open incidents: <UTC text, or none>.
+
+---
+
+# Panel hand-off (attended split, written at lens launch)
 
 The old session writes this block, from its `##` heading to the end, when the panel's Workflow call returns
 (`references/review.md` §6). It goes first in `<tools>/CONTEXT_PROMPT.md`: above the material hand-off if the file has
