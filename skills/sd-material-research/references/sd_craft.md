@@ -16,14 +16,16 @@ material. Material-specific build notes live in each sheet's section 10. This fi
   - Never retry a mutation that timed out: it would run twice.
   - Wait instead: poll `designer_status` (an idle Designer answers in about 20 ms, `mac-loaded`; a busy one fails it
     after 15 s), or sample the process: `sample <pid> 1 | grep -q SDSBSCompGraph_compute` in a background
-    until-loop. The pid is in `~/.sd_claude_bridge/session.json`.
+    until-loop. The pid is in `~/.sd_claude_bridge/session.json`. A watch is one background Bash until-loop per
+    landing event, relaunched after each landing; a Monitor expires at 30 min whatever its script does.
   - Keep each run_python under ~45 s.
 - **Longer jobs** (several 2048 exports, nowear batches) go through `scripts/sdcall.py job.py`: the same run_python
   with a 15 min socket timeout. Run it in the foreground with the Bash timeout at 600000 ms when the job should take
   under ~8 min, which covers every rebuild and a full 2K export (§6); use a background shell for a job that may pass
   ~8 min (the foreground Bash cap is 10 min; pass `--timeout` above 900 past 15 min) or when other work can run
-  meanwhile. A rebuild runs the changed stage and every later one, plus the 1K exports, as one job: no per-stage
-  jobs and no partial-rebuild tricks.
+  meanwhile; it writes `<job>.done` with its rc (`sdcall.py job.py; echo $? > job.done`), and you never grep piped
+  output for a sentinel. A rebuild runs the changed stage and every later one, plus the 1K exports, as one job: no
+  per-stage jobs and no partial-rebuild tricks.
 - **On macOS a hidden Designer naps** at scheduler priority 4. The bridge holds an App Nap activity for each command,
   so `ps -o pri= -p <pid>` reads 46 while a command runs and 4 again about 0.2 s after the reply. Without it the same
   job ran about 4.5× slower (26 s vs 5.8 s). If a job runs several times slower than §6 and the priority reads 4

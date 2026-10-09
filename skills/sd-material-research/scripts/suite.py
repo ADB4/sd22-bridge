@@ -107,11 +107,11 @@ runs) and lock.json while it runs.
 Progress: one line per finished job, "[k/n] ok|RED <kind> <name> <s> s: <first reason>", then every red entry with
 its reasons and the report paths.
 suite.json: green (true only with rc 0), rc, full (no --configs or --kinds), out, suite (SUITE.json), started and ended
-(local time, as a manifest's exported_at), wall_s, workers, workers_rule, threads, cpus, ram_gb, per_job_gb, load
-[1-min load before, after], times_from (the times.json that ordered the jobs, or null), filter (null, or {configs,
-kinds}), jobs [{name, kind, config, phase, argv, rc, seconds, timeout_s, outputs, log, red [reasons], warnings}], red
-[{job, reasons}] (job "suite" for an interrupt, "R6 coverage" for R6), uncovered {config: [hard check ids]},
-warnings, skipped [{path, why}].
+(UTC with a Z, YYYY-MM-DDTHH:MM:SSZ; suites from before wrote local time with no zone), wall_s, workers, workers_rule,
+threads, cpus, ram_gb, per_job_gb, load [1-min load before, after], times_from (the times.json that ordered the jobs,
+or null), filter (null, or {configs, kinds}), jobs [{name, kind, config, phase, argv, rc, seconds, timeout_s, outputs,
+log, red [reasons], warnings}], red [{job, reasons}] (job "suite" for an interrupt, "R6 coverage" for R6), uncovered
+{config: [hard check ids]}, warnings, skipped [{path, why}].
 Exit code: 0 green; 1 red, an interrupt included; 2 refused (above).
 """
 import argparse
@@ -962,7 +962,7 @@ def gate(job):
 
 
 def stamp(t):
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
 
 def load1():

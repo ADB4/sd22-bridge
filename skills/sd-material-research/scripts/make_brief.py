@@ -5,6 +5,7 @@ last round's files.
 Usage:
     python3 make_brief.py --review-dir <tools>/review --round N [--lenses round<N>/lenses.json] [--checks CFG ...]
                           [--max-lines 250] [--python <venv python>] [--skill-dir <skill>]
+                          [--graph-digest GID=DIGEST ...]
 
 Reads review/REFERENCE.md (sections headed `## R<k> <title>`), review/round<N>/lenses.json, review/round<N>/ledger.json
 (required from round 2), review/round<N-1>/review_result.json, lead.json, panel_args.json, ledger.json and its lens
@@ -15,10 +16,22 @@ assets/workflows/review_round.js. Prints lines per section, lines to read per le
 (ledger ids, the last round's unverified and deferred items, open entries) needs exactly one owner; a lens keyed
 `fixcheck` owns every ledger id no other lens names. A lens may set `box: {min, calls}` (positive integers), its own
 time box, copied into its panel_args row. Documented in references/review.md §1-§3.
+Time zones: a stamp with no zone (a manifest's exported_at or the suite's stamps from before they carried a Z, and
+REFERENCE `Valid for:`) is this machine's local time. A stamp with Z or an offset (+HH:MM, -HHMM) is read as such.
+The ledger's and the lens files' stamps (`date -u`) with no zone stay UTC.
+Reuse of the last final gate (references/review.md §1 step 1), decided here:
+- The export stands as this round's preflight when the apply has ended after `Valid for:` (the old warning to export
+  again) and no <tools>/build/**/*.py is newer than the oldest manifest's exported_at and every manifest's
+  `graph_digest` equals the digest passed for its graph (`--graph-digest GID=DIGEST`, repeatable, GID the manifest's
+  `graph`; read the current digest from sdkit). With no digest given for a graph, or a manifest without the field (an
+  old export), the old rule applies: the warning stays, and it says why the export does not stand.
+- The suite (review/round<N>/suite.json) stands when it started after every checks config, checks/wrong_build_cases.py,
+  gen_checks.py (<tools>/ or <tools>/checks/), SUITE.json and manifest exported_at. Otherwise the output says "rerun the
+  suite only". A file within 1 s of the stamp counts as before it (stamps are whole seconds).
 Exit code: 0 written (warnings allowed); 1 an ownership error, a round 2+ without a ledger, or an invalid ledger;
 2 a usage or REFERENCE error (missing or unreadable file, R1/R5/R9 missing, R5 or R9 still the template's text, a lens
-naming a section REFERENCE lacks, a bad lens key or box). Nothing is written unless it exits 0. Standard library only:
-it runs with any python3, no venv.
+naming a section REFERENCE lacks, a bad lens key or box, a bad --graph-digest). Nothing is written unless it exits 0.
+Standard library only: it runs with any python3, no venv.
 """
 import argparse
 import datetime
@@ -35,7 +48,8 @@ KEY_RE = re.compile(r"[A-Za-z0-9_-]+")  # used with fullmatch: `$` would pass a 
 SID_RE = re.compile(r"R[1-9][0-9]*")
 PREV_KEYS = ("keep_as_is", "deferred", "premises_corrected")
 HEAD_RE = re.compile(r"^## (R[1-9][0-9]*)(?: |$)")
-TIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?")
+TIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(Z|[+-]\d{2}:?\d{2})?|(Z))?")
+STAMP_SLACK = 1.0  # stamps are whole seconds: a file written within this many seconds after one counts as before it
 THREADS = "OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 VECLIB_MAXIMUM_THREADS=2"
 CUT = 100
 
@@ -97,11 +111,22 @@ def rel(path, base):
     return path if r.startswith("..") else r
 
 
-def times_in(s):
-    """Datetimes in a text; a time without seconds stands for its whole minute. Zone suffixes are ignored: every time
-    is read as UTC."""
-    return [datetime.datetime.strptime("%s %s:%s:%s" % (m.group(1), m.group(2), m.group(3), m.group(4) or "59"),
-                                       "%Y-%m-%d %H:%M:%S") for m in TIME_RE.finditer(s or "")]
+def times_in(s, local=False):
+    """Datetimes (naive, UTC) in a text; a time without seconds stands for its whole minute. A time with Z or an offset
+    (which needs seconds) is read as such. A time with no zone is UTC, or this machine's local time with local=True."""
+    out = []
+    for m in TIME_RE.finditer(s or ""):
+        t = datetime.datetime.strptime("%s %s:%s:%s" % (m.group(1), m.group(2), m.group(3), m.group(4) or "59"),
+                                       "%Y-%m-%d %H:%M:%S")
+        zone = m.group(5)
+        if zone and zone != "Z":
+            sign = -1 if zone[0] == "-" else 1
+            digits = zone[1:].replace(":", "")
+            t -= sign * datetime.timedelta(hours=int(digits[:2]), minutes=int(digits[2:]))
+        elif not (zone or m.group(6)) and local:
+            t = datetime.datetime.fromtimestamp(time.mktime(t.timetuple()), datetime.timezone.utc).replace(tzinfo=None)
+        out.append(t)
+    return out
 
 
 def epoch(t):
@@ -399,9 +424,10 @@ def assign_owners(lenses, carried, ledger_ids):
 
 
 def scorecards(cfgs, tools, review_dir, rnd, ref):
-    """One row per checks config, plus the stale and missing warnings (they also go into §4)."""
-    rows, read, warns, newer = [], 0, [], []
-    valid = times_in(ref["valid"])
+    """One row per checks config, the stale and missing warnings (they also go into §4), and one dict per readable
+    manifest {variant, graph, exported (epoch or None), digest, path} for the reuse decision."""
+    rows, read, warns, newer, exports = [], 0, [], [], []
+    valid = times_in(ref["valid"], local=True)
     newest_export = None
     for cp in cfgs:
         try:
@@ -423,14 +449,20 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
         mdir = maps.get("dir") or "."
         mdir = mdir if os.path.isabs(mdir) else os.path.normpath(os.path.join(base, mdir))
         mp = os.path.join(mdir, (maps.get("prefix") or "") + "manifest.json")
-        exported = None
+        exported, man = None, None
         if os.path.isfile(mp):
             try:
-                exported = load_json(mp).get("exported_at")
+                man = load_json(mp)
+                exported = man.get("exported_at")
             except (OSError, ValueError, AttributeError):
+                man = None
                 warns.append("%s: unreadable manifest" % rel(mp, tools))
-        if exported and times_in(exported):
-            t = times_in(exported)[0]
+        stamps = times_in(exported, local=True) if exported else []
+        if isinstance(man, dict):
+            exports.append({"variant": variant, "graph": man.get("graph"), "path": rel(mp, tools),
+                            "exported": epoch(stamps[0]) if stamps else None, "digest": man.get("graph_digest")})
+        if stamps:
+            t = stamps[0]
             newest_export = max(newest_export or t, t)
             if valid and t > max(valid):
                 newer.append("%s %s" % (variant, exported))
@@ -463,7 +495,82 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
                      % (len(newer), "s are" if len(newer) > 1 else " is", cut(", ".join(newer), 120)))
     if newest_export and not valid:
         warns.append("REFERENCE `Valid for:` names no export time: write the exported_at of each manifest there")
-    return rows, read, warns
+    return rows, read, warns, exports
+
+
+# ----------------------------------------------------------------------------- reuse of the last final gate
+
+
+def newest_build_file(tools):
+    """(mtime, path relative to tools) of the newest .py under <tools>/build/, or None."""
+    best = None
+    for root, dirs, files in os.walk(os.path.join(tools, "build")):
+        dirs[:] = [d for d in dirs if d != "__pycache__" and not d.startswith(".")]
+        for f in files:
+            if f.endswith(".py") and not f.startswith("."):
+                p = os.path.join(root, f)
+                best = max(best or (0, ""), (os.path.getmtime(p), rel(p, tools)))
+    return best
+
+
+def export_decision(exports, digests, build):
+    """(stands, reason). The last final gate's export stands as the next round's preflight when no build script is newer
+    than the oldest manifest's exported_at and every manifest's graph_digest equals the current one. `exports` are
+    scorecards()' manifest dicts, `digests` {graph id: current digest}, `build` newest_build_file()'s result."""
+    if not exports:
+        return False, "no manifest was read"
+    for e in exports:
+        if e["exported"] is None:
+            return False, "the manifest of %s has no exported_at" % e["variant"]
+    if not digests:
+        return False, "no --graph-digest given, so the old rule (an export after the apply) applies"
+    for e in exports:
+        if e["digest"] in (None, ""):
+            return False, "the manifest of %s has no graph_digest (an export from before the field), so the old rule " \
+                          "applies" % e["variant"]
+        if e["graph"] not in digests:
+            return False, "no --graph-digest given for graph %s (variant %s), so the old rule applies" \
+                          % (e["graph"], e["variant"])
+        if str(e["digest"]) != str(digests[e["graph"]]):
+            return False, "graph %s changed since the export of %s (digest %s in the manifest, %s now)" \
+                          % (e["graph"], e["variant"], e["digest"], digests[e["graph"]])
+    oldest = min(e["exported"] for e in exports)
+    if build and build[0] > oldest + STAMP_SLACK:
+        return False, "%s was edited after the oldest export (%s)" % (
+            build[1], datetime.datetime.fromtimestamp(oldest, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return True, ""
+
+
+def suite_decision(started, inputs):
+    """(stands, reason). `started` is the suite's start (epoch or None), `inputs` [(label, mtime or epoch)]: the suite
+    stands only when it started after every one of them."""
+    if started is None:
+        return False, "suite.json has no readable started stamp"
+    late = [label for label, t in inputs if t > started + STAMP_SLACK]
+    if late:
+        return False, "%s changed after the suite started" % cut(", ".join(late), 200)
+    return True, ""
+
+
+def suite_inputs(tools, cfgs, exports):
+    """[(label, time)] the suite depends on: the checks configs, wrong_build_cases.py, gen_checks.py, SUITE.json and
+    each manifest's exported_at."""
+    paths = set(cfgs) | set(glob.glob(os.path.join(tools, "checks", "*.json")))
+    paths |= {os.path.join(tools, "checks", "wrong_build_cases.py"), os.path.join(tools, "gen_checks.py"),
+              os.path.join(tools, "checks", "gen_checks.py"), os.path.join(tools, "SUITE.json")}
+    out = [(rel(p, tools), os.path.getmtime(p)) for p in sorted(paths) if os.path.isfile(p)]
+    return out + [("the export of %s" % e["variant"], e["exported"]) for e in exports if e["exported"] is not None]
+
+
+def parse_digests(items):
+    """{graph id: digest} from GID=DIGEST arguments; a bad one is a usage error (exit 2)."""
+    out = {}
+    for it in items or []:
+        gid, eq, dig = it.partition("=")
+        if not eq or not gid.strip() or not dig.strip():
+            raise Fail(2, ["--graph-digest %r: write GID=DIGEST" % it])
+        out[gid.strip()] = dig.strip()
+    return out
 
 
 # ----------------------------------------------------------------------------- the brief
@@ -630,9 +737,13 @@ def main(argv=None):
     ap.add_argument("--max-lines", type=int, default=250, help="warn above this many brief lines (default 250)")
     ap.add_argument("--python", help="the venv python agents use (default: $(bash <skill>/scripts/setup_env.sh))")
     ap.add_argument("--skill-dir", help="the skill folder (default: this script's)")
+    ap.add_argument("--graph-digest", action="append", metavar="GID=DIGEST",
+                    help="the graph's current digest, read from sdkit (repeatable); lets the last final gate's export "
+                         "stand as the preflight")
     a = ap.parse_args(argv)
-    warns = []
+    warns, notes = [], []
     try:
+        digests = parse_digests(a.graph_digest)
         if a.round < 1:
             raise Fail(2, ["--round must be 1 or more"])
         a.review_dir = os.path.abspath(a.review_dir)
@@ -657,11 +768,7 @@ def main(argv=None):
         if end and os.path.getmtime(ref["path"]) < epoch(end[0]):
             warns.append("REFERENCE.md was last written before the apply ended (%s): bring the sections the apply "
                          "changed up to date, then set Valid for (review.md §1 step 5)" % ledger["apply"]["ended"])
-        valid = times_in(ref["valid"])
-        if end and valid and max(valid) < end[0]:
-            warns.append("REFERENCE `Valid for:` names no export after the apply ended (%s; latest %s): export every "
-                         "variant (review.md §1 step 1), then set Valid for to the new exported_at (step 5)"
-                         % (ledger["apply"]["ended"], max(valid).strftime("%Y-%m-%dT%H:%M:%S")))
+        valid = times_in(ref["valid"], local=True)
         early = edited_before_gate(tools, a.review_dir, a.round, ledger)
         if early and early[2]:
             warns.append("%d build/ file%s edited before the plan gate (after round %d's first lens started %s, before "
@@ -687,8 +794,32 @@ def main(argv=None):
         for c in cfgs:
             if not os.path.isfile(c):
                 raise Fail(2, ["no checks config %s" % c])
-        sc_rows, n_cfg, sc_warns = scorecards(cfgs, tools, a.review_dir, a.round, ref)
+        sc_rows, n_cfg, sc_warns, exports = scorecards(cfgs, tools, a.review_dir, a.round, ref)
         warns += sc_warns
+        if end and valid and max(valid) < end[0]:
+            stands, why = export_decision(exports, digests, newest_build_file(tools))
+            if stands:
+                notes.append("the last final gate's export stands as this round's preflight (no build script newer "
+                             "than the oldest export, %d graph digest%s match): only set Valid for to its exported_at "
+                             "(review.md §1 step 5)" % (len(exports), "s" if len(exports) > 1 else ""))
+            else:
+                warns.append("REFERENCE `Valid for:` names no export after the apply ended (%s; latest %s) and the "
+                             "last final gate's export does not stand (%s): export every variant (review.md §1 step "
+                             "1), then set Valid for to the new exported_at (step 5)"
+                             % (ledger["apply"]["ended"], max(valid).strftime("%Y-%m-%dT%H:%M:%SZ"), why))
+        sp = os.path.join(a.round_dir, "suite.json")
+        if os.path.isfile(sp):
+            try:
+                st = times_in(str(load_json(sp).get("started") or ""), local=True)
+            except (OSError, ValueError, AttributeError):
+                st = []
+            stands, why = suite_decision(epoch(st[0]) if st else None, suite_inputs(tools, cfgs, exports))
+            if stands:
+                notes.append("round%d/suite.json started after every checks file and export: the suite stands "
+                             "(review.md §1 step 1)" % a.round)
+            else:
+                warns.append("round%d/suite.json does not stand (%s): rerun the suite only (review.md §1 step 2)"
+                             % (a.round, why))
         if not n_cfg:
             warns.append("no checks configs found (%s)" % (", ".join(cfgs) or os.path.join(tools, "checks", "*.json")))
         for l in lenses:
@@ -732,6 +863,8 @@ def main(argv=None):
     print("  carried items: %d (%s)" % (len(carried), ", ".join("%s %s" % (cid, owner[cid]) for cid in carried)
                                         or "none"))
     print("  %.2f s" % (time.time() - t0))
+    for n in notes:
+        print("  note: %s" % n)
     for w in warns:
         print("  warning: %s" % w)
     return 0

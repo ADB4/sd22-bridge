@@ -162,7 +162,8 @@ only for what §2 lacks):
 
 ### 5. Measure
 - Export every variant plus its `nowear` at 2048 (`sk.export_outputs` / `sk.nowear`) in one foreground `sdcall.py`
-  job. 28 renders take under 2 min.
+  job. 28 renders take under 2 min. An export run in the background writes `<job>.done` with its rc
+  (`sdcall.py job.py; echo $? > job.done`); never grep piped output for a sentinel.
 - Then run the suite from one background shell: `$PY <skill>/scripts/suite.py SUITE.json --out review/round<N>`. It
   writes the scorecards, the wrong builds and the previews: lit views with height shadows, a hillshade, tiling sheets,
   crops at typical and worst sites, and compare sheets. Write the round's review files meanwhile
@@ -187,6 +188,8 @@ Follow `references/review.md`:
 4. A lead writes the plan and the scorecard.
 
 Run the panel as a Workflow (`assets/workflows/review_round.js`); use the Agent tool only when Workflow is unavailable.
+Run `realpath` on the skill folder in Bash first and pass the literal result in `scriptPath`: the symlink path is
+refused. A copy of the script in the tools folder is the fallback.
 Reviewers never call Designer. While the panel runs, write fix drafts to `review/drafts/round<N>/` from the lens and
 verdict files as they land, never in chat; drafts stay drafts until the plan gate. No split at lens launch: the
 session that launched the panel drafts, settles the plan at the auto gate and applies ("Unattended run"). The split in
@@ -366,8 +369,9 @@ The last leg's final message is the verdict and the answer batch as the script p
 | 6 panel, until the plan gate | nobody | the panel's agents; no suite or numpy jobs beside them |
 
 - **A timeout (~60 s) usually means Designer is still computing.** Don't retry. Wait (poll `designer_status`, or
-  sample the process), then check. Long jobs go through `sdcall.py`. A Mac job several times slower than
-  `sd_craft.md` §6: check App Nap (§1 there).
+  sample the process), then check. Watches use one background Bash until-loop per landing event, relaunched after each
+  landing; a Monitor expires at 30 min whatever its script does. Long jobs go through `sdcall.py`. A Mac job several
+  times slower than `sd_craft.md` §6: check App Nap (§1 there).
 - **Watch for FX-map noises at high scale.** They stall the GL engine for minutes (Gaussian above ~200, BnW Spots 3
   near 96, Cells 4 near 110). For fine detail, use Fractal Sum Base levels (`sk.fractal`, `sk.level_for`).
 - **Histogram Scan centre = 1 − Position. Blend divide = destination ÷ source.** Both have caused wrong fixes; the
@@ -413,6 +417,7 @@ The last leg's final message is the verdict and the answer batch as the script p
   - `guards.py`: the standard guard checks and an item's guard rows (stdlib)
   - `calibrate.py`: Histogram Scan Position from quantiles
   - `make_brief.py`: a review round's delta brief and panel args (stdlib)
+  - `findings.py`: a review round's findings.md from the lens, verdict and lead files, in seconds (stdlib)
   - `pathclock.py`: stages.jsonl against Target and Expect, waits, long delegated runs (stdlib)
   - `decisions.py`: the run's decision log and per-fix revert patches (stdlib)
   - `runstate.py`: RUN.json under a lock, stamps, the heartbeat, the owner check (stdlib)

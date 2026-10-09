@@ -113,6 +113,7 @@ the only Designer caller. Follow `references/review.md` §6, new session.
   `review/round<N+1>/ledger.json`, with `apply.split`.
 - Drafts: `review/drafts/round<N>/`.
 - Next: stamp your start and your effort (`SKILL.md` Effort); draft from the lens and verdict files as they land (a
-  Monitor on `review/round<N>/`); wait for `lead.json`; reconcile the drafts; the plan gate from `lead.json` (every design call in one batch); while the user answers, save
-  `review_result.json` once the run ends and write findings.md and the next ledger's rows; on the answer, mark this
-  block spent; apply only once findings.md is newer than `lead.json`.
+  background Bash watch on `review/round<N>/`, review.md §6); wait for `lead.json`; run `findings.py` at once;
+  reconcile the drafts; the plan gate from `lead.json` (every design call in one batch); save `review_result.json` once
+  the run ends and write the next ledger's rows; on the answer, mark this block spent; apply only once findings.md is
+  newer than `lead.json`.

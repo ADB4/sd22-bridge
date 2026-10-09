@@ -10,13 +10,19 @@
 - Nodes get short names ("tg", "ff_rg3", "dmg_rake"), mapped to node uids per graph.
 - The map lives on the sd module (it survives importlib.reload). save_registry() writes it to <tools>/registry.json.
   Uids are stored in the .sbs, so the map stays valid across sessions.
+- sk.graph_snapshot(key, path) records a graph (nodes, parameters, connections, presets, input defaults) and a digest
+  of its build; sk.graph_diff(path) lists what changed since a snapshot. export_outputs writes the digest into the
+  manifest as graph_digest, and its exported_at is UTC with a Z.
 - Designer is single-threaded: one run_python at a time. Keep each call under ~45 s. The MCP client gives up at ~60 s
   while Designer keeps working, so never retry a call that timed out. For long jobs use scripts/sdcall.py from a shell.
 """
 import contextlib
+import hashlib
 import json
 import os
+import re
 import time
+import xml.etree.ElementTree as ET
 import zlib
 import importlib
 
@@ -948,9 +954,17 @@ def export_outputs(key=None, out_dir=None, prefix=None, size=None, only=None, no
         if C._try(n.getReferencedResource) is not None and not _is_library(n):
             inst[n.getIdentifier()] = {"of": C._gid(n.getReferencedResource()), "params": get_params(n)}
     manifest = {"graph": gid, "package": C._try(g.getPackage().getFilePath), "prefix": prefix, "out_dir": out_dir,
-                "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "compute_s": round(tc, 2),
+                "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "compute_s": round(tc, 2),
                 "total_s": round(time.time() - t0, 2), "outputs": rows, "instances": inst,
                 "graph_params": C._js(C._try(lambda: C._graph_params(g))), "note": note}
+    # The graph as exported (temporary overrides included), without the input values presets drive: an unchanged build
+    # keeps its digest across exports. A failed read must not cost the maps, so it is recorded, not raised.
+    try:
+        snap = graph_snapshot(key)
+        manifest["graph_digest"], manifest["preset_digests"] = snap["digest"], snap["preset_digests"]
+    except C.ERRORS as e:
+        manifest["graph_digest"], manifest["preset_digests"] = None, {}
+        manifest["digest_error"] = "%s: %s" % (type(e).__name__, e)
     # In the file too, so matcheck's scorecard repeats them.
     eight = [r["output"] for r in rows if r["output"] in ("height", "normal")
              and "16" not in r["format"] and "32" not in r["format"]]
@@ -970,6 +984,170 @@ def _is_library(n):
     if not path:
         return False
     return os.path.normcase(os.path.normpath(os.path.dirname(path))) == os.path.normcase(os.path.normpath(lib_dir()))
+
+
+# ----------------------------------------------------------------------------- graph snapshots and diffs
+
+def _hash(obj):
+    return hashlib.sha1(json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def _node_def(n):
+    """A node's definition id; an instance node (it has a referenced graph) reads "instance:<package>/<graph id>"."""
+    res = C._try(n.getReferencedResource)
+    if res is not None:
+        return "instance:%s/%s" % (_lib_base(n) or "-", C._gid(res))
+    return C._try(lambda: n.getDefinition().getId()) or "?"
+
+
+def _fn_digest(fg):
+    """Short hash of a function graph, independent of its node uids (drive() makes new ones on every call): each node
+    by its definition and constants, each connection by the descriptors at its ends."""
+    nodes = C._items(C._try(fg.getNodes))
+    desc = {n.getIdentifier(): _hash([_node_def(n), _node_inputs(n, driven=False)]) for n in nodes}
+    conns = sorted(_hash([desc.get(c[0]), c[1], desc.get(c[2]), c[3]]) for c in C._connections(nodes))
+    return _hash([sorted(desc.values()), conns])[:12]
+
+
+def _node_inputs(n, driven=True):
+    """{property id: JSON-safe value} of a node's parameters (not its ports). A function-driven parameter reads
+    "fn:<hash of the function graph>". Output and input nodes also give "@identifier" (and an output "@usage")."""
+    out = {}
+    for p in C._items(n.getProperties(SDPropertyCategory.Input)):
+        if C._try(p.isConnectable, False):
+            continue
+        fg = C._try(lambda p=p: n.getPropertyGraph(p)) if driven else None
+        out[p.getId()] = "fn:" + _fn_digest(fg) if fg is not None else C._js(C._try(lambda p=p: C._param_value(n, p)))
+    if driven:
+        short = (C._try(lambda: n.getDefinition().getId()) or "").split("::")[-1]
+        if short == "output" or short.startswith("input"):
+            out["@identifier"] = C._js(C._try(lambda: n.getAnnotationPropertyValueFromId("identifier")))
+        if short == "output":
+            out["@usage"] = _usage(n)
+    return out
+
+
+def _read_presets(package_path, graph_id):
+    """{preset label: {input id: value}} of one graph, read from its .sbs file (Designer 12.4.1's API cannot read or
+    write presets). {} when the package was never saved or the graph has none. Values: a bool, an int or float, or a
+    list for vectors."""
+    if not package_path or not os.path.isfile(package_path):
+        return {}
+    with open(package_path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    for m in re.finditer(r'<graph>\s*<identifier v="([^"]*)"', text):
+        if m.group(1) != graph_id:
+            continue
+        block = text[m.start():text.index("</graph>", m.start())]
+        sp = re.search(r"<sbspresets>.*?</sbspresets>", block, re.S)
+        out = {}
+        for pr in (ET.fromstring(sp.group(0)) if sp else []):
+            label, n = pr.find("label").get("v"), 1
+            while label in out:
+                n += 1
+                label = "%s #%d" % (pr.find("label").get("v"), n)
+            vals = {}
+            for pi in (pr.find("presetinputs") if pr.find("presetinputs") is not None else []):
+                pv = pi.find("paramValue")
+                vals[pi.find("identifier").get("v")] = _preset_value(pv[0]) if pv is not None and len(pv) else None
+            out[label] = vals
+        return out
+    return {}
+
+
+def _preset_value(el):
+    raw = el.get("v") or ""
+    try:
+        if el.tag.endswith("Bool"):
+            return raw.strip().lower() in ("1", "true")
+        nums = [int(float(x)) if "Int" in el.tag else float(x) for x in raw.split()]
+    except ValueError:
+        return raw
+    return nums[0] if len(nums) == 1 else nums
+
+
+def graph_snapshot(key=None, path=None):
+    """Record a graph as plain data: {"graph", "nodes" (count), "digest", "params" {node uid: {"def", "name" (the
+    registry short name or None), "inputs" {property id: value}}}, "connections" [[src uid, src port, dst uid,
+    dst port]], "presets" {label: {input id: value}}, "preset_digests" {label: hash}, "input_defaults" {input id:
+    value}, "base" {$id: [value, inheritance]}}. Written to path when given (atomically). Read-only on the graph.
+    The digest is a sha1 over the sorted nodes (uid, definition), their parameters, the connections and the base
+    parameters ($outputsize, $format, $randomseed). It leaves out the graph's own input values (presets drive those),
+    registry names and node positions, so applying a preset or renaming a node keeps it and any build change moves it.
+    Presets are read from the package file, so they show the last save."""
+    g = graph(key)
+    nodes = C._items(g.getNodes())
+    inv = {v: k for k, v in S["reg"].get(key or S["graph"], {}).items()}
+    params, defs = {}, {}
+    for n in nodes:
+        nid = n.getIdentifier()
+        defs[nid] = _node_def(n)
+        params[nid] = {"def": defs[nid], "name": inv.get(nid), "inputs": _node_inputs(n)}
+    conns = sorted(list(c) for c in C._connections(nodes))
+    gp = C._js(C._try(lambda: C._graph_params(g))) or {}
+    defaults = {k: v.get("value") for k, v in gp.items() if not k.startswith("$")}
+    base = {k: [v.get("value"), v.get("inheritance")] for k, v in gp.items() if k.startswith("$")}
+    gid = C._gid(g)
+    presets = _read_presets(C._try(g.getPackage().getFilePath), gid)
+    body = {"nodes": sorted([k, d] for k, d in defs.items()),
+            "params": {k: v["inputs"] for k, v in params.items()}, "connections": conns, "base": base}
+    snap = {"graph": gid, "nodes": len(nodes), "digest": _hash(body), "params": params, "connections": conns,
+            "presets": presets, "preset_digests": {k: _hash(v) for k, v in presets.items()},
+            "input_defaults": defaults, "base": base}
+    if path:
+        path = os.path.abspath(os.path.expanduser(path))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(snap, fh, indent=1, sort_keys=True)
+        os.replace(tmp, path)
+    return snap
+
+
+def _changes(before, after, **extra):
+    """[{key..., before, after}] for each id whose value differs between two dicts (a missing one reads None)."""
+    return [dict(extra, input=k, before=before.get(k), after=after.get(k))
+            for k in sorted(set(before) | set(after)) if before.get(k) != after.get(k)]
+
+
+def diff_snapshots(old, new):
+    """What differs between two graph_snapshot() results (pure Python; see graph_diff)."""
+    po, pn = old.get("params", {}), new.get("params", {})
+    out = {"graph": new.get("graph"), "digest_changed": old.get("digest") != new.get("digest"),
+           "nodes_added": [[u, pn[u]["def"], pn[u].get("name")] for u in sorted(set(pn) - set(po))],
+           "nodes_removed": [[u, po[u]["def"], po[u].get("name")] for u in sorted(set(po) - set(pn))],
+           "params_changed": []}
+    for u in sorted(set(po) & set(pn)):
+        a, b = po[u], pn[u]
+        rows = [("@def", a["def"], b["def"])] if a["def"] != b["def"] else []
+        rows += [(k, a["inputs"].get(k), b["inputs"].get(k))
+                 for k in sorted(set(a["inputs"]) | set(b["inputs"])) if a["inputs"].get(k) != b["inputs"].get(k)]
+        out["params_changed"] += [{"uid": u, "name": b.get("name"), "def": b["def"], "prop": k, "before": x, "after": y}
+                                  for k, x, y in rows]
+    co, cn = {tuple(c) for c in old.get("connections", [])}, {tuple(c) for c in new.get("connections", [])}
+    out["connections_added"] = [list(c) for c in sorted(cn - co)]
+    out["connections_removed"] = [list(c) for c in sorted(co - cn)]
+    ro, rn = old.get("presets", {}), new.get("presets", {})
+    out["presets_changed"] = [{"preset": p, "input": r["input"], "before": r["before"], "after": r["after"]}
+                              for p in sorted(set(ro) | set(rn))
+                              for r in _changes(ro.get(p, {}), rn.get(p, {}))]
+    out["input_defaults_changed"] = _changes(old.get("input_defaults", {}), new.get("input_defaults", {}))
+    out["base_changed"] = _changes(old.get("base", {}), new.get("base", {}))
+    return out
+
+
+def graph_diff(snapshot_path, key=None):
+    """Compare the graph now with a snapshot file made by graph_snapshot(path=...): {"graph", "digest_changed",
+    "nodes_added" [uid, def, name], "nodes_removed", "params_changed" [{uid, name, def, prop, before, after}],
+    "connections_added", "connections_removed", "presets_changed" [{preset, input, before, after}],
+    "input_defaults_changed" [{input, before, after}], "base_changed"}. Empty lists and digest_changed false: the same
+    build. Raises ValueError when the snapshot is of another graph."""
+    with open(snapshot_path, encoding="utf-8") as fh:
+        old = json.load(fh)
+    new = json.loads(json.dumps(graph_snapshot(key), default=str))  # the same JSON round trip the file went through
+    if old.get("graph") != new["graph"]:
+        raise ValueError("snapshot %s is of graph %r, not %r" % (snapshot_path, old.get("graph"), new["graph"]))
+    return diff_snapshots(old, new)
 
 
 # ----------------------------------------------------------------------------- variants
