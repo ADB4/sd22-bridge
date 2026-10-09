@@ -331,9 +331,9 @@ and that round 2's apply was not reviewed by a panel.
   rejects); `unverified` (no verdict). An unverified finding goes to the lead marked so, never into rejected. The lead
   also gets the rejected list (id, lens, title, why) and can overrule a rejection it re-measures. Save the result as
   `review/round<N>/review_result.json` (after a split, the new session saves it from the run's file: below).
-- **`dead`:** agents that returned nothing. A dead lens leaves its area unreviewed: say so at the plan gate, and run it
-  again in the next round, or now with the Agent tool from the script's lens and verifier prompts. A one-lens Workflow
-  would overwrite `lead.json`.
+- **`dead`:** agents that returned nothing. Rerun a dead lens once, at once, in the background with the Agent tool from
+  the script's lens and verifier prompts (a one-lens Workflow would overwrite `lead.json`); its verified findings join
+  the plan at the gate by the lead's rules. If it dies again, its area is unreviewed: the plan and the report say so.
 - **Files and stamps:** each agent runs `date -u` first and last and writes its result, stamps first, to
   `review/round<N>/`: `<lens>.json`, `<lens>.verdicts.json`, `reverify.verdicts.json`, `lead.json`. The result's
   `timing` table and `panel_min` come from those stamps and stay in `review_result.json`; findings.md TIMING lists
@@ -414,9 +414,10 @@ and that round 2's apply was not reviewed by a panel.
   - **If the panel stopped.** `$WF` present, any status (`ended without lead.json`, or a `status` other than
     `completed`): the run is over. Ask nothing; the dead agents are its `dead` list (status `completed`), or else
     every agent whose file never landed (`dead`, above). On `stalled` or `no runner result 2 min after lead.json` (the
-    old session may have closed): ask the user whether the old session is still open with its panel running (its
-    task list shows it); if so, keep waiting (re-arm the watch; after `lead.json`, re-check `$WF`); if not, every
-    agent whose file never landed is dead. Just before each rerun with the Agent tool from the script's prompts,
+    old session may have closed): check it instead of asking (get_session on the session id from the hand-off: open,
+    with the panel's Workflow still running); if so, keep waiting (re-arm the watch; after `lead.json`, re-check
+    `$WF`); if not, or when the check is unavailable and no `agent-*.jsonl` in the transcript dir changed in 20 min,
+    every agent whose file never landed is dead. Just before each rerun with the Agent tool from the script's prompts,
     check again that its file has not landed and, with no `$WF`, that no `agent-*.jsonl` in the transcript dir
     changed in 20 min. A rerun writes `<name>.rerun.json`, moved into place only if the original is still absent
     (`[ -e lead.json ] || mv lead.rerun.json lead.json`). If a file from the runner lands later anyway, stop and tell

@@ -129,6 +129,8 @@ that every approval card and power problem shows while the user can still settle
   lid, free disk, and the app's `keep_awake_while_working` from get_settings (read it, never set it).
 - `preflight_night.py caffeinate start --tools <tools> --until <deadline as local ISO, e.g. 2026-10-10T08:00:00>`: one
   detached caffeinate to the deadline plus 3 h, its pid in RUN.json.
+- `$PY <skill>/scripts/designer_relaunch.py check --tools <tools>`: `relaunch_safe` false means the last Designer launch
+  waited for a click on a Steam dialog, so a relaunch at night would stop there; its `advice` goes into the go question.
 - First material only: create the routines leg-a, leg-b and run-watchdog (`assets/routines.md`); a later material
   only rewrites the pointer file. Then run the probe chain (`assets/routines.md`, Probe); it sets RUN.json
   `continuation`.
@@ -138,7 +140,7 @@ that every approval card and power problem shows while the user can still settle
 **Gate:** the go question ("Unattended run"): a short summary (scale, layer model, the 3-6 key invariants in plain
 words, the variant ladder, what's estimated), the standing decisions SD-1 to SD-6 and the deadline, then one
 AskUserQuestion. Ask it once `review/preflight.json` and both probe files are written, or a probe leg is held by an
-approval card. Its text also gives the readiness result: the continuation route, any part-2 problem, and any card that
+approval card. Its text also gives the readiness result: the continuation route, any part-2 problem, the relaunch advice, and any card that
 would appear at night, which the user settles there (approve it for the routine, or choose auto mode for the project;
 the skill never changes that setting). It is the last question before the report; the reply to the go answer ends
 with the nothing-needed line ("Unattended run", Messages).
@@ -170,7 +172,8 @@ only for what §2 lacks):
   has no case (`references/checks.md`, "Suite").
 - Look at the previews yourself with Read, but treat your own verdict as provisional. In the brick build it was
   optimistic three times.
-- Fix every **red** job before any review.
+- Fix every **red** job before any review. Unattended, follow "When something breaks unattended" (Designer rules):
+  the run never ends red.
 
 ### 6. Review
 Follow `references/review.md`:
@@ -371,6 +374,20 @@ The last leg's final message is the verdict and the answer batch as the script p
   full cheat sheet is in `sd_craft.md` §5.
 - **Only touch the material's own package.** Never edit or save other packages, and save the material's own package
   after each completed stage.
+- **When something breaks unattended**, act at once and never wait for the user. Each incident is one `runstate.py
+  incident` line (the report lists them). Never click a dialog (no computer use). The run stops green or reverted,
+  never red.
+
+| What broke | What the run does | If that fails |
+|---|---|---|
+| A red suite or targeted set | At most 2 fix attempts or 45 min per red job. Attribute first: per applied item, latest first, copy the stage scripts aside, `decisions.py revert` the item, rebuild from its earliest stage at 1K, rerun the red job, restore the copy. Then revert the smallest set that restores green, with its dependents (`revert-plan`), rebuild, re-export and confirm that the last green scorecard reproduces (0 changed rows). Mark the reverted items not_done, their ledger note starting "reverted:" with the diagnosis, and go on with the independent items. | Revert the whole batch to the last green state and go on with the next graph or step |
+| A wrong build misbehaves, and also misbehaves on the pre-apply build | A case defect: correct the case to its own documented description ("Unattended run"), never revert the fix | - |
+| A fix whose only cure changes a user-given value or relaxes a check | Revert it, log `not_made_needs_user`, go on | - |
+| Designer does not answer | 1. A timeout is Designer computing, for up to 3x the job's expected time. 2. `ps -o pri=` 4 is App Nap: `open -a` it. 3. `designer_relaunch.py check` samples it for a modal. 4. On a modal or a dead process, one `designer_relaunch.py relaunch --tools <tools> --package <package> --job <last stage job> --golden <last good export folder> --out <its new export folder>`: it kills, relaunches, waits up to 30 min for the bridge, reopens the package from its last save, reruns the job and diffs the export. It stops early on a Steam launch dialog or a Designer modal (`blocked_*`). | A second failure, any `blocked_*`, or exit 4: stop on the last green state (the stage scripts reverted to it by patch, the rebuild listed as pending in the report) and send "blocked" |
+| A lens dies or stalls | Rerun it once in the background from the script's prompts (`references/review.md` §6, `dead`) | Its area is unreviewed: the plan and the report say so |
+| A drafts, docs, edits or ledger workflow dies | The owner does that work itself | - |
+| A leg dies | The run-watchdog (Legs) | "blocked" from the watchdog |
+
 - **User rules.** No commit or push during a run (SD-6). Commits are asked once, in the morning answer batch, one
   option per commit; nothing is ever pushed, and no push is offered. A next-day reversal ("reverse D2-3") runs
   unattended: `decisions.py revert-plan --id`, then per graph one batch (revert the row's items, latest first, and
@@ -402,6 +419,7 @@ The last leg's final message is the verdict and the answer batch as the script p
   - `context_size.py`: this session's context size against the leg budget (stdlib)
   - `preflight_night.py`: Designer freshness, power and the night's caffeinate (stdlib)
   - `morning_report.py`: the run's REPORT.md and answer batch; `--addendum` after a reversal or a user edit (stdlib)
+  - `designer_relaunch.py`: Designer's state, Steam's launch dialogs, and the run's one relaunch (stdlib)
   - `setup_env.sh`
 - `assets/`:
   - `spec_template.md`, `context_prompt_template.md` (with the run block), `reference_template.md` (review
