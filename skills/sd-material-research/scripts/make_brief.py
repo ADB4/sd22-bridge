@@ -13,11 +13,12 @@ files' `started` stamps, the file times under <tools>/build/, and the scorecard 
 R5 and R9, decisions, scorecard, ledger, carried items, lens table), and review/round<N>/panel_args.json, the args for
 assets/workflows/review_round.js. Prints lines per section, lines to read per lens, seconds, warnings. Each carried item
 (ledger ids, the last round's unverified and deferred items, open entries) needs exactly one owner; a lens keyed
-`fixcheck` owns every ledger id no other lens names. Documented in references/review.md §1-§3.
+`fixcheck` owns every ledger id no other lens names. A lens may set `box: {min, calls}` (positive integers), its own
+time box, copied into its panel_args row. Documented in references/review.md §1-§3.
 Exit code: 0 written (warnings allowed); 1 an ownership error, a round 2+ without a ledger, or an invalid ledger;
 2 a usage or REFERENCE error (missing or unreadable file, R1/R5/R9 missing, R5 or R9 still the template's text, a lens
-naming a section REFERENCE lacks, a bad lens key). Nothing is written unless it exits 0. Standard library only: it
-runs with any python3, no venv.
+naming a section REFERENCE lacks, a bad lens key or box). Nothing is written unless it exits 0. Standard library only:
+it runs with any python3, no venv.
 """
 import argparse
 import datetime
@@ -203,6 +204,11 @@ def read_lenses(path, ref):
         owns = l.get("owns")
         if owns is not None and (not isinstance(owns, list) or not all(isinstance(o, str) for o in owns)):
             errs.append("lens %s: owns must be a list of item ids" % json.dumps(k))
+        box = l.get("box")
+        if "box" in l and not (isinstance(box, dict) and box and set(box) <= {"min", "calls"}
+                               and all(type(v) is int and v > 0 for v in box.values())):  # type: not true or 1.5
+            errs.append("lens %s: box must be an object with min and/or calls, each a positive integer"
+                        % json.dumps(k))
     if not isinstance(open_, list) or not all(isinstance(o, dict) and isinstance(o.get("id"), str) and o["id"]
                                               for o in open_):
         errs.append("%s: open must be a list of {\"id\", \"text\"}" % path)
@@ -709,6 +715,8 @@ def main(argv=None):
         if l["sections"]:
             row["sections"] = l["sections"]
         row["owns"] = l["owns"]
+        if "box" in l:
+            row["box"] = l["box"]
         args["lenses"].append(row)
     if a.python:
         args["python"] = a.python

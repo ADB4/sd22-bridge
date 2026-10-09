@@ -15,10 +15,11 @@ export const meta = {
 //   review_dir   absolute path of <tools>/review  (REFERENCE.md lives here; round<N>/ holds the delta BRIEF.md,
 //                previews, scorecards, ledger)
 //   round        round number (1, 2, ...)
-//   lenses       [{key, prompt, sections?, owns?}]   built from the spec (references/review.md §3); key: letters,
+//   lenses       [{key, prompt, sections?, owns?, box?}]   built from the spec (references/review.md §3); key: letters,
 //                digits, _ or -, unique ignoring case (the Mac volume folds case, so G1 and g1 would share a file);
 //                sections: the REFERENCE.md ids the lens reads besides R1, R5, R9 (all of it when absent or empty);
-//                owns: the carried items it owns (ledger ids, last round's unverified/deferred, open questions)
+//                owns: the carried items it owns (ledger ids, last round's unverified/deferred, open questions);
+//                box: {min?, calls?} overrides box_lens for this lens (round 2's regressions lens)
 //   max_findings optional, default 7 / 6 / 5 for rounds 1 / 2 / 3+
 //   box_lens     optional {min, calls}, default {min: 15, calls: 35}   (RV-03 time boxes; widen box_verify when the
 //   box_verify   optional {min, calls}, default {min: 12, calls: 25}    severity-change rate in stats falls)
@@ -61,6 +62,10 @@ for (const l of lenses) {
     throw new Error(`lens ${JSON.stringify(k)}: sections must be an array of REFERENCE ids R1, R2, ...`)
   if (l.owns != null && (!Array.isArray(l.owns) || !l.owns.every(o => typeof o === 'string')))
     throw new Error(`lens ${JSON.stringify(k)}: owns must be an array of item ids`)
+  const pos = v => Number.isInteger(v) && v > 0
+  if (l.box != null && (typeof l.box !== 'object' || Array.isArray(l.box) || !Object.keys(l.box).length
+      || !Object.keys(l.box).every(x => (x === 'min' || x === 'calls') && pos(l.box[x]))))
+    throw new Error(`lens ${JSON.stringify(k)}: box must be {min?, calls?}, positive integers`)
 }
 
 const STAMPS = {
@@ -113,11 +118,12 @@ const VERDICTS = {
       basis: { type: 'string', enum: ['hard_requirement', 'invariant', 'spec_fact', 'realism', 'taste'] },
       premise_errors: { type: 'string' },
       severity_adjusted: { type: 'string', enum: ['high', 'medium', 'low', 'none'] },
+      use_distance: { type: 'string', description: 'for severity_adjusted high: the whole-tile or tiled sheet (file) on which you saw it at use distance; otherwise "not visible at use distance" or "n/a"' },
       fix_assessment: { type: 'string', enum: ['right', 'partial', 'wrong', 'harmful'] },
       better_fix: { type: 'string' },
       acceptance_fixed: { type: 'string', description: 'reachable target checked against a baseline' },
       reasoning: { type: 'string' },
-    }, required: ['id', 'real', 'reproduced', 'independent_numbers', 'artifact', 'basis', 'premise_errors', 'severity_adjusted', 'fix_assessment', 'better_fix', 'acceptance_fixed', 'reasoning'] } },
+    }, required: ['id', 'real', 'reproduced', 'independent_numbers', 'artifact', 'basis', 'premise_errors', 'severity_adjusted', 'use_distance', 'fix_assessment', 'better_fix', 'acceptance_fixed', 'reasoning'] } },
     not_checked: { type: 'array', items: { type: 'string' }, description: 'ids of findings you did not re-measure with your own script; they get no verdict' },
   },
   required: ['started', 'ended', 'verdicts', 'not_checked'],
@@ -157,12 +163,19 @@ const PLAN = {
       id: { type: 'string' }, variant: { type: 'string' }, pass: { type: 'boolean' }, value: { type: 'string' },
     }, required: ['id', 'variant', 'pass', 'value'] } },
     keep_as_is: { type: 'array', items: { type: 'string' } },
-    deferred: { type: 'array', items: { type: 'string' } },
+    deferred: { type: 'array', items: { type: 'string' }, description: 're-deferred carried items and design calls over the cap; never a numeric target' },
+    residuals: { type: 'array', description: 'every confirmed or spot-checked finding not admitted to the plan; reported, never deferred with a numeric target', items: { type: 'object', properties: {
+      id: { type: 'string' }, family: { type: 'string', description: 'lens family or category' },
+      severity: { type: 'string', enum: ['high', 'medium', 'low'] }, variants: { type: 'array', items: { type: 'string' } },
+      visible_at: { type: 'string', enum: ['zoom', '1:1', 'tile', 'tiled'] }, numbers: { type: 'string' },
+      why_open: { type: 'string', description: 'why it is not planned: the admission rule, the cap, taste' },
+      next_lever: { type: 'string', description: 'the change that would address it, for a later round or the user' },
+    }, required: ['id', 'family', 'severity', 'variants', 'visible_at', 'numbers', 'why_open', 'next_lever'] } },
     conflicts_resolved: { type: 'array', items: { type: 'string' } },
     premises_corrected: { type: 'array', items: { type: 'string' } },
     overall_assessment: { type: 'string' },
   },
-  required: ['started', 'ended', 'fixes', 'design_calls', 'spot_checks', 'requirements_scorecard', 'invariants', 'keep_as_is', 'deferred', 'conflicts_resolved', 'premises_corrected', 'overall_assessment'],
+  required: ['started', 'ended', 'fixes', 'design_calls', 'spot_checks', 'requirements_scorecard', 'invariants', 'keep_as_is', 'deferred', 'residuals', 'conflicts_resolved', 'premises_corrected', 'overall_assessment'],
 }
 
 // RV-05: every agent reads the round's delta brief (it carries REFERENCE R1, R5 and R9: requirements, node cheat sheet,
@@ -200,7 +213,9 @@ finding; once the box is spent, ${spent}`
 // The verifiers' own method; the re-verify agent uses the same text.
 const METHOD = `Apply the verifier checklist in the brief to EACH finding: reproduce at
 least one key number with your own script on full-res maps; refute claim by claim (visible? preview shader? downsampling?
-metric artifact? wrong premise? basis? controls for statistical claims? does the consequence follow?). Correct overstated
+metric artifact? wrong premise? basis? controls for statistical claims? does the consequence follow?). A high stands only
+when you see it at use distance on the whole-tile or tiled sheet: name that sheet in use_distance, or set
+severity_adjusted to medium at most. Correct overstated
 numbers and downgrade rather than reject; real=false only when the core is unsupported. Review each fix (does it create a
 singular feature or lattice, a bevel, break an invariant or registration, conflict with a requirement?) and the acceptance
 target (reachable on current data, checked against a baseline?). Never guess a verdict: a finding you did not re-measure
@@ -216,7 +231,7 @@ that map to a requirement id, an invariant id or a cited spec fact; say "taste" 
 lists as rejected or keep-as-is unless they regressed. Return 0-${MAXF} findings, most severe first, with ids ${l.key}-1,
 ${l.key}-2, ...; fill fix_status for the ledger items your lens covers if the brief has a ledger for this round (else leave it empty);
 leave out items outside your lens.
-${boxed(BOX_LENS, 'stop measuring and report what you have, most severe first; set box to the limit you hit and list in not_reached every part of your lens brief you did not review; a ledger item of your lens you did not reach gets fix_status not_checked. Inside the box: box not_hit, not_reached empty.')}
+${boxed({ ...BOX_LENS, ...(l.box || {}) }, 'stop measuring and report what you have, most severe first; set box to the limit you hit and list in not_reached every part of your lens brief you did not review; a ledger item of your lens you did not reach gets fix_status not_checked. Inside the box: box not_hit, not_reached empty.')}
 ${filing(`${RD}/${l.key}.json`)}
 
 LENS ${l.key}: ${l.prompt}`, { label: `review:${l.key}`, phase: 'Review', schema: FINDINGS, effort: EFFORT }),
@@ -344,11 +359,15 @@ ${ALL_REF}
 You are the lead material artist for round ${R}. Merge duplicates (keep source ids; agreement across lenses = confidence),
 re-measure any disputed number yourself, correct wrong premises (Histogram Scan centre = 1 - Position; Blend divide = dst/src),
 resolve conflicts with the user's requirements in writing, and order fixes by dependency (layout -> height/structure ->
-process masks -> colour -> micro-detail). At most ${R === 1 ? 10 : R === 2 ? 8 : 5} fixes, each with acceptance checks and
-guard rails. Fill the requirements scorecard (one row per requirement per variant) and the invariants table from the
+process masks -> colour -> micro-detail). Each fix gets acceptance checks and guard rails. ${R === 1
+  ? 'Round 1 plans highs and mediums, at most 10 fixes; a low enters only as a check defect a planned fix needs.'
+  : 'Round ' + R + ' fixes highs only: plan verified highs, hard requirement or invariant breaks, and the check defects those fixes need, at most 5 fixes.'}
+Every confirmed or spot-checked finding you do not plan goes in residuals (one row each, why_open, next_lever): it is
+reported, and never deferred with a numeric target. Taste is low and gets no acceptance target. A target that a build
+showing the fix's own tell would meet better than the clean build is invalid. Fill the requirements scorecard (one row per requirement per variant) and the invariants table from the
 current scorecards in the round folder. List keep-as-is, deferred items, conflicts resolved, premises corrected.
 UNVERIFIED findings are lens claims that no verifier re-measured: re-measure every high or medium among them yourself
-before planning it (one spot_checks row each); plan a low only on numbers you reproduced, else defer it.
+before planning it (one spot_checks row each); a low enters the plan only as a check defect, on numbers you reproduced.
 REJECTED findings got a verdict of real=false or severity none (why = the verifier's reasoning). Leave them out of the
 plan, unless you re-measure one and find the rejection wrong: then plan it and say so in premises_corrected.
 A FIX STATUS row marked not_checked is one a boxed lens never reached: unless another lens reported that fix, read its

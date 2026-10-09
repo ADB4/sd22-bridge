@@ -152,8 +152,9 @@ Follow `references/review.md`:
    (round 1: `assets/reference_template.md`) and the lens table.
 2. On a green suite only: from round 2, `scripts/fixcheck.py` (did each ledger fix land?); then
    `scripts/make_brief.py`, which writes the delta brief and the panel's args.
-3. Run 4-6 lenses derived from the spec; a verifier re-measures each lens's findings, highs first, and one re-verify
-   agent takes any high or medium a verifier left without a verdict.
+3. Run the round's lenses (`references/review.md` §3: round 1 the families derived from the spec plus a check audit,
+   round 2 the same plus fixcheck and regressions); a verifier re-measures each lens's findings, highs first, and one
+   re-verify agent takes any high or medium a verifier left without a verdict.
 4. A lead writes the plan and the scorecard.
 
 Run the panel as a Workflow (`assets/workflows/review_round.js`); use the Agent tool only when Workflow is unavailable.
@@ -177,8 +178,8 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
   `suite_partial.json` (each set replaces it). Items that miss their acceptance go into a second batch for that graph.
 - Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
   apply: `date -u` when the plan gate is settled and after the last batch's targeted checks, into the ledger's
-  `apply` (`references/review.md` §1). Then review again with fewer lenses. Three rounds is typical. The stopping
-  rule is in `references/review.md` §5.
+  `apply` (`references/review.md` §1). Two full rounds; round 2 applies highs only (SD-3, SD-4; the stop rule is in
+  `references/review.md` §5).
 - **Final gate:** after the last change, export every variant plus its `nowear` at 2048 in one foreground `sdcall.py`
   job (stage 5), then run the full suite into `review/round<N+1>` in the background, then `fixcheck.py` on its ledger
   (`references/review.md` §5); draft the report meanwhile and finalize it only on a green `suite.json`. The report

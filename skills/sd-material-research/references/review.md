@@ -135,19 +135,23 @@ the delta brief keeps its `review/BRIEF.md`; the runner reads it when `round<N>/
 
 **Severity rubric and acceptance-target rules** (REFERENCE R9; copy them there verbatim):
 - **Severity rubric:**
-  - **high:** breaks a hard requirement or invariant, or is a tell visible at the variant's use distance
-    (whole tile or tiled)
-  - **medium:** visible at 1:1 or in raking light, or a realism problem
+  - **high:** a tell visible at the variant's use distance on the whole-tile or tiled sheet, confirmed there by its
+    verifier (the verdict names the sheet). Not visible there: medium at most, whatever its numbers.
+  - **medium:** visible at 1:1 or in raking light, a realism problem, or a hard requirement or invariant break not
+    visible at use distance (round 2 still plans it, §5)
   - **low:** close-zoom polish
-  - Admissibility: every finding maps to an R-id, an INV-id or a cited spec fact. Taste gets said as taste, and
-    capped at low.
+  - Admissibility: every finding maps to an R-id, an INV-id or a cited spec fact. Taste gets said as taste, capped
+    at low, and gets no acceptance target.
 - **Acceptance-target rules:** compute every target on current data and check it against a baseline (the clean
   variant, a shifted or shuffled control). Prefer rank-based or local-reference metrics. Unreachable targets get
-  replaced, not chased.
+  replaced, not chased. A target that a build showing the fix's own tell meets better than the clean build is invalid.
 
 ## 3. Lenses
 
-**Round 1: 4-6 lenses.**
+Two full rounds (SD-3), the same depth both times. **Round 1:** the families G1-G5, G3 split by process cards (M8
+ran G1, G2, G3a, G3b, G4, G5), G6 when colour variants matter, plus one check-audit lens. **Round 2:** round 1's
+families again, plus fixcheck and regressions, with full verifiers, re-verify and lead. A third round runs only when
+the user asks for it the next day.
 - **G1 Requirements and invariants.** One verdict per R-id and per INV-id. Try to break each invariant visually and
   numerically: layout invariance against nowear, envelope, order, registration of colour/roughness/height switches.
 - **G2 Scale, proportion and layout.** Dimensions against the sheet, installer tolerances, calibration of parameters
@@ -160,25 +164,26 @@ the delta brief keeps its `review/BRIEF.md`; the runner reads it when `round<N>/
   low-frequency blotches, outlier units.
 - **G6 Colour, PBR and variants.** Albedo and roughness against sheet §7, value order, deposits, revealed-layer colour,
   variant distinctness.
-
-**Round 2 and later: 3-5 lenses.**
-- **Fixcheck:** fill `fix_status` for every ledger item it owns (all of them by default), starting from
+- **Check audit** (round 1). For every hard and acceptance check (spec §9, `checks/*.json`,
+  `checks/wrong_build_cases.py`): does it read the rendered maps, measure the property it names, and fail on the defect
+  it guards? Look for requirements and visible defects with no instrument, slack or region choices that hide a defect,
+  circular checks (mask against mask) and hard checks no wrong build exercises. In M8 it alone produced round 1's
+  first fix.
+- **Fixcheck** (round 2): fill `fix_status` for every ledger item it owns (all of them by default), starting from
   `fixcheck/fixcheck.md` (§1 step 4).
-- **Regressions:** check the keep-as-is contract and compare previous and current numbers.
-- **Fresh-eyes realism:** what still reads CG at 1:1 and 3×?
-- Plus G1 and G5.
-
-**Final round: 3 lenses.** Fixcheck; requirements plus tiling; realism plus regressions.
+- **Regressions** (round 2): owns every feature round 1's apply touched, the detail tile first; checks the keep-as-is
+  contract and compares previous and current numbers. It covers more ground than the others: give it a wider `box`.
 
 **Lens table** (`review/round<N>/lenses.json`, read by `make_brief.py`):
 ```json
-{"lenses": [{"key": "G5", "prompt": "...", "sections": ["R7"], "owns": ["r1:G5/G5-2"]}],
+{"lenses": [{"key": "G5", "prompt": "...", "sections": ["R7"], "owns": ["r1:G5/G5-2"]},
+            {"key": "regressions", "prompt": "...", "box": {"min": 22, "calls": 50}}],
  "open": [{"id": "H1", "text": "..."}]}
 ```
 Keys: letters, digits, `_` or `-`, unique ignoring case, not `lead`, `reverify`, `ledger`, `review_result`, `lenses`,
 `panel_args`, `suite`, `suite_partial`, `wrong_builds` or `scorecard_*` (file names in `round<N>/`). `sections` names
-the REFERENCE sections the lens needs besides R1, R5 and R9 (defaults per lens family in the template); `open` holds
-builder hypotheses and user questions.
+the REFERENCE sections the lens needs besides R1, R5 and R9 (defaults per lens family in the template); `box`
+overrides the round's lens time box for that lens (§6); `open` holds builder hypotheses and user questions.
 
 **One owner per carried item.** The carried items are every ledger item, every `unverified` finding and `deferred`
 entry of the last round (ids `r<N-1>:<lens>/<id>` and `r<N-1>:deferred:<k>`; k counts the last round's `deferred` list
@@ -194,7 +199,7 @@ asphalt round 2, four issue clusters were each found by 2-4 lenses and verified 
 - Every invariant goes to G1. Every revealed layer gets a sub-brief: colour from its own unit, depth, rake wall,
   texture coarser than the skin, no ring.
 - Every row of the sheet's common-mistakes table goes to exactly one lens as a "look for" item.
-- Merge down to 4-6 lenses by shared maps and regions.
+- Merge G3 cards by shared maps and regions (M8: two G3 lenses).
 
 **CG tells that numbers can catch** (add the matching check to `checks.json` once a lens finds one):
 
@@ -218,7 +223,8 @@ asphalt round 2, four issue clusters were each found by 2-4 lenses and verified 
 1. **Reproduce independently.** Recompute at least one key number per finding with your own script on the full-res
    16-bit maps, not the reviewer's script and not the previews.
 2. **Refute claim by claim**, in this order:
-   1. Is it visible in the maps?
+   1. Is it visible in the maps? A high must be visible at use distance on the whole-tile or tiled sheet: name the
+      sheet, or make it medium at most.
    2. Is it a preview-shader artifact? Does it appear in albedo-only or the hillshade, or only in lit views?
    3. Is it a downsampling artifact? Check at 1:1.
    4. Is it a metric artifact? Look at threshold choice, a reference window that includes the feature, a global vs
@@ -251,7 +257,12 @@ calibration from the verifier, not a high rejection rate.
 - Re-measure disputed numbers itself, and correct wrong premises.
 - Resolve conflicts with the user's requirements in writing (e.g. "don't add colour variety: the user asked for subtle").
 - Order fixes by dependency: layout → height/structure → process masks → colour → micro-detail.
-- Cap the list (10 / 8 / 5 by round), and give every fix acceptance checks and guard rails.
+- Admit by round, and give every fix acceptance checks and guard rails:
+  - round 1 plans highs and mediums, at most 10 fixes; a low enters only as a check defect a planned fix needs;
+  - round 2 (SD-4) plans verified highs, hard requirement or invariant breaks, and the check defects those fixes need,
+    at most 5 fixes.
+  Everything else goes to `residuals` {id, family, severity, variants, visible_at, numbers, why_open, next_lever}:
+  reported, never deferred with a numeric target.
 - Re-measure every `unverified` high or medium before planning it (`spot_checks`); defer an unverified low unless its
   numbers reproduce.
 - Put every choice between looks, a requirement trade or a deviation in `design_calls`: the question, 2-4 options
@@ -260,7 +271,7 @@ calibration from the verifier, not a high rejection rate.
   `rule` says how (`recommended`, `no_pattern` or `smallest_pattern`); `changes_spec` marks a call that changes a spec
   value, a requirement reading or a check target. Every fix a call touches is written for the settled option. At most
   4 calls; any further call goes in deferred as `design call: ...`, for the report.
-- List keep-as-is, deferred and rejected items.
+- List keep-as-is, deferred (with no numeric target) and rejected items.
 - Plan, re-defer or close every carried item that is not a ledger item, starting the entry with its id;
   `make_brief.py` warns next round about any it left open.
 
@@ -271,7 +282,7 @@ calibration from the verifier, not a high rejection rate.
   - `SC: met|mostly_met|not_met | R-id requirement (variant) | evidence`
   - `INV: pass|fail | INV-id | values`
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
-  - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
+  - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, RESIDUALS, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
     per-agent table, `panel_min`, and `round<N>/ledger.json`'s `apply`, §6)
 - **Auto gate** (unattended, the default): check each call's `settled` against SD-1 and SD-2, measure a named
   pattern the lead could not (a 1K probe), re-settle a call the lead got wrong (its fixes are then rewritten for the
@@ -279,26 +290,19 @@ calibration from the verifier, not a high rejection rate.
   call (§1), and start the apply. Nobody is asked. In an attended run the plan gate shows the user the scorecard and
   the plan and asks the calls in one batch, the settled option first.
 
-**Stop when:**
-- all hard checks pass in every variant;
-- every hard requirement is `met` and every soft one at least `mostly_met`;
-- there are 0 high findings, and no medium finding visible at use distance;
-- the last round's fixes landed.
-
-**Also stop:**
-- after a dry round (no new medium-or-higher finding confirmed by a verifier, the re-verify agent or the lead's
-  `spot_checks`) in which every lens returned;
-- after 3 full rounds (ask the user before a 4th);
-- when the user accepts.
-
-When more than half the ledger is partial, run a cheap fixcheck-only round (the suite and `fixcheck.py`, plus one
-agent) instead of the full panel.
+**Stop (SD-3).** At most 2 full panels: the run ends after round 2's apply and its final gate. Skip round 1's apply
+when round 1 is dry (no new medium-or-higher finding confirmed by a verifier, the re-verify agent or the lead's
+`spot_checks`, and every lens returned), and round 2's when it confirms 0 highs and 0 hard breaks. A third round runs
+only when the user asks for it the next day. The finished-material targets stay, and the report lists each one not
+reached: all hard checks pass in every variant; every hard requirement is `met` and every soft one at least
+`mostly_met`; 0 highs; the last round's fixes landed. A requirement judged by eye alone (M8's R13) is reported per
+variant and never blocks the stop.
 
 **Final gate.** The last change is followed by a 2048 export of every variant and its `nowear`, then a full suite (no
 `--configs` or `--kinds`) into `review/round<N+1>`, the folder whose ledger records the last apply, and `fixcheck.py`
 on that ledger (§1 steps 2-4). Draft the report while the suite runs; finalize it only on that `suite.json` with
-`green` true, `rc` 0 and `full` true. The report says what was verified after the last change, and which fixes landed.
-Don't say "three review rounds confirmed it" when the final fixes were never reviewed.
+`green` true, `rc` 0 and `full` true. The report says what was verified after the last change, and which fixes landed,
+and that round 2's apply was not reviewed by a panel.
 
 ## 6. Running it
 
@@ -308,8 +312,9 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
   left without a verdict to one re-verify agent (its verdicts match by `lens/id`, or by a bare id no other finding sent
   to it shares), then runs the lead. Lenses read the REFERENCE sections their row names; verifiers, the re-verify
   agent and the lead read all of it (§2). Every agent runs at xhigh; the runtime caps concurrency.
-- **Time boxes:** lens 15 min and 35 tool calls, verifier 12 min and 25 (args `box_lens`, `box_verify`). The re-verify
-  agent and the lead have none. A lens cut by its box names the limit in `box` and lists what it skipped in
+- **Time boxes:** lens 15 min and 35 tool calls, verifier 12 min and 25 (args `box_lens`, `box_verify`; a lens row's
+  `box` overrides `box_lens` for that lens, e.g. round 2's regressions lens). The re-verify agent and the lead have
+  none. A lens cut by its box names the limit in `box` and lists what it skipped in
   `not_reached`; the lead is told, and those areas count as unreviewed.
 - **Status:** `confirmed`; `rejected` (the verdict says `real=false` or severity `none`; `artifact` alone never
   rejects); `unverified` (no verdict). An unverified finding goes to the lead marked so, never into rejected. The lead

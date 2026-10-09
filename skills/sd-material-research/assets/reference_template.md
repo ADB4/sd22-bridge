@@ -23,8 +23,8 @@ Default sections per lens family, besides R1, R5 and R9 (the round's `lenses.jso
 | G5 large surface and tiling | R7 |
 | G6 colour, PBR and variants | R2 R6 R7 |
 | fixcheck | R2 R4 R6 R7 |
-| regressions | R7 R8 |
-| realism | R2 R4 R7 |
+| regressions | R4 R7 R8 |
+| check audit | R2 R7 R8 |
 | verifiers, re-verify agent, lead | all (the runner sets it) |
 
 ## R1 Requirements
