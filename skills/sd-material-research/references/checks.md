@@ -428,6 +428,16 @@ of `scripts/fixcheck.py`.
 ```bash
 $PY <skill>/scripts/fixcheck.py --ledger <tools>/review/round<N>/ledger.json [--rerun]
 ```
+Fill mode writes the ledger's numbers instead of judging them (the apply, `SKILL.md` stage 7; it never flags, run
+the normal mode after it):
+```bash
+$PY <skill>/scripts/fixcheck.py --ledger <ledger> --fill before --item <id> --scorecards <the last scorecards dir>
+$PY <skill>/scripts/fixcheck.py --ledger <ledger> --fill after [--item <id> ...]
+```
+`before` comes from the scorecards measured just before the item's batch and is never overwritten (`--force` does);
+`after` from the scorecards beside the ledger, re-measured when stale, and the item's `status` from its target rows
+(a "reverted:" item and a `user_edit` item keep theirs). A row with no target takes the config's (`target_from`), and
+each filled row records its sources in `fill`.
 A row's `check` must be a check id in its `variant`'s config. fixcheck reads that variant's `scorecard_<variant>.json`
 beside the ledger when it is fresh (the current export, newer than it and the config), else re-runs `matcheck.py
 --only` into `fixcheck/<variant>/` (`--rerun`: always). Read `fixcheck/fixcheck.json`. Row status:

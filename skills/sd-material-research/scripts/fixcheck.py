@@ -5,6 +5,9 @@ How to use it: references/checks.md, "Fixcheck". This docstring is the reference
 Usage:
     python fixcheck.py --ledger <tools>/review/round<N>/ledger.json [--scorecards DIR] [--checks-dir DIR] [--out DIR]
                        [--decisions FILE] [--rerun] [--python PY]
+    python fixcheck.py --ledger L --fill before --item ID [--item ID ...] --scorecards DIR [--force] [--checks-dir DIR]
+    python fixcheck.py --ledger L --fill after [--item ID ...] [--scorecards DIR] [--checks-dir DIR] [--out DIR]
+                       [--rerun] [--python PY]
 
 Options:
     --ledger      the fix ledger (review.md §1 step 4): items[].id, status (done, partial, not_done; user_edit in a
@@ -16,6 +19,9 @@ Options:
     --decisions   the decision log read for exemptions (default: <tools>/review/decisions.json, none when absent)
     --rerun       re-run matcheck for every variant, fresh scorecard or not
     --python      the python matcheck runs under (default: this one; it needs numpy, so start fixcheck with $PY)
+    --fill        write the ledger's numbers instead of judging them: before or after (Fill mode, below)
+    --item        with --fill: an item id (repeatable, or several after one --item); after without it: every item
+    --force       with --fill before: overwrite a before that is set
 The configs are <checks-dir>/*.json with a `checks` list, each named by its `variant` (else its file stem); two
 configs with a variant the ledger names are an error. For each variant a ledger row names, the values come from
 <scorecards>/scorecard_<variant>.json when it is fresh: its manifest `exported_at` equals the config's current export
@@ -82,6 +88,38 @@ when the ledger has a promote_hard row anywhere (a ledger without one writes the
 the printed summary add a Promotions line then.
 Exit code: 0 no flag; 1 a done_not_landed, claim_contradicted, measure_failed or promotion_missing item, or a
 non-exempt regressed or guard_broken row; 2 a usage, checks-dir or ledger error (nothing written).
+
+Fill mode (the apply, SKILL.md stage 7): --fill writes the measured numbers into the ledger so that no one types them.
+It never judges and never flags (exit 0, or 2 on a usage or ledger error, nothing written); run the normal mode after it.
+    --fill before --item ID ... --scorecards DIR
+        For each named item (--item and --scorecards are required), for every acceptance row, target and guard alike:
+        `before` = the `value` of the check's row in DIR/scorecard_<variant>.json, DIR being the scorecards measured
+        just before the item's batch (the caller passes the ones it measured last, as for `guards.py rows`). DIR needs
+        no freshness: it is the last export. A `before` that is set (not null) is never overwritten unless --force
+        says so (guards.py rows sets the guard rows' before; those stay). A missing scorecard, a check the scorecard
+        lacks, or a value that is an error, vacuous or not a number leaves `before` as it is and is reported.
+    --fill after [--item ID ...]
+        For the named items (default every item), every row's `after` = the check's value from the scorecards beside
+        the ledger (--scorecards: elsewhere), under the freshness rule above: a stale or missing scorecard is
+        re-measured with matcheck into <out>/fixcheck/<variant>/ (--rerun: always), as the normal mode does. A row
+        whose value cannot be read keeps its `after` and is reported. Then each named item's `status` follows its
+        target rows (a guard row with no target aims at nothing): `done` when all of them meet their target, `partial`
+        when some do, `not_done` when none does (a measured row without a target does not meet).
+        Kept as they are: the status of a user_edit item, of a not_done item whose note starts "reverted:", of an
+        item with no aiming row, and of an item with an aiming row that could not be measured in this run (listed).
+    Both modes: numbers are written to 4 significant digits (more only when that would change whether the value meets
+    the row's target), which is the ledger's convention. A row with no target (and not a bound-only guard row) takes
+    the check's own target from its variant's config (`target`, `target_mm`, `target_deg` or a max_*_frac shortcut),
+    marked "target_from": "config"; nothing else of a row changes (promote_hard, role, bound, tolerance stay). Each
+    row a number was written to records `"fill": {"before": <DIR relative to the tools folder>, "after": <scorecard
+    path relative to it>, "utc": <stamp ending in Z>}` (the keys the fill wrote or kept). The ledger is written with
+    the layout it had (indent, line ends, number text) through a temporary file and an atomic replace, the old file
+    kept as ledger.json.bak; a fill that changes nothing (no number, target or status differs, so also a second fill
+    after from the same scorecards) writes nothing and keeps the old provenance stamp; a symlinked ledger is written
+    where it points and keeps its mode. An item with no status that cannot be set from a measure (no aiming row, or one
+    that could not be measured) becomes not_done and is listed, because the normal mode rejects an item with none.
+    The configs are read from --checks-dir (default <tools>/checks; --fill after needs it, --fill before only for the
+    targets). A summary lists what was filled and every row left unfilled with the reason.
 """
 import argparse
 import datetime
@@ -89,6 +127,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -107,6 +146,9 @@ TIMEOUT = 900  # seconds per matcheck run
 SLACK = 1e-12  # matcheck.evaluate's
 REGRESS_FRAC = 0.05  # a row may move this share of |before| farther from its target before it is regressed
 ROLES = ("target", "guard")
+BOM = b"\xef\xbb\xbf"
+SIG_DIGITS = (4, 6, 9, 17)  # fill: the ledger's numbers have 4 significant digits; more only to keep a verdict
+TARGET_SHORTCUTS = ("max_violation_frac", "max_changed_frac", "max_frac")  # matcheck.TARGET_KEYS
 
 
 class Fail(Exception):
@@ -238,10 +280,14 @@ def half_unit(v):
 # ----------------------------------------------------------------------------- inputs
 
 
-def read_ledger(path):
+def read_ledger(path, fill=False):
+    """The ledger (numbers as Num). fill: (ledger, layout, raw bytes) for the fill modes, which also accept an item
+    that has no status yet (none, or null: the fill sets it) and keep the file's layout."""
     try:
-        with open(path, encoding="utf-8-sig") as fh:
-            led = json.load(fh, parse_float=Num, parse_int=Num)
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        text = raw.decode("utf-8-sig")
+        led = json.loads(text, parse_float=Num, parse_int=Num)
     except OSError as e:
         raise Fail("%s: %s" % (path, e.strerror or e))
     except ValueError as e:
@@ -257,7 +303,7 @@ def read_ledger(path):
         if iid in ids:
             errs.append("item id %s appears twice" % iid)
         ids.add(iid)
-        if it.get("status") not in ITEM_STATUSES:
+        if it.get("status") not in ITEM_STATUSES and not (fill and it.get("status") is None):
             errs.append("item %s: status must be done, partial, not_done or user_edit, not %s"
                         % (iid, json.dumps(plain(it.get("status")))))
         acc = it.get("acceptance", [])
@@ -290,6 +336,11 @@ def read_ledger(path):
                 errs.append("item %s: %s must be a list of strings (<check> or <check>@<variant>)" % (iid, key))
     if errs:
         raise Fail("; ".join("%s: %s" % (path, e) for e in errs))
+    if fill:
+        m = re.search(r"^([ \t]+)\S", text, re.M)
+        lay = {"bom": raw.startswith(BOM), "eol": "\r\n" if "\r\n" in text else "\n", "step": m.group(1) if m else None,
+               "final_nl": text.endswith("\n"), "ascii": not any(ord(ch) > 127 for ch in text)}
+        return led, lay, raw
     return led
 
 
@@ -392,6 +443,56 @@ def remeasure(py, cp, variant, ids, fdir):
         last = said.splitlines()[-1] if said else ""
         info["error"] = why + (": " + last if last else "")
     return info, card
+
+
+def plan_variants(configs, rows):
+    """(vinfo, want) for a list of acceptance rows: vinfo {variant: (config name, {id: check}, {id: count})} for the
+    variants the rows name that have a config, want {variant: ids to measure}. Two configs of a variant: Fail."""
+    named = sorted({x.get("variant") for x in rows if isinstance(x.get("variant"), str)} & set(configs))
+    dup = ["%s (%s)" % (v, ", ".join(os.path.basename(p) for p, _ in configs[v])) for v in named
+           if len(configs[v]) > 1]
+    if dup:
+        raise Fail("more than one config has variant %s: the ledger cannot say which" % "; ".join(dup))
+    vinfo, want = {}, {}
+    for v in named:
+        cp, cfg = configs[v][0]
+        checks = [c for c in cfg["checks"] if isinstance(c, dict)]
+        seen = {}
+        for c in checks:
+            seen[c.get("id")] = seen.get(c.get("id"), 0) + 1
+        vinfo[v] = (os.path.basename(cp), {c.get("id"): c for c in checks}, seen)
+    for x in rows:
+        v, cid = x.get("variant"), x.get("check")
+        if (isinstance(v, str) and v in vinfo and isinstance(cid, str) and vinfo[v][2].get(cid) == 1
+                and not vinfo[v][1][cid].get("skip")):
+            want.setdefault(v, [])
+            if cid not in want[v]:
+                want[v].append(cid)
+    return vinfo, want
+
+
+def collect_cards(want, configs, scdir, fdir, rerun, python):
+    """({variant: how it was measured}, {variant: scorecard or None}): the fresh scorecard in scdir, else a matcheck
+    re-run into fdir/<variant>/ (always with rerun)."""
+    for v in want:
+        remove(os.path.join(fdir, safe(v), "scorecard_%s.json" % v))
+        remove(os.path.join(fdir, safe(v), "scorecard_%s.md" % v))
+    measured, cards = {}, {}
+    for v, ids in want.items():
+        cp, cfg = configs[v][0]
+        sp = os.path.join(scdir, "scorecard_%s.json" % v)
+        why, card = ("--rerun", None) if rerun else fresh(sp, cp, cfg, ids)
+        if card is not None:
+            measured[v] = {"source": "scorecard", "scorecard": sp, "config": cp, "why": None, "rc": None,
+                           "seconds": None, "error": None}
+        else:
+            info, card = remeasure(python, cp, v, ids, fdir)
+            info.update(config=cp, why=why)
+            measured[v] = info
+            print("%s: re-run (%s): rc %s, %s s%s" % (v, why, info["rc"], info["seconds"],
+                                                     ": " + info["error"] if info["error"] else ""), flush=True)
+        cards[v] = card
+    return measured, cards
 
 
 # ----------------------------------------------------------------------------- judging
@@ -547,6 +648,274 @@ def promotion(a, check, where):
                 "soft" if sev in ("soft", None) else fmt(sev), where) if miss else ""}
 
 
+# ----------------------------------------------------------------------------- fill mode
+
+
+def render(v, lay, lvl=0):
+    """json.dumps(indent=step) of v, but a Num is written as the text it was read from (the ledger keeps its layout)."""
+    if isinstance(v, Num):
+        return v.text
+    if isinstance(v, dict):
+        if not v:
+            return "{}"
+        parts, brackets = ["%s: %s" % (json.dumps(k, ensure_ascii=lay["ascii"]), render(x, lay, lvl + 1))
+                           for k, x in v.items()], "{}"
+    elif isinstance(v, list):
+        if not v:
+            return "[]"
+        parts, brackets = [render(x, lay, lvl + 1) for x in v], "[]"
+    else:
+        return json.dumps(v, ensure_ascii=lay["ascii"])
+    step = lay["step"]
+    if step is None:
+        return brackets[0] + ", ".join(parts) + brackets[1]
+    pad = step * (lvl + 1)
+    return brackets[0] + "\n" + ",\n".join(pad + p for p in parts) + "\n" + step * lvl + brackets[1]
+
+
+def write_ledger(path, led, lay, raw):
+    """The ledger in its own layout through a temporary file and an atomic replace, the old bytes in <path>.bak. A
+    symlinked ledger is written where it points (the link stays a link) and the file keeps its mode."""
+    path = os.path.realpath(path)
+    out = (render(led, lay) + ("\n" if lay["final_nl"] else "")).replace("\n", lay["eol"]).encode("utf-8")
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        with open(path + ".bak", "wb") as fh:
+            fh.write(raw)
+        with open(tmp, "wb") as fh:
+            fh.write((BOM if lay["bom"] else b"") + out)
+        try:
+            shutil.copymode(path, tmp)
+        except OSError:
+            pass
+        os.replace(tmp, path)
+    except OSError as e:
+        remove(tmp)
+        raise Fail("%s: cannot write: %s" % (path, e.strerror or e))
+
+
+def ledger_number(v, target=None):
+    """A ledger Num for a measured value: 4 significant digits, more only while that changes whether the value meets
+    the target (so a rounded after never contradicts the re-measure)."""
+    want = meets(v, target) if target else None
+    for n in SIG_DIGITS:
+        x = float("%.*e" % (n - 1, v))
+        if not target or meets(x, target) == want:
+            break
+    if x == 0:
+        return Num("0")
+    return Num(str(int(x)) if x == int(x) and abs(x) < 1e15 else repr(x))
+
+
+def config_target(check):
+    """The target a config check carries (matcheck.target_of), else None."""
+    for k in ("target", "target_mm", "target_deg"):
+        if k in check:
+            t = check[k]
+            break
+    else:
+        t = next(([None, check[k]] for k in TARGET_SHORTCUTS if k in check), None)
+        if t is None and check.get("type") in ("value_order", "normal_valid"):
+            t = [1, None]
+    return t if is_target(t) and t != [None, None] else None
+
+
+def card_value(card, cid):
+    """(value, None) of a check in a scorecard, else (None, why it has none)."""
+    hits = [r for r in result_rows(card) if r.get("id") == cid]
+    if len(hits) != 1:
+        return None, "%d scorecard rows for this id" % len(hits)
+    r = hits[0]
+    v = r.get("value")
+    if r.get("error"):
+        return None, "error: %s" % r["error"]
+    if str(r.get("note") or "").startswith("vacuous"):
+        return None, str(r["note"])
+    if not number(v):
+        return None, "no value" if v is None else "value is NaN" if v != v else "value %s is not a number" % (
+            json.dumps(plain(v))[:80])
+    return v, None
+
+
+def slash(path):
+    return path.replace(os.sep, "/")
+
+
+def mark_fill(row, key, where, utc):
+    """row["fill"] = {before, after, utc}: the keys the fill wrote now or an earlier fill wrote, and the stamp."""
+    old = row.get("fill") if isinstance(row.get("fill"), dict) else {}
+    new = {k: (where if k == key else old[k]) for k in ("before", "after") if k == key or k in old}
+    new["utc"] = utc
+    row["fill"] = new
+
+
+def put_num(row, key, num, where, utc):
+    """row[key] = num with its provenance. False, the row untouched (the old stamp stays), when the row already holds
+    this number from this place: a repeated fill then changes nothing and the ledger is not rewritten."""
+    old, fill = row.get(key), row.get("fill")
+    if number(old) and old == num and isinstance(fill, dict) and fill.get(key) == where:
+        return False
+    row[key] = num
+    mark_fill(row, key, where, utc)
+    return True
+
+
+def cmd_fill(a):
+    """--fill before|after: see the docstring. Returns the exit code; Fail is the caller's exit 2."""
+    mode = a.fill
+    ids = list(dict.fromkeys(x for group in (a.item or []) for x in group))
+    if mode == "before" and not ids:
+        raise Fail("--fill before needs --item ID: the items whose batch comes next")
+    if mode == "before" and not a.scorecards:
+        raise Fail("--fill before needs --scorecards DIR: the scorecards measured just before the batch")
+    if a.force and mode != "before":
+        raise Fail("--force belongs to --fill before")
+    if mode == "before" and (a.rerun or a.out or a.decisions):
+        raise Fail("--fill before reads scorecards only: --rerun, --out and --decisions belong to the other modes")
+    ledger = os.path.abspath(a.ledger)
+    here = os.path.dirname(ledger)
+    tools = os.path.normpath(os.path.join(here, "..", ".."))
+    scdir = os.path.abspath(a.scorecards or here)
+    checks_dir = os.path.abspath(a.checks_dir or os.path.join(tools, "checks"))
+    fdir = os.path.join(os.path.abspath(a.out or here), "fixcheck")
+    utc = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    led, lay, raw = read_ledger(ledger, fill=True)
+    have = [it["id"] for it in led["items"]]
+    lack = [i for i in ids if i not in have]
+    if lack:
+        raise Fail("%s: no item %s" % (ledger, ", ".join(lack)))
+    items = [it for it in led["items"] if not ids or it["id"] in ids]
+    rows = [(it, x) for it in items for x in it.get("acceptance", [])]
+    warns, vinfo, configs = [], {}, {}
+    if os.path.isdir(checks_dir):
+        configs = read_configs(checks_dir, warns)
+    elif mode == "after":
+        raise Fail("no checks folder %s (pass --checks-dir)" % checks_dir)
+    else:
+        warns.append("no checks folder %s: no row gets the check's target" % checks_dir)
+    vinfo, want = plan_variants(configs, [x for _, x in rows])
+    left, changed = [], False  # (item id, row id, why)
+    counts = {"target": 0, "kept": 0, "filled": 0, "same": 0, "left": 0}
+
+    def row_where(it, x):
+        return "%s %s" % (it["id"], row_id(x.get("check"), x.get("variant")))
+
+    # a row without a target takes the config's; a guard row that has only a bound aims at nothing and stays so
+    for it, x in rows:
+        t, v, cid = x.get("target"), x.get("variant"), x.get("check")
+        if (t is None or t == [None, None]) and x.get("role", "target") != "guard" and isinstance(v, str) \
+                and v in vinfo and isinstance(cid, str):
+            check, seen = vinfo[v][1].get(cid), vinfo[v][2].get(cid)
+            t = config_target(check) if check is not None and seen == 1 and not check.get("skip") else None
+            if t is not None:
+                x["target"], x["target_from"] = t, "config"
+                counts["target"] += 1
+                changed = True
+
+    if mode == "before":
+        cards = {}
+        for it, x in rows:
+            v, cid = x.get("variant"), x.get("check")
+            if x.get("before") is not None and not a.force:
+                counts["kept"] += 1
+                continue
+            if not (isinstance(v, str) and v and not re.search(r"[\\/]", v)) or not (isinstance(cid, str) and cid):
+                left.append((row_where(it, x), "the row names no variant or check"))
+                continue
+            if v not in cards:
+                sp = os.path.join(scdir, "scorecard_%s.json" % v)
+                try:
+                    cards[v] = (load_json(sp), None)
+                except OSError:
+                    cards[v] = (None, "no scorecard_%s.json in %s" % (v, scdir))
+                except ValueError as e:
+                    cards[v] = (None, "scorecard_%s.json is unreadable (%s)" % (v, e))
+            card, err = cards[v]
+            value, why = (None, err) if card is None else card_value(card, cid)
+            if value is None:
+                left.append((row_where(it, x), why))
+                continue
+            if put_num(x, "before", ledger_number(value), slash(rel(scdir, tools)), utc):
+                counts["filled"] += 1
+                changed = True
+            else:
+                counts["same"] += 1
+    else:
+        measured, cards = collect_cards(want, configs, scdir, fdir, a.rerun, a.python)
+        done_rows = set()  # the rows an after was written to in this run
+        for it, x in rows:
+            v, cid = x.get("variant"), x.get("check")
+            if not isinstance(v, str) or not v:
+                why = "the row names no variant"
+            elif v not in vinfo:
+                why = "no config in %s has variant %s" % (checks_dir, v)
+            elif not isinstance(cid, str) or cid not in vinfo[v][1]:
+                why = "not a check id in %s" % vinfo[v][0]
+            elif vinfo[v][1][cid].get("skip"):
+                why = "skipped (skip: true) in %s" % vinfo[v][0]
+            elif vinfo[v][2][cid] > 1:
+                why = "%d checks share this id in %s" % (vinfo[v][2][cid], vinfo[v][0])
+            elif cards.get(v) is None:
+                why = (measured[v].get("error") or "no scorecard") if v in measured else "no scorecard"
+            else:
+                value, why = card_value(cards[v], cid)
+                if value is not None:
+                    t = x.get("target")
+                    done_rows.add(id(x))
+                    if put_num(x, "after", ledger_number(value, t if t and t != [None, None] else None),
+                               slash(rel(measured[v]["scorecard"], tools)), utc):
+                        counts["filled"] += 1
+                        changed = True
+                    else:
+                        counts["same"] += 1
+                    continue
+            left.append((row_where(it, x), why))
+        statuses = []
+        for it in items:
+            if it.get("status") == "user_edit" or (it.get("status") == "not_done"
+                                                   and str(it.get("note") or "").startswith("reverted:")):
+                continue
+            aims = [x for x in it.get("acceptance", []) if x.get("role", "target") != "guard" or x.get("target")]
+            unread = [x for x in aims if id(x) not in done_rows]
+            if not aims or unread:  # a status from numbers that were not just measured would be a guess
+                if it.get("status") is None:  # but the next step rejects an item with none: not_done, never a guess up
+                    it["status"] = "not_done"
+                    changed = True
+                    statuses.append("%s none -> not_done (no status yet and %s)" % (
+                        it["id"], "no aiming row" if not aims else "%d of %d aiming rows were not measured" % (
+                            len(unread), len(aims))))
+                elif aims:
+                    statuses.append("%s %s kept: %d of %d aiming rows were not measured" % (
+                        it["id"], it["status"], len(unread), len(aims)))
+                continue
+            met = 0
+            for x in aims:
+                t = x.get("target")
+                met += bool(t and t != [None, None] and number(x.get("after")) and meets(x["after"], t))
+            new = "done" if met == len(aims) else "partial" if met else "not_done"
+            statuses.append("%s %s -> %s (%d of %d target rows meet)" % (it["id"], it.get("status", "none"), new, met,
+                                                                       len(aims)))
+            if it.get("status") != new:
+                it["status"] = new
+                changed = True
+    counts["left"] = len(left)
+    if changed:
+        write_ledger(ledger, led, lay, raw)
+    print("fill %s %s: %d items, %d rows: %d numbers written, %d targets taken from the config%s%s, %d rows left"
+          % (mode, rel(ledger, tools), len(items), len(rows), counts["filled"], counts["target"],
+             ", %d before kept" % counts["kept"] if mode == "before" else "",
+             ", %d numbers already as measured" % counts["same"] if counts["same"] else "", counts["left"]))
+    if mode == "after":
+        for line in statuses:
+            print("status: " + line)
+    for where, why in left:
+        print("left: %s: %s" % (where, why))
+    for w in warns:
+        print("warning: %s" % w)
+    print("ledger %s" % ("written (old file: %s.bak)" % rel(ledger, tools) if changed else "not written: nothing to fill"))
+    return 0
+
+
 # ----------------------------------------------------------------------------- report
 
 
@@ -620,7 +989,19 @@ def main(argv=None):
     ap.add_argument("--decisions", help="decision log for exemptions (default: <tools>/review/decisions.json)")
     ap.add_argument("--rerun", action="store_true", help="re-run matcheck for every variant, fresh or not")
     ap.add_argument("--python", default=sys.executable, help="python for matcheck (default: this one)")
+    ap.add_argument("--fill", choices=("before", "after"), help="write the ledger's before or after numbers")
+    ap.add_argument("--item", action="append", nargs="+", metavar="ID", help="with --fill: an item id (repeatable)")
+    ap.add_argument("--force", action="store_true", help="with --fill before: overwrite a before that is set")
     a = ap.parse_args(argv)
+    if a.fill:
+        try:
+            return cmd_fill(a)
+        except Fail as e:
+            print("fixcheck: %s" % e, file=sys.stderr)
+            return 2
+    if a.item or a.force:
+        print("fixcheck: --item and --force belong to --fill", file=sys.stderr)
+        return 2
     t0 = time.time()
     started = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ledger = os.path.abspath(a.ledger)
@@ -640,47 +1021,11 @@ def main(argv=None):
         led = read_ledger(ledger)
         configs = read_configs(checks_dir, warns)
         rows = [x for it in led["items"] for x in it.get("acceptance", [])]
-        named = sorted({x.get("variant") for x in rows if isinstance(x.get("variant"), str)} & set(configs))
-        dup = ["%s (%s)" % (v, ", ".join(os.path.basename(p) for p, _ in configs[v]))
-               for v in named if len(configs[v]) > 1]
-        if dup:
-            raise Fail("more than one config has variant %s: the ledger cannot say which" % "; ".join(dup))
+        vinfo, want = plan_variants(configs, rows)
     except Fail as e:
         print("fixcheck: %s" % e, file=sys.stderr)
         return 2
-    vinfo, want = {}, {}  # variant -> (config name, {id: check}, {id: count}); variant -> ids to measure
-    for v in named:
-        cp, cfg = configs[v][0]
-        checks = [c for c in cfg["checks"] if isinstance(c, dict)]
-        seen = {}
-        for c in checks:
-            seen[c.get("id")] = seen.get(c.get("id"), 0) + 1
-        vinfo[v] = (os.path.basename(cp), {c.get("id"): c for c in checks}, seen)
-    for x in rows:
-        v, cid = x.get("variant"), x.get("check")
-        if (isinstance(v, str) and v in vinfo and isinstance(cid, str) and vinfo[v][2].get(cid) == 1
-                and not vinfo[v][1][cid].get("skip")):
-            want.setdefault(v, [])
-            if cid not in want[v]:
-                want[v].append(cid)
-    for v in want:
-        remove(os.path.join(fdir, safe(v), "scorecard_%s.json" % v))
-        remove(os.path.join(fdir, safe(v), "scorecard_%s.md" % v))
-    measured, cards = {}, {}
-    for v, ids in want.items():
-        cp, cfg = configs[v][0]
-        sp = os.path.join(scdir, "scorecard_%s.json" % v)
-        why, card = ("--rerun", None) if a.rerun else fresh(sp, cp, cfg, ids)
-        if card is not None:
-            measured[v] = {"source": "scorecard", "scorecard": sp, "config": cp, "why": None, "rc": None,
-                           "seconds": None, "error": None}
-        else:
-            info, card = remeasure(a.python, cp, v, ids, fdir)
-            info.update(config=cp, why=why)
-            measured[v] = info
-            print("%s: re-run (%s): rc %s, %s s%s" % (v, why, info["rc"], info["seconds"],
-                                                     ": " + info["error"] if info["error"] else ""), flush=True)
-        cards[v] = card
+    measured, cards = collect_cards(want, configs, scdir, fdir, a.rerun, a.python)
     decs = read_decisions(decpath, warns)
     apply_start = parse_utc((led.get("apply") or {}).get("started") if isinstance(led.get("apply"), dict) else None)
     if decs and apply_start is None and led.get("kind") != "user_edit":

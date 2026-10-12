@@ -41,7 +41,9 @@ only on material that already passes its numeric checks.
 4. Fill the fix ledger `review/round<N>/ledger.json` (round 2 on): for every planned fix, record the implemented change
    (node names, params, script), its acceptance checks with the measured before/after values, and anything not done
    and why. One row per plan item, even when one batch applied several; a row without a measured after value counts
-   as `not_landed`. The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
+   as `not_landed`. The numbers come from `fixcheck.py --fill` (before per item, just before its edit; after per
+   targeted set; `references/checks.md`, Fixcheck), and after the last batch `assets/workflows/ledger.js` writes each
+   row's change, note and misses and verifies every number (`SKILL.md` stage 7). The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
    build, 2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
    `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is settled and after the last batch's targeted checks, and put
    `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, on a
@@ -391,8 +393,9 @@ verified after the last change, and which fixes landed, and that round 2's apply
      findings.md (§5) from `lead.json` and the lens, verdict and re-verify files in seconds, so it needs no
      `review_result.json` and findings.md never gates the apply for more than those seconds. It refuses to overwrite a
      findings.md newer than `lead.json` unless `--force`. The drafts launch at `lead.json`, not after findings.md:
-     reconcile, one draft per plan item, rewritten to the lead's `change` and the verifier's `better_fix` and
-     `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then the auto gate (§5) from `lead.json`,
+     `assets/workflows/drafts.js` in the background (`SKILL.md` stage 7) writes one checked draft per plan item from
+     the lead's `change`, the verifier's `better_fix` and `acceptance_fixed` and your drafts from items 1-2; drafts of
+     rejected or deferred findings are dropped. Then the auto gate (§5) from `lead.json`,
      and the next ledger's rows. Apply only once findings.md is newer than `lead.json`. The apply starts with the check
      items and builds each item once its own checked draft lands.
 
@@ -481,6 +484,7 @@ trade adds its row before it is used.
 | Delta brief and section-scoped REFERENCE reads (§2) | the requirements, cheat sheet, rubric and verifier checklist are in every delta; verifiers, the re-verify agent and the lead read all of REFERENCE.md | a cross-section fact a lens skipped; wrong premises on Histogram Scan direction and Blend divide once caused wrong fixes (§2) | the lead's `premises_corrected` (`stats.premises_corrected`) rising round over round, or a verdict's `premise_errors` citing a REFERENCE section its lens didn't read |
 | Fix drafts from verdict files while the panel runs (§6) | drafts start from confirmed verdicts, take the verifier's fix, are rewritten to the lead's plan, and never run in Designer before the plan gate | an overstated number or wrong premise in a draft; about 18 brick fixes were rewritten by verifiers (§4) | a draft that reaches Designer before the plan gate (`make_brief.py` warns on `build/` files edited between the last panel's first lens start and the apply's start; it only sees edits not overwritten later in the apply), or one that differs from the verifier's fix |
 | Auto design calls (`SKILL.md`, Unattended run) | every call is settled by SD-1 or SD-2, logged in `decisions.json` with its alternative and a per-fix revert patch; requirement trades are listed first in the report | a call the user would have decided otherwise, seen only the next day; a look trade whose pattern no stat or wording showed | a call reversed the next day; a `smallest_pattern` flag |
+| Edit reviews off the build path (`SKILL.md` stage 7, `edits.js`) | every edit is still reviewed for fidelity to its draft and sdkit use, plus a cross-check; a blocker is repaired before the final gate, which waits for every review; the targeted suite and guard rows measure each rebuild | a defect a reviewer would have caught before the first rebuild costs one extra rebuild (30-70 s); in M8 the reviewers said GO on the defect a 19-s diff found | a blocker that lands after its item's targeted set was green; a repair item `<id>r` |
 | Boxed background diagnosis (`SKILL.md`, Delegating while you own Designer) | the first cause, written as `FIRST CAUSE` in the progress file; a diagnosis still open after one extension goes to per-fix attribution, which reverts what it cannot explain | a second cause the box cut (in M8 the envelope cause showed about 22 min into a 62-min diagnosis) | a red job that comes back after its first cause is fixed; an extension that ends with no `FIRST CAUSE` line |
 | REFERENCE frozen after round 1 (§2) | the requirements, physics digest, cheat sheet and rubric, which no apply changes; every premise a lead corrected, patched in at once; the brief names each build script newer than R4 with its ledger items | a lens that trusts a stale R4 value for a node no listed script names | a verdict's `premise_errors` citing R4; a finding on a script listed under Changed since REFERENCE that its script contradicts |
 | Section-scoped sheet reads (`SKILL.md` stage 2) | invariants (§5) and targets (§9) are read in full | an interaction held in a skipped process card (asphalt I10: sealant only on cracks) | a sheet §5 invariant of the layout or a chosen process missing from `spec.md`, in its §6 without a check id, or on its left-out list while a preset has the process or feature it governs |

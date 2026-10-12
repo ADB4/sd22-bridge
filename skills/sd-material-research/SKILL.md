@@ -204,23 +204,38 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
   settled the same way, at once. In an attended run (an existing material, or on request) the plan gate asks the
   calls in one AskUserQuestion batch instead, the settled option first.
 - Apply one build-measure batch per graph: edit the graph's plan items into their stage scripts in dependency order
-  (per item, `decisions.py snap` its scripts and `guards.py rows --item <id> --scorecards <the last scorecards>` before
-  the edit, `decisions.py patch` after: the per-fix revert patch and the item's guard rows, `references/review.md` §1),
-  run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
+  (per item, before the edit, `decisions.py snap` its scripts, `guards.py rows --item <id> --scorecards <the last
+  scorecards>` and `fixcheck.py --ledger <ledger> --fill before --item <id> --scorecards <the same>`; after it,
+  `decisions.py patch`: the per-fix revert patch, the item's guard rows and its before values, `references/review.md`
+  §1), run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
   (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
   that an edited node or preset parameter feeds (an edit to a shared node touches every preset). While the next graph
   builds, run the targeted set in the background: `suite.py` with `--configs` the touched configs and cross-case groups,
   `--kinds matcheck,wrong_builds,previews` and `--beside-designer`, into `review/round<N+1>` after you read the last
   set's `suite_partial.json` (each set replaces it). Items that miss their acceptance go into a second batch for that
   graph.
-- **Regression gate**, after each targeted set, since no panel reviews the last apply: fill the batch's ledger rows and
-  run `fixcheck.py`; exit 1 on a `regressed` or `guard_broken` row stops that item. Meanwhile a background eye agent
+- **Regression gate**, after each targeted set, since no panel reviews the last apply: `fixcheck.py --fill after --item
+  <the batch's items>` writes their after values and status, then `fixcheck.py`; exit 1 on a `regressed` or `guard_broken` row stops that item. Meanwhile a background eye agent
   (10-min box) reads the tiled 3x3 albedo sheet of every touched preset, plus the lit and compare sheets where a guard
   row moved, against each item's `tell`, and writes `review/round<N+1>/eye.json` `{item, tell_seen,
   finding_still_visible, files}`; read only the sheets it flags. A flag or a seen tell acts at once: one repair (20 min
   or less), then the item's per-fix revert (`decisions.py`), rebuilt behind the targeted set, and the item becomes the
   residual "reverted: created <tell>". An eye agent's "looks fine" stays provisional. A 1K per-item probe is only for
   attributing a tell seen in a batch.
+- **Shipped workflows** (`assets/workflows/`). Every leg runs them by this table, from the paths in RUN.json
+  `workflows` (set at the go answer from the realpath'd skill folder), in the background with an overlap task
+  ("Delegating while you own Designer"). Each run has its own concurrency cap, so none waits for another's slots.
+
+| Workflow | Launch with | Writes | Meanwhile you |
+|---|---|---|---|
+| `drafts.js` | at `lead.json`: `round` N, `items` the plan's ids | `review/drafts/round<N>/<id>.md`, then `<id>.checked` | settle the auto gate, write the ledger's rows; build each item once its `.checked` lands |
+| `edits.js` | per graph batch, once its drafts are checked: `round` N+1, `items` `[{id, draft, files}]` in apply order | `review/round<N+1>/apply/edits/<id>/<files>`, `<id>.done`, `<id>.review.json`, `cross.review.json` | per item on its `.done`, in apply order: snap, copy its files into `build/`, patch; then rebuild and run the targeted set while the reviewers read |
+| `ledger.js` | after the last batch's `--fill after`: `round` N+1, `items` | `review/round<N+1>/ledger_rows/<id>.json`, merged into the ledger | the final gate's export; it ends before the final fixcheck |
+| `docs.js` | at the stop point, the final gate green: `round` N+1 | `review/docs/*.json`, then REFERENCE.md and spec.md spliced | the report |
+
+  Args always include `tools`, `skill` and `python`. An item of a few changed lines you may edit yourself instead of
+  `edits.js`. A `blocker` in an edit review is repaired before the final gate (its own snap and patch, item
+  `<id>r`), and the final gate and fixcheck wait for every review file of the apply.
 - Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
   apply: `date -u` when the plan gate is settled and after the last batch's targeted checks, into the ledger's
   `apply` (`references/review.md` §1). Two full rounds; round 2 applies highs only (SD-3, SD-4; the stop rule is in
@@ -246,7 +261,8 @@ logs each one so it can be reversed the next day, and stops green with an honest
 (Recommended)" or "Change something first". Its text holds the spec summary (stage 3), the standing decisions and the
 deadline (default: the next 08:00 local). On the go answer set `<tools>/RUN.json` with `runstate.py set` (readiness
 wrote it first): `mode` "unattended", `go_utc`, `deadline_local` (local ISO), `standing_decisions`, `owner`,
-`next_leg`, `estimate`; `continuation`, `caffeinate_pid` and `incidents` stay as readiness left them. `owner` is the
+`next_leg`, `estimate`, `workflows` (`{"drafts": "<real skill>/assets/workflows/drafts.js", ...}` for the four shipped
+workflows, stage 7); `continuation`, `caffeinate_pid` and `incidents` stay as readiness left them. `owner` is the
 session id ($CLAUDE_CODE_SESSION_ID) that may call Designer, `next_leg` the routine that takes over next, and
 `continuation` the route a later leg comes up by (`none` until the probe sets it); the owner's heartbeat is
 `review/heartbeat` (Legs). With `continuation` routine, also enable leg-a, leg-b and run-watchdog
@@ -354,8 +370,8 @@ The mid-run look's SendUserFile is neither, and nothing waits on it.
 **Stop point.** Round 2's final gate is green, or the last green state is restored. Then, in this order:
 1. Stamp `report_start`. With `runstate.py set`, record `proposed_commits` (a JSON list of `{repo, files, message}`,
    one per commit the run would make; none is made, SD-6) and, when the run stopped early, `stop_reason`.
-2. Launch the docs pass and the final eye pass in the background, once the final gate is green. The docs pass (stamp
-   `docs_start`) brings REFERENCE.md and spec.md up to the final build once (`references/review.md` §2). The eye pass
+2. Launch the docs pass and the final eye pass in the background, once the final gate is green. The docs pass
+   (`docs.js`, stage 7; stamp `docs_start`) brings REFERENCE.md and spec.md up to the final build once (`references/review.md` §2). The eye pass
    (one agent, box 15 min) reads the final gate's `*_tiled3x3_albedo.png` of every preset and writes
    `review/eye_final.json` (`[{preset, sees, files}]`).
 3. Run `$PY <skill>/scripts/morning_report.py --tools <tools>`. It writes `<tools>/REPORT.md`: the verdict (8 lines or
@@ -508,9 +524,11 @@ a 62-min diagnosis wrote nothing until the user asked. While you own Designer, d
   - `preflight_night.py`: Designer freshness, power and the night's caffeinate (stdlib)
   - `morning_report.py`: the run's REPORT.md and answer batch; `--addendum` after a reversal or a user edit (stdlib)
   - `designer_relaunch.py`: Designer's state, Steam's launch dialogs, and the run's one relaunch (stdlib)
+  - `docsplice.py`: applies the docs pass's verified section replacements and edits, all or nothing (stdlib)
   - `setup_env.sh`
 - `assets/`:
   - `spec_template.md`, `context_prompt_template.md` (with the run block), `reference_template.md` (review
     REFERENCE.md), `routines.md` (the leg routines)
-  - `workflows/research_sheet.js`, `workflows/review_round.js`
+  - `workflows/research_sheet.js`, `workflows/review_round.js`, and the apply's `workflows/drafts.js`, `edits.js`,
+    `ledger.js` and `docs.js` (stage 7)
 - `evals/`: spec dry-run test cases (`evals.json`) and how to run them (`README.md`).
