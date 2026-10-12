@@ -209,9 +209,13 @@ dry runs found the same failure modes in every material, so check each hard chec
   every map that tiles, along every axis that should tile (`axis` for strips). List those maps in `maps`: without it,
   `seam` reads only height and basecolor. A soft seam check with no target lets a seam through every automated gate.
 - **A certain direction gets a hard check, even when the magnitude is an estimate.** If the physics fixes the order
-  (oiled wood is darker and more saturated than weathered grey; wet is darker than dry; fresh fracture is lighter
-  than a sooted face), add a hard `value_order` on the right channel (`lab_l`, `chroma`) between layout regions, with
-  a small `min_gap`. Keep the magnitude targets soft. Otherwise a build with the order reversed passes every hard gate.
+  (oiled wood is darker and more saturated than weathered grey; wet is darker than dry; fresh fracture is lighter than a
+  sooted face), add a hard `value_order` on the right channel (`lab_l`, `chroma`) between layout regions, with a small
+  `min_gap` (at most 5 on a CIELAB channel or in srgb255, 0.02 on 0-1 values, 0.1 mm; a `concentration` at most 1.2, or
+  capped at 0.833 or more: speccheck's direction levels). Keep the magnitude targets soft: list each estimate in the
+  spec values block's `estimates` with the checks whose numbers it sets, and speccheck flags a hard one
+  (`hard_on_estimate`) until both ends of the range are shown to pass it (`ends_checked`). Otherwise a build with the
+  order reversed passes every hard gate.
 - **Measure the rendered maps, not the mask wiring.** A deposit multiplied by mask M and then checked to lie inside M
   passes by construction. So does a `concentration` whose driver is the map the mask was built from, or a
   `mask_invariance` / `coverage` between two masks built from the same layout bands. These checks only prove the
@@ -226,8 +230,10 @@ dry runs found the same failure modes in every material, so check each hard chec
     alone does not.
   - the driver mask's own shape (`orientation`, `run_length`, a `sweep` band) when the mask itself is the claim
 - **Every hard check names the wrong build it catches.** In the spec, write one line per hard check: the mistake it
-  fails, and why the spec's own default passes it (soft edges, anti-aliasing, seeds, the estimated ranges of other
-  parameters). A check that fails the spec's own default, or that no plausible mistake can fail, is not hard.
+  fails, and why the spec's own default passes it (soft edges, anti-aliasing, seeds, both ends of every estimated range,
+  its own included, and every layer composited over it: a grime film multiplied over efflorescence took 12 L* off its
+  gap in a concrete eval). A check that fails the spec's own default, or that no plausible mistake can fail, is not
+  hard.
 - **A check steers only after its steer tests** (null, tell and power: "Soft checks that steer" below). In M8 a seed
   was picked on `wear_lines`, which scored the broom's own sidebands, and the picked seed printed lanes.
 - **A cap gets a check on its other side.** A min or max cap added in an apply (a film cap, a depth clamp) gets a

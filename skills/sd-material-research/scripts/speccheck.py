@@ -10,7 +10,7 @@ Usage:
     python speccheck.py --tools T [--spec PATH] [--checks-dir DIR] [--out PATH] [--json]
     from speccheck import read_spec_values, SpecValuesError     # for a material's checks/gen_checks.py
 
-Defaults: --spec T/spec.md, --checks-dir T/checks (a folder that is not there: rule 4 is skipped, with a note in
+Defaults: --spec T/spec.md, --checks-dir T/checks (a folder that is not there: rules 4 and 5 are skipped, with a note in
 `skipped`), --out T/review/speccheck.json. `read_spec_values(spec_path)` returns the block as a dict (the same parse
 and shape check as the CLI) and raises SpecValuesError, whose message lists every problem.
 
@@ -31,10 +31,18 @@ comments, no NaN, no repeated key) and an object with these keys, all optional b
                  for an open end); checks: the check ids that measure it; variant: the config checks/<variant>.json
                  (its `variant` key, else its file stem); config_scale: the factor from the spec's number to the
                  config target's number (0.01 for a percent in the spec and a fraction in the config; default 1)
-Every item needs an `id`. A shape-problem message names the vocabulary it expects (the allowed keys, the kinds, the
-spaces, "a key needs a value and a range"). A shape problem (unknown key, missing id, box/value length mismatch, a lo above a hi, a
-unit_m or tile_m that is not positive, a percentage without a value, a wrong type) is collected with all the others
-and ends the run with exit 2.
+    estimates    [{id, section, value, unit, what, checks, ends_checked}]  a value research could not source ((est.)
+                 or on the could-not-source list) that sets a check's number; checks: every check id whose target,
+                 threshold, cap or min_gap it sets, hard or soft ([] when none; a script row as <script>:<row id>);
+                 value: a number or [lo, hi] (null for an open end), optional; ends_checked: optional, the check
+                 ids from this entry's `checks` whose hard bound both ends of this value's range were shown to pass
+                 (the spec's section 6 Severity line for that check says how); an id that is not in `checks` is a
+                 shape problem
+Every item needs an `id`; an estimate also needs `checks` (the only list where it is required). A shape-problem
+message names the vocabulary it expects (the allowed keys, the kinds, the spaces, "a key needs a value and a range").
+A shape problem (unknown key, missing id, an estimate without checks, an ends_checked id not in its checks, box/value
+length mismatch, a lo above a hi, a unit_m or tile_m that is not positive, a percentage without a value, a wrong type)
+is collected with all the others and ends the run with exit 2.
 
 Rules. A finding is {rule, id, section, message, default, choice}; choice is true when the user may want to make the
 call, false for a transcription error the author fixes without asking.
@@ -77,6 +85,72 @@ call, false for a transcription error the author fixes without asking.
                        check id with a ":" in it (a prefix, a script-computed row outside the configs, e.g.
                        ladder:wear_lines_path) or a config entry with "compare": false ("custom check"). Such a
                        check still counts as the one check of rule 3.
+ 5 hard_on_estimate    a check an estimate lists that is hard in at least one config and tests a number an estimate
+                       sets.
+                       One finding per check id, however many estimates list it: `id` is the check id, `section` the
+                       first listing estimate's. `severity` is read without case or edge spaces ("Hard" is hard; a check
+                       without severity is soft); a hard occurrence with a true `skip` is left out (matcheck never runs
+                       it). A check that is soft in every config is quiet. A check id with a ":" in it (a script row
+                       outside the configs) is skipped ("script row <id> (outside the configs); listed by <estimate
+                       ids>"). The check's type decides, per hard occurrence:
+                       exempt types, skipped ("<id>: <type> has no number an estimate sets"): seam, mask_invariance,
+                       normal_valid, height_usage, envelope, and per_element with stat corr or abs_corr (the skill's own
+                       identity target);
+                       direction levels, skipped ("<id>: a direction (...)"; the check stays hard):
+                         value_order: gap = min_gap (absent = 0) at most 5 when `channel` is lab_l, lab_a, lab_b, chroma
+                           or hue (degrees); else by `space` (default raw): srgb255 5, mm 0.1, anything else 0.02;
+                         order: margin_mm (absent = 0) at most 0.1;
+                         a sign: any type but value_order and order (concentration included, before its own rule)
+                           whose target, target_mm or target_deg has 0 as its only finite end ([0, null], [null, 0];
+                           [0, 0] is not a sign);
+                         concentration (inside / outside the driver): no target; a target [lo, open] (or a bare number,
+                           read as its lower end) with lo at most 1.2 (lo open counts as no lower end: [open, open]
+                           too), the direction being more inside the driver than outside; or [open, hi] with hi at
+                           least 0.833 (1/1.2 rounded; the printed level is the compared one), an upper cap, read as a
+                           depletion (less inside than outside), though a cap over 1.2 (an enrichment cap) passes the
+                           same way. A two-sided band (a list [v, v] too: a point as a list is a magnitude), or a
+                           finite end beyond those levels, is a magnitude: flagged;
+                       every other hard occurrence, and a gap, margin or target beyond its level: a finding.
+                       Gaps compare with a relative tolerance of 1e-6. A min_gap or margin_mm that is present is read as
+                       matcheck reads it, float(value) ("12" is 12, true is 1); one that is not a number (null, text, a
+                       list) cannot be shown to be a direction: a finding that says "<key> <value> is not a number ...".
+                       Message (does not start with the id): "hard in <variants> and rests on <e1> (<value text>
+                       <unit>), <e2> (...)": the variants where the check is flagged (the config's `variant` key, else
+                       its file stem, sorted; a file read under both names counts once), each estimate as its id with
+                       its value and unit in parentheses ("no value", and then no unit, when it has none), in list
+                       order; an open band end prints as ">= lo" / "<= hi". For value_order / order / concentration it
+                       adds the gap clause "; min_gap 12 is above the direction floor 5" (margin_mm; "; target >= 3 is
+                       above the direction level 1.2"; a cap, "; target <= 0.5 is below the direction level 0.833"; a
+                       two-sided band under 1.2, "; target 0.5 to 2 is a two-sided band, not a direction"); when the
+                       flagged variants' gaps differ, "; min_gap 12 (aa), 20 (zz) is above the direction floor 5".
+                       ends_checked: an estimate that names the check in its `ends_checked` is dropped from the
+                       finding (the message and `section` come from the others); when every listing estimate names
+                       it there is no finding, and a skipped row says "<id>: both ends checked (e1, e2)" (merged with
+                       the check's other quiet reasons as below, "listed by" added then). A check named in
+                       ends_checked that is soft everywhere, or a direction, is quiet as before.
+                       Skipped (rule 5 as a whole): no `estimates` key or an empty list ("no estimates list in the spec
+                       values block: rule 5 skipped"); no checks folder ("no checks folder (<dir>): rule 5 skipped").
+                       Skipped rows are one per check (`id` the check id, the reason naming the listing estimates);
+                       when the check's hard occurrences skip for different reasons the row joins them, each with its
+                       variants ("c: a direction (min_gap 2 <= floor 5) in aa; seam has no number ... in bb; listed by
+                       e"). An estimate band open at both ends prints as "any value" with no unit. An unreadable
+                       config that only rule 5 reads is noted under the rule `hard_on_estimate`. A check id listed
+                       twice in one estimate counts once.
+   hard_on_estimate    choice false. Default for value_order, order and concentration: "keep it hard with a gap both
+                       ends of each listed range clear and its wrong build still fails, and name it in their
+                       ends_checked, or at the direction level (<min_gap at its floor (5, 0.1 or 0.02) / margin_mm 0.1 /
+                       target >= 1.2 or target <= 0.833, as flagged>) with the number in a soft twin; drop the link if
+                       the estimate only shapes a region, sweep or selector". Every other type: "keep it hard with a
+                       bound both ends of each listed range pass and its wrong build still fails, and name it in their
+                       ends_checked, or make it soft; drop the link if the estimate only shapes a region, sweep or
+                       selector, or the spec draws the value exactly". Flagged as both kinds in different variants:
+                       "<the first text through 'soft twin'>, in <those variants>; <the second text through 'make it
+                       soft'>, in <the others>; drop the link if ... or the spec draws the value exactly". A
+                       concentration band that straddles the levels (a claim of no concentration, around 1) gets the
+                       other-type text: a direction level would invert it.
+   estimate_unknown_check
+                       no config has a check with that id; one finding per (estimate, id), the estimate's id in `id`.
+                       choice false. Default: name the check whose number it sets, or drop the id.
 Messages do not start with the item's id (the summary line has it); percentage and config messages start with
 "variant <name>:".
 Output: the JSON file {spec, utc, block_ok, counts {rule: n}, findings, skipped}, written atomically (tmp +
@@ -101,10 +175,11 @@ if sys.version_info < (3, 9):
     sys.stderr.write("speccheck.py needs Python 3.9 or newer (this is %s)\n" % sys.version.split()[0])
     sys.exit(2)
 
-TOP_KEYS = ("tile_m", "colour_keys", "per_unit", "percentages")
+TOP_KEYS = ("tile_m", "colour_keys", "per_unit", "percentages", "estimates")
 COLOUR_KEYS = ("id", "section", "variant", "space", "value", "values", "box", "luma_box")
 UNIT_KEYS = ("id", "section", "unit", "unit_m", "tile_m", "kind", "what")
 PCT_KEYS = ("id", "section", "variant", "value", "unit", "of", "checks", "config_scale")
+EST_KEYS = ("id", "section", "value", "unit", "what", "checks", "ends_checked")
 KINDS = ("random", "table", "constant", "other")
 OPEN_LINE = "```json spec_values"
 CHANNELS = {"srgb255": "RGB", "srgb": "RGB", "rgb": "RGB", "linear": "RGB", "hsv": "HSV", "hsl": "HSL"}
@@ -113,6 +188,23 @@ REL_TOL = 1e-6
 LATTICE_SMALL = 2
 LATTICE_LONG = 8
 LUMA = (0.2126, 0.7152, 0.0722)      # Rec.709, the weights matcheck.py applies to R, G, B for channel `luma`
+EXEMPT_TYPES = ("seam", "mask_invariance", "normal_valid", "height_usage", "envelope")
+EXEMPT_CORR_STATS = ("corr", "abs_corr")
+FLOOR_CIELAB = 5.0            # a value_order min_gap that is a direction: at most 5 on a CIELAB channel or in srgb255,
+FLOOR_UNIT = 0.02             # 0.02 on 0-1 values,
+FLOOR_MM = 0.1                # 0.1 mm (an order's margin_mm too)
+CIELAB_CHANNELS = ("lab_l", "lab_a", "lab_b", "chroma", "hue")     # hue in degrees: the same level 5
+CONC_LEVEL = 1.2              # concentration: a lower end at or under 1.2 is a direction (more inside the driver),
+CONC_DOWN = 0.833             # an upper end at or over 0.833 (1/1.2 rounded; the printed level is the compared one) is
+CONC_DOWN_TXT = "0.833"       # a direction too (less inside)
+TARGET_KEYS = ("target", "target_mm", "target_deg")
+# value_order, order, concentration; then every other type
+DEFAULT_GAP = ("keep it hard with a gap both ends of each listed range clear and its wrong build still fails, and "
+               "name it in their ends_checked, or at the direction level (%s) with the number in a soft twin")
+DEFAULT_OTHER = ("keep it hard with a bound both ends of each listed range pass and its wrong build still fails, and "
+                 "name it in their ends_checked, or make it soft")
+DEFAULT_DROP = "drop the link if the estimate only shapes a region, sweep or selector"
+DEFAULT_DROP_ALL = DEFAULT_DROP + ", or the spec draws the value exactly"
 LUMA_SPACES = ("srgb255", "srgb", "linear", "raw", "")
 SPACES = ("srgb255", "srgb", "rgb", "linear", "raw", "hsv", "hsl")
 
@@ -238,7 +330,7 @@ def validate(doc):
             problems.append("unknown top-level key %r (allowed: %s)" % (k, ", ".join(TOP_KEYS)))
     if "tile_m" in doc:
         pair(doc["tile_m"], "tile_m", problems, positive=True)
-    for key in ("colour_keys", "per_unit", "percentages"):
+    for key in ("colour_keys", "per_unit", "percentages", "estimates"):
         if key in doc and not isinstance(doc[key], list):
             problems.append("%s must be a list" % key)
     colours = doc.get("colour_keys") if isinstance(doc.get("colour_keys"), list) else []
@@ -327,6 +419,31 @@ def validate(doc):
             problems.append("%s: checks must be a list of check ids" % where)
         if "config_scale" in p and not (is_num(p["config_scale"]) and p["config_scale"] > 0):
             problems.append("%s: config_scale must be a positive number" % where)
+    ests = doc.get("estimates") if isinstance(doc.get("estimates"), list) else []
+    for n, e in enumerate(ests):
+        where = "estimates[%d]" % n + (" %s" % e["id"] if isinstance(e, dict) and isinstance(e.get("id"), str) else "")
+        if not isinstance(e, dict):
+            problems.append("%s must be an object" % where)
+            continue
+        check_keys(e, EST_KEYS, where, problems)
+        for k in ("unit", "what"):
+            if isinstance(e.get(k), (int, float)):      # a list or dict is already reported by check_keys
+                problems.append("%s: %s must be a string" % (where, k))
+        if "value" in e:
+            band(e["value"], "%s value" % where, problems)
+        if "checks" not in e:
+            problems.append("%s: missing checks (a list of the check ids whose number it sets, [] when none)" % where)
+        elif not (isinstance(e["checks"], list) and all(isinstance(a, str) and a.strip() for a in e["checks"])):
+            problems.append("%s: checks must be a list of non-empty check ids" % where)
+        if "ends_checked" in e:
+            ec = e["ends_checked"]
+            if not (isinstance(ec, list) and all(isinstance(a, str) and a.strip() for a in ec)):
+                problems.append("%s: ends_checked must be a list of non-empty check ids, each also in checks" % where)
+            elif isinstance(e.get("checks"), list):
+                for a in dict.fromkeys(ec):
+                    if a not in e["checks"]:
+                        problems.append("%s: ends_checked names %s, which is not in its checks" % (
+                            where, json.dumps(a)))
     return problems
 
 
@@ -620,6 +737,226 @@ def rule_config(doc, checks_dir, skipped):
     return out
 
 
+def rband(b):
+    """A band as rule 5 prints it: a point as its number, a closed band as rule 4 does, an open end as ">= lo" or
+    "<= hi"."""
+    lo, hi = b
+    if lo == hi:
+        return fmt(lo)
+    if lo == -math.inf and hi == math.inf:
+        return "any value"
+    if hi == math.inf:
+        return ">= " + fmt(lo)
+    if lo == -math.inf:
+        return "<= " + fmt(hi)
+    return "%s to %s" % (fmt(lo), fmt(hi))
+
+
+def target_of(chk):
+    """(key, raw, band-or-None) of a check's first non-null target / target_mm / target_deg, or None."""
+    for key in TARGET_KEYS:
+        if chk.get(key) is not None:
+            return key, chk[key], band(chk[key], "", [])
+    return None
+
+
+def sign_verdict(chk, t):
+    """The skip reason when the target t (target_of's result) has 0 as its only finite end, else None."""
+    if t is not None and t[2] is not None:
+        finite = [x for x in t[2] if math.isfinite(x)]
+        if len(finite) == 1 and finite[0] == 0:
+            return "%s: a direction (a sign: %s %s)" % (chk.get("id"), t[0], json.dumps(t[1]))
+    return None
+
+
+def hard_verdict(chk):
+    """How rule 5 reads one hard check: ("exempt", reason, None), ("direction", reason, None) or ("flag", None, info);
+    info {gap: the type is a value_order / order / concentration, level: "<key> <level>" for those, clause: (key, value
+    text, tail) when the message adds a gap clause}."""
+    typ = chk.get("type")
+    cid = chk.get("id")
+    if typ in EXEMPT_TYPES or (typ == "per_element" and chk.get("stat") in EXEMPT_CORR_STATS):
+        return "exempt", "%s: %s has no number an estimate sets" % (cid, typ), None
+    if typ in ("value_order", "order"):
+        if typ == "order":
+            key, floor = "margin_mm", FLOOR_MM
+        else:
+            key = "min_gap"
+            space = str(chk.get("space") or "raw").lower()
+            if str(chk.get("channel") or "").lower() in CIELAB_CHANNELS:
+                floor = FLOOR_CIELAB
+            else:
+                floor = {"srgb255": FLOOR_CIELAB, "mm": FLOOR_MM}.get(space, FLOOR_UNIT)
+        gap = 0.0
+        if key in chk:          # matcheck reads float(c.get(key, 0.0)): "12" gates at 12, true at 1, null is an error
+            try:
+                gap = float(chk[key])
+            except (TypeError, ValueError, OverflowError):      # OverflowError: an integer too big for a float
+                gap = math.nan
+            if not math.isfinite(gap):
+                return "flag", None, {"gap": True, "level": "%s %s" % (key, fmt(floor)), "clause": (
+                    key, json.dumps(chk[key]), "is not a number, so it cannot be shown to be a direction")}
+        if gap <= floor + slack(floor):
+            return "direction", "%s: a direction (%s %s <= floor %s)" % (cid, key, fmt(gap), fmt(floor)), None
+        return "flag", None, {"gap": True, "level": "%s %s" % (key, fmt(floor)),
+                              "clause": (key, fmt(gap), "is above the direction floor %s" % fmt(floor))}
+    if typ == "concentration":
+        t = target_of(chk)
+        up = "target >= %s" % fmt(CONC_LEVEL)
+        down = "target <= %s" % CONC_DOWN_TXT
+        if t is not None and t[2] is None:
+            return "flag", None, {"gap": True, "level": up, "clause": (
+                t[0], json.dumps(t[1]), "is not a number or [lo, hi], so it cannot be shown to be a direction")}
+        sign = sign_verdict(chk, t)         # [0, null] and [null, 0] are signs here too, before the levels apply
+        if sign:
+            return "direction", sign, None
+        lo, hi = (-math.inf, math.inf) if t is None else t[2]
+        if lo == -math.inf and hi == math.inf:
+            return "direction", "%s: a direction (target has no lower end)" % cid, None
+        if lo == -math.inf:         # [open, hi]: an upper cap at or over 0.833 (a depletion, less inside than outside)
+            if hi >= CONC_DOWN - slack(CONC_DOWN):
+                return "direction", "%s: a direction (an upper cap at or over %s: target upper end %s)" % (
+                    cid, CONC_DOWN_TXT, fmt(hi)), None
+            return "flag", None, {"gap": True, "level": down, "clause": (
+                "target", rband(t[2]), "is below the direction level %s" % CONC_DOWN_TXT)}
+        if hi == math.inf or (lo == hi and is_num(t[1])):   # [lo, open], or a bare number read as its lower end
+            if lo <= CONC_LEVEL + slack(CONC_LEVEL):
+                return "direction", "%s: a direction (target lower end %s <= level %s)" % (
+                    cid, fmt(lo), fmt(CONC_LEVEL)), None
+            return "flag", None, {"gap": True, "level": up, "clause": (
+                "target", rband(t[2]), "is above the direction level %s" % fmt(CONC_LEVEL))}
+        if lo > CONC_LEVEL + slack(CONC_LEVEL):             # a two-sided band (a list [v, v] too) is a magnitude
+            return "flag", None, {"gap": True, "level": up, "clause": (
+                "target", rband(t[2]), "is above the direction level %s" % fmt(CONC_LEVEL))}
+        if hi < CONC_DOWN - slack(CONC_DOWN):
+            return "flag", None, {"gap": True, "level": down, "clause": (
+                "target", rband(t[2]), "is below the direction level %s" % CONC_DOWN_TXT)}
+        # a band that straddles the levels says "no concentration" (around 1): no direction level, a gap-less default
+        return "flag", None, {"gap": False, "clause": (
+            "target", rband(t[2]), "is a two-sided band, not a direction")}
+    sign = sign_verdict(chk, target_of(chk))
+    if sign:
+        return "direction", sign, None
+    return "flag", None, {"gap": False}
+
+
+def est_text(e):
+    """'<id> (<value text> <unit>)' of one estimate, 'no value' (and no unit) when it has none."""
+    if "value" not in e:
+        return "%s (no value)" % e["id"]
+    text = rband(band(e["value"], "", []))
+    return "%s (%s%s)" % (e["id"], text, (" " + e["unit"]) if e.get("unit") and text != "any value" else "")
+
+
+def quiet_reason(cid, quiet, listed):
+    """One skip row's reason for a check: the one reason when every hard occurrence gives it, else each distinct reason
+    with the variants it holds for."""
+    texts = list(dict.fromkeys(t for _, t in quiet))
+    if len(texts) == 1:
+        return "%s; listed by %s" % (texts[0], listed) if listed else texts[0]
+    head = "%s: " % cid
+    parts = []
+    for t in texts:
+        names = list(dict.fromkeys(n for n, tt in quiet if tt == t))
+        parts.append("%s in %s" % (t[len(head):] if t.startswith(head) else t, ", ".join(names)))
+    return "%s%s; listed by %s" % (head, "; ".join(parts), listed)
+
+
+def rule_estimates(doc, checks_dir, skipped):
+    ests = doc.get("estimates") or []
+    if not ests:
+        skipped.append({"rule": "hard_on_estimate", "id": None,
+                        "reason": "no estimates list in the spec values block: rule 5 skipped"})
+        return []
+    if not checks_dir or not os.path.isdir(checks_dir):
+        skipped.append({"rule": "hard_on_estimate", "id": None,
+                        "reason": "no checks folder (%s): rule 5 skipped" % (checks_dir or "none")})
+        return []
+    notes = []
+    loaded = load_configs(checks_dir, notes)
+    skipped.extend(dict(n, rule="hard_on_estimate") for n in notes if n not in skipped)   # rule 4 may have noted it
+    files = {}                      # a config is listed under its stem and its `variant`: one file, one entry
+    for entries in loaded.values():
+        for path, data in entries:
+            files[path] = data
+    configs = []                    # (variant name for messages, data)
+    for path in sorted(files):
+        data = files[path]
+        name = data["variant"] if isinstance(data.get("variant"), str) and data["variant"] else \
+            os.path.basename(path)[:-5]
+        configs.append((name, data))
+    owners = {}                     # check id -> the estimates that list it, in list order
+    for e in ests:
+        for cid in dict.fromkeys(e["checks"]):
+            owners.setdefault(cid, []).append(e)
+    out = []
+    for cid, owned in owners.items():
+        listed = ", ".join(e["id"] for e in owned)
+        if ":" in cid:
+            skipped.append({"rule": "hard_on_estimate", "id": cid,
+                            "reason": "script row %s (outside the configs); listed by %s" % (cid, listed)})
+            continue
+        occ = sorted(((name, c) for name, data in configs for c in data["checks"]
+                      if isinstance(c, dict) and c.get("id") == cid), key=lambda t: t[0])
+        if not occ:
+            for e in owned:
+                out.append(finding("estimate_unknown_check", e, "no config has check %s" % cid,
+                                   "name the check whose number it sets, or drop the id", False))
+            continue
+        hits, quiet = [], []        # (variant, info) of the flagged occurrences; (variant, reason) of the others
+        for name, c in occ:
+            if str(c.get("severity")).strip().lower() != "hard" or c.get("skip"):     # matcheck never runs a skip
+                continue
+            kind, text, info = hard_verdict(c)
+            if kind == "flag":
+                hits.append((name, info))
+            else:
+                quiet.append((name, text))
+        if not hits:
+            if quiet:
+                skipped.append({"rule": "hard_on_estimate", "id": cid, "reason": quiet_reason(cid, quiet, listed)})
+            continue
+        rest = [e for e in owned if cid not in (e.get("ends_checked") or [])]
+        if not rest:                # every listing estimate showed both ends of its range pass this check
+            ends = "%s: both ends checked (%s)" % (cid, listed)
+            both = sorted(quiet + [(n, ends) for n in {n for n, _ in hits}], key=lambda t: t[0])
+            skipped.append({"rule": "hard_on_estimate", "id": cid,
+                            "reason": quiet_reason(cid, both, None if not quiet else listed)})
+            continue
+        flagged = sorted({n for n, _ in hits})
+        clauses = {}                # (key, tail) -> {value text: [variants]}
+        for name, info in hits:
+            if info.get("clause"):
+                key, vt, tail = info["clause"]
+                names = clauses.setdefault((key, tail), {}).setdefault(vt, [])
+                if name not in names:
+                    names.append(name)
+        text = ""
+        for (key, tail), vals in clauses.items():
+            members = {n for ns in vals.values() for n in ns}
+            if len(clauses) == 1 and len(vals) == 1 and members == set(flagged):
+                shown = next(iter(vals))        # one gap in every flagged variant: no variant names
+            else:
+                shown = ", ".join("%s (%s)" % (v, ", ".join(ns)) for v, ns in vals.items())
+            text += "; %s %s %s" % (key, shown, tail)
+        gap_hits = [(n, i) for n, i in hits if i["gap"]]
+        if len(gap_hits) == len(hits):
+            levels = list(dict.fromkeys(info["level"] for _, info in hits))
+            default = "%s; %s" % (DEFAULT_GAP % " / ".join(levels), DEFAULT_DROP)
+        elif gap_hits:             # mixed types: each kind gets its own text, with the variants it holds for
+            levels = list(dict.fromkeys(info["level"] for _, info in gap_hits))
+            gap_in = ", ".join(sorted({n for n, _ in gap_hits}))
+            other_in = ", ".join(sorted({n for n, i in hits if not i["gap"]}))
+            default = "%s, in %s; %s, in %s; %s" % (DEFAULT_GAP % " / ".join(levels), gap_in, DEFAULT_OTHER, other_in,
+                                                     DEFAULT_DROP_ALL)
+        else:
+            default = "%s; %s" % (DEFAULT_OTHER, DEFAULT_DROP_ALL)
+        out.append(finding("hard_on_estimate", {"id": cid, "section": rest[0].get("section")},
+                           "hard in %s and rests on %s%s" % (", ".join(flagged), ", ".join(est_text(e) for e in rest),
+                                                              text), default, False))
+    return out
+
+
 # ----------------------------------------------------------------------------- command line
 
 
@@ -647,6 +984,7 @@ def utc_now():
 def run_rules(doc, checks_dir):
     skipped = []
     found = rule_colour(doc) + rule_period(doc) + rule_percent_shape(doc) + rule_config(doc, checks_dir, skipped)
+    found += rule_estimates(doc, checks_dir, skipped)
     return found, skipped
 
 

@@ -129,9 +129,10 @@ Last before the gate, `$PY <skill>/scripts/speccheck.py --tools <tools>` reads t
 template) and the configs. It flags colour keys outside their own box, per-unit randoms on a small 2-D lattice (2 or
 fewer units on one tile axis and 8 or fewer on the other: M8's per-panel paste keys printed a 1.524 m checker on a 2 x 2
 tile; a per-track stripe set is fine), fixed per-unit tables (they repeat every tile), percentages without a base or
-without exactly one check (M8's `spall_cover_pct` had two readings 2-3x apart), and configs that contradict the spec.
-Fix every finding marked `choice` false (a transcription error) and rerun; the `choice` true findings are design choices
-and go to the gate.
+without exactly one check (M8's `spall_cover_pct` had two readings 2-3x apart), configs that contradict the spec, and
+hard checks whose number an estimate sets (the block's `estimates`: two concrete evals failed a correct build on such a
+check). Fix every finding marked `choice` false (a transcription error) and rerun; the `choice` true findings are design
+choices and go to the gate.
 
 **Readiness**, beside the spec writing once research has landed (stamps `readiness_start` and `readiness_end`), so
 that every approval card and power problem shows while the user can still settle it:

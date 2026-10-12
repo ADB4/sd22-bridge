@@ -87,6 +87,15 @@ checks it before the gate, and `checks/gen_checks.py` reads its percentages and 
   base (`of`: tile area, groove length, ...) and the one check that measures it, also for a 0 preset (the check that
   measures it in the other variants). A ratio or a CV is not a percentage. A row computed by a script outside the
   configs is named `<script>:<row id>` (e.g. `ladder:wear_lines_path`).
+- every value research could not source (an (est.) value, or one on the could-not-source list) that sets a check's
+  number, as `estimates` {id, section, value, unit, what, checks, ends_checked}: `checks` names each check whose target,
+  threshold, cap or min_gap this value bounds, hard or soft (an estimated colour names the value_order checks on its own
+  channel between its region and the others). Leave out a check that only uses a region, sweep, mask or selector the
+  value shapes, and a layout dimension the spec chooses and draws exactly (a board width, a tie pitch: a choice, not an
+  estimate). speccheck flags each listed hard check that tests a magnitude; a direction (a value_order with a small
+  min_gap, an order, a concentration with a floor of at most 1.2, a sign) stays hard. `ends_checked` names the listed
+  hard checks whose bound you showed both ends of the range pass, every layer composited over the region included,
+  while the check's wrong build still fails it (the check's Severity line in §6 shows the numbers).
 Strict JSON, no comments; `null` is an open end; a point `value` is a preset, a [lo, hi] `value` a band;
 `config_scale` is the factor from the spec's number to the config's (0.01 when the config holds a fraction and the
 spec a percent).
@@ -102,6 +111,9 @@ spec a percent).
   ],
   "percentages": [
     {"id": "<param>", "section": "9", "variant": "<config>", "value": [0, 1], "unit": "%", "of": "<base>", "checks": ["<check id>"], "config_scale": 0.01}
+  ],
+  "estimates": [
+    {"id": "<value>", "section": "4", "value": [0.3, 1.5], "unit": "mm", "what": "<what could not be sourced>", "checks": ["<check id>"], "ends_checked": []}
   ]
 }
 ```
