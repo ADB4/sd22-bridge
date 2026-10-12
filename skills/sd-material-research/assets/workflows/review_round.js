@@ -1,12 +1,12 @@
 export const meta = {
   name: 'material-review-round',
-  description: 'Lens reviewers critique a procedural material from exported maps, adversarial verifiers re-measure every finding (highs first), one re-verify agent takes the high and medium findings a verifier left without a verdict, a lead writes the fix plan, design calls and scorecard',
+  description: 'Lens reviewers critique a procedural material from exported maps, adversarial verifiers re-measure every finding (highs first), one re-verify agent takes the high and medium findings a verifier left without a verdict, a plan lead writes the fix plan and design calls while a scorecard lead writes the requirements scorecard',
   whenToUse: 'sd-material-research stage 6: the default panel route (the Agent tool is the fallback)',
   phases: [
     { title: 'Review', detail: 'one reviewer per lens, time-boxed' },
     { title: 'Verify', detail: 'adversarial re-measurement of each lens\'s findings, highs, then mediums, then lows, time-boxed' },
     { title: 'Re-verify', detail: 'one agent for every high or medium finding left without a verdict' },
-    { title: 'Synthesize', detail: 'lead: plan, design calls, scorecard, ledger targets' },
+    { title: 'Synthesize', detail: 'plan lead and scorecard lead in parallel: plan, design calls, ledger targets; requirements scorecard' },
   ],
 }
 
@@ -15,10 +15,11 @@ export const meta = {
 //   review_dir   absolute path of <tools>/review  (REFERENCE.md lives here; round<N>/ holds the delta BRIEF.md,
 //                previews, scorecards, ledger)
 //   round        round number (1, 2, ...)
-//   lenses       [{key, prompt, sections?, owns?}]   built from the spec (references/review.md §3); key: letters,
+//   lenses       [{key, prompt, sections?, owns?, box?}]   built from the spec (references/review.md §3); key: letters,
 //                digits, _ or -, unique ignoring case (the Mac volume folds case, so G1 and g1 would share a file);
 //                sections: the REFERENCE.md ids the lens reads besides R1, R5, R9 (all of it when absent or empty);
-//                owns: the carried items it owns (ledger ids, last round's unverified/deferred, open questions)
+//                owns: the carried items it owns (ledger ids, last round's unverified/deferred, open questions);
+//                box: {min?, calls?} overrides box_lens for this lens (round 2's regressions lens)
 //   max_findings optional, default 7 / 6 / 5 for rounds 1 / 2 / 3+
 //   box_lens     optional {min, calls}, default {min: 15, calls: 35}   (RV-03 time boxes; widen box_verify when the
 //   box_verify   optional {min, calls}, default {min: 12, calls: 25}    severity-change rate in stats falls)
@@ -26,7 +27,9 @@ export const meta = {
 //   skill_dir    optional, default ~/.claude/skills/sd-material-research
 // Every agent runs at xhigh (no effort tiers); concurrency is the runtime's cap, min(16, CPUs-2).
 // Each agent stamps `date -u` first and last and writes one file in round<N>/: <lens>.json (findings),
-// <lens>.verdicts.json, reverify.verdicts.json, lead.json. Main can read them while the panel runs.
+// <lens>.verdicts.json, reverify.verdicts.json, lead.json (the plan lead: no requirements scorecard, no invariants table),
+// scorecard.json (the scorecard lead, at the same time as lead.json). invariants.json is not an agent's file: make_brief.py
+// writes it from the scorecards before the panel. Main can read them while the panel runs.
 // Finding status: confirmed; rejected (a verdict says real=false or severity none; `artifact` alone never rejects);
 // unverified (no verdict: a high/medium that neither its verifier nor the re-verify agent checked, or a low its verifier
 // did not reach; lows are not re-verified).
@@ -48,19 +51,23 @@ const RANK = f => { const r = SEV.indexOf(f.severity); return r < 0 ? SEV.length
 if (!DIR) throw new Error('args.review_dir is required')
 const lenses = A.lenses || []
 if (!Array.isArray(lenses) || lenses.length === 0) throw new Error('args.lenses must be a non-empty array of {key, prompt}')
-const RESERVED = ['lead', 'reverify', 'ledger', 'review_result', 'lenses', 'panel_args']
+const RESERVED = ['lead', 'reverify', 'ledger', 'review_result', 'lenses', 'panel_args', 'scorecard', 'invariants', 'suite', 'suite_partial', 'wrong_builds']
 const seenKeys = new Set()
 for (const l of lenses) {
   const k = l && l.key
   const kk = String(k || '').toLowerCase()
-  if (!/^[A-Za-z0-9_-]+$/.test(k || '') || RESERVED.includes(kk) || seenKeys.has(kk) || !l.prompt)
-    throw new Error(`lens ${JSON.stringify(k)}: needs a prompt and a key of letters, digits, _ or -, unique ignoring case, not ${RESERVED.join(', ')} in any case`)
+  if (!/^[A-Za-z0-9_-]+$/.test(k || '') || RESERVED.includes(kk) || kk.startsWith('scorecard_') || seenKeys.has(kk) || !l.prompt)
+    throw new Error(`lens ${JSON.stringify(k)}: needs a prompt and a key of letters, digits, _ or -, unique ignoring case, not ${RESERVED.join(', ')} or starting with scorecard_ (scorecard_<variant>.json files) in any case`)
   seenKeys.add(kk)
   const sid = s => typeof s === 'string' && /^R[1-9][0-9]*$/.test(s)
   if (l.sections != null && (!Array.isArray(l.sections) || !l.sections.every(sid)))
     throw new Error(`lens ${JSON.stringify(k)}: sections must be an array of REFERENCE ids R1, R2, ...`)
   if (l.owns != null && (!Array.isArray(l.owns) || !l.owns.every(o => typeof o === 'string')))
     throw new Error(`lens ${JSON.stringify(k)}: owns must be an array of item ids`)
+  const pos = v => Number.isInteger(v) && v > 0
+  if (l.box != null && (typeof l.box !== 'object' || Array.isArray(l.box) || !Object.keys(l.box).length
+      || !Object.keys(l.box).every(x => (x === 'min' || x === 'calls') && pos(l.box[x]))))
+    throw new Error(`lens ${JSON.stringify(k)}: box must be {min?, calls?}, positive integers`)
 }
 
 const STAMPS = {
@@ -113,11 +120,12 @@ const VERDICTS = {
       basis: { type: 'string', enum: ['hard_requirement', 'invariant', 'spec_fact', 'realism', 'taste'] },
       premise_errors: { type: 'string' },
       severity_adjusted: { type: 'string', enum: ['high', 'medium', 'low', 'none'] },
+      use_distance: { type: 'string', description: 'for severity_adjusted high: the whole-tile or tiled sheet (file) on which you saw it at use distance; otherwise "not visible at use distance" or "n/a"' },
       fix_assessment: { type: 'string', enum: ['right', 'partial', 'wrong', 'harmful'] },
       better_fix: { type: 'string' },
       acceptance_fixed: { type: 'string', description: 'reachable target checked against a baseline' },
       reasoning: { type: 'string' },
-    }, required: ['id', 'real', 'reproduced', 'independent_numbers', 'artifact', 'basis', 'premise_errors', 'severity_adjusted', 'fix_assessment', 'better_fix', 'acceptance_fixed', 'reasoning'] } },
+    }, required: ['id', 'real', 'reproduced', 'independent_numbers', 'artifact', 'basis', 'premise_errors', 'severity_adjusted', 'use_distance', 'fix_assessment', 'better_fix', 'acceptance_fixed', 'reasoning'] } },
     not_checked: { type: 'array', items: { type: 'string' }, description: 'ids of findings you did not re-measure with your own script; they get no verdict' },
   },
   required: ['started', 'ended', 'verdicts', 'not_checked'],
@@ -131,33 +139,60 @@ const PLAN = {
       priority: { type: 'integer' }, title: { type: 'string' }, why: { type: 'string' }, change: { type: 'string' },
       variants: { type: 'array', items: { type: 'string' } }, source_ids: { type: 'array', items: { type: 'string' } },
       depends_on: { type: 'array', items: { type: 'integer' } }, acceptance: { type: 'string' }, guard_rails: { type: 'string' },
-    }, required: ['priority', 'title', 'why', 'change', 'variants', 'source_ids', 'depends_on', 'acceptance', 'guard_rails'] } },
-    design_calls: { type: 'array', description: 'every choice only the user can make; the plan gate asks them in one batch', items: { type: 'object', properties: {
+      tell: { type: 'string', description: 'the visible defect this change could create, one line' },
+      guards: { type: 'array', description: 'bounds that become ledger guard rows (fixcheck guard_broken), never demoted to notes; [] when the standard guards cover the fix', items: { type: 'object', properties: {
+        check: { type: 'string', description: 'a check id in that variant\'s config' }, variant: { type: 'string' },
+        bound: { type: 'array', minItems: 2, maxItems: 2, items: { type: ['number', 'null'] }, description: '[lo, hi], null for an open end' },
+      }, required: ['check', 'variant', 'bound'] } },
+      intended_lowfreq: { type: 'array', items: { type: 'string' }, description: 'check ids (or check@variant) of a tile-period feature this fix means to add, e.g. a one-cycle meander; exempts their guard rows only because it is declared here, before the build; [] when none' },
+    }, required: ['priority', 'title', 'why', 'change', 'variants', 'source_ids', 'depends_on', 'acceptance', 'guard_rails', 'tell', 'guards', 'intended_lowfreq'] } },
+    design_calls: { type: 'array', description: 'every choice between looks, a requirement trade or a deviation; the standing decisions SD-1 and SD-2 settle each one, nobody is asked', items: { type: 'object', properties: {
       question: { type: 'string' },
       options: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'object', properties: {
         label: { type: 'string' }, consequence: { type: 'string', description: 'what the material looks or measures like with this option' },
-      }, required: ['label', 'consequence'] } },
+        adds_pattern: { type: 'string', enum: ['yes', 'no', 'unknown'], description: 'yes/no by a measured tile-period stat (more than max(5 %, tolerance) above the current build); yes by wording only when a named pattern cannot be measured; no for an option that leaves the build as it is; else unknown' },
+        pattern_evidence: { type: 'string', description: 'the stat with its before and after and where it was measured (draft, model or 1K probe), or the line naming the pattern and why it could not be measured, or "no change", or "unknown"' },
+      }, required: ['label', 'consequence', 'adds_pattern', 'pattern_evidence'] } },
       recommended: { type: 'string', description: 'label of the recommended option, which is listed first' },
+      settled: { type: 'string', description: 'label of the option SD-1 and SD-2 pick; every fix the call touches is written for it' },
+      rule: { type: 'string', enum: ['recommended', 'no_pattern', 'smallest_pattern'] },
+      changes_spec: { type: 'boolean', description: 'true when an option changes a spec value, a requirement reading or a check target (a requirement trade)' },
       affects: { type: 'string', description: 'fix priorities, R-ids and variants the answer changes' },
-    }, required: ['question', 'options', 'recommended', 'affects'] } },
+    }, required: ['question', 'options', 'recommended', 'settled', 'rule', 'changes_spec', 'affects'] } },
     spot_checks: { type: 'array', description: 'one row per UNVERIFIED high or medium finding, and per FIX STATUS row marked not_checked (id = its fix)', items: { type: 'object', properties: {
       id: { type: 'string' }, lens: { type: 'string' },
       outcome: { type: 'string', enum: ['confirmed', 'downgraded', 'rejected', 'not_measured', 'landed', 'partial', 'not_landed'] },
       numbers: { type: 'string', description: 'your script and numbers' },
     }, required: ['id', 'lens', 'outcome', 'numbers'] } },
-    requirements_scorecard: { type: 'array', items: { type: 'object', properties: {
-      requirement: { type: 'string' }, variant: { type: 'string' }, verdict: { type: 'string', enum: ['met', 'mostly_met', 'not_met'] }, evidence: { type: 'string' },
-    }, required: ['requirement', 'variant', 'verdict', 'evidence'] } },
-    invariants: { type: 'array', items: { type: 'object', properties: {
-      id: { type: 'string' }, variant: { type: 'string' }, pass: { type: 'boolean' }, value: { type: 'string' },
-    }, required: ['id', 'variant', 'pass', 'value'] } },
     keep_as_is: { type: 'array', items: { type: 'string' } },
-    deferred: { type: 'array', items: { type: 'string' } },
+    deferred: { type: 'array', items: { type: 'string' }, description: 're-deferred carried items and design calls over the cap; never a numeric target' },
+    residuals: { type: 'array', description: 'every confirmed or spot-checked finding not admitted to the plan; reported, never deferred with a numeric target', items: { type: 'object', properties: {
+      id: { type: 'string' }, family: { type: 'string', description: 'lens family or category' },
+      severity: { type: 'string', enum: ['high', 'medium', 'low'] }, variants: { type: 'array', items: { type: 'string' } },
+      visible_at: { type: 'string', enum: ['zoom', '1:1', 'tile', 'tiled'] }, numbers: { type: 'string' },
+      why_open: { type: 'string', description: 'why it is not planned: the admission rule, the cap, taste' },
+      next_lever: { type: 'string', description: 'the change that would address it, for a later round or the user' },
+    }, required: ['id', 'family', 'severity', 'variants', 'visible_at', 'numbers', 'why_open', 'next_lever'] } },
     conflicts_resolved: { type: 'array', items: { type: 'string' } },
     premises_corrected: { type: 'array', items: { type: 'string' } },
     overall_assessment: { type: 'string' },
   },
-  required: ['started', 'ended', 'fixes', 'design_calls', 'spot_checks', 'requirements_scorecard', 'invariants', 'keep_as_is', 'deferred', 'conflicts_resolved', 'premises_corrected', 'overall_assessment'],
+  required: ['started', 'ended', 'fixes', 'design_calls', 'spot_checks', 'keep_as_is', 'deferred', 'residuals', 'conflicts_resolved', 'premises_corrected', 'overall_assessment'],
+}
+
+// The scorecard lead's file (R-17): the requirements scorecard only. The invariants table is make_brief.py's
+// round<N>/invariants.json.
+const SCORECARD = {
+  type: 'object',
+  properties: {
+    ...STAMPS,
+    requirements_scorecard: { type: 'array', items: { type: 'object', properties: {
+      requirement: { type: 'string', description: 'the bare requirement id, R<k> (R7, not "R7 (mortar)")' }, variant: { type: 'string', description: 'a variant name as in the round\'s scorecard_<variant>.json files, or * for every variant' }, verdict: { type: 'string', enum: ['met', 'mostly_met', 'not_met'] },
+      hard: { type: 'boolean', description: 'true when the requirement is a hard acceptance criterion (spec section 1, BRIEF R1); an eye criterion the user made soft is false' },
+      evidence: { type: 'string' },
+    }, required: ['requirement', 'variant', 'verdict', 'hard', 'evidence'] } },
+  },
+  required: ['started', 'ended', 'requirements_scorecard'],
 }
 
 // RV-05: every agent reads the round's delta brief (it carries REFERENCE R1, R5 and R9: requirements, node cheat sheet,
@@ -195,7 +230,9 @@ finding; once the box is spent, ${spent}`
 // The verifiers' own method; the re-verify agent uses the same text.
 const METHOD = `Apply the verifier checklist in the brief to EACH finding: reproduce at
 least one key number with your own script on full-res maps; refute claim by claim (visible? preview shader? downsampling?
-metric artifact? wrong premise? basis? controls for statistical claims? does the consequence follow?). Correct overstated
+metric artifact? wrong premise? basis? controls for statistical claims? does the consequence follow?). A high stands only
+when you see it at use distance on the whole-tile or tiled sheet: name that sheet in use_distance, or set
+severity_adjusted to medium at most. Correct overstated
 numbers and downgrade rather than reject; real=false only when the core is unsupported. Review each fix (does it create a
 singular feature or lattice, a bevel, break an invariant or registration, conflict with a requirement?) and the acceptance
 target (reachable on current data, checked against a baseline?). Never guess a verdict: a finding you did not re-measure
@@ -211,7 +248,7 @@ that map to a requirement id, an invariant id or a cited spec fact; say "taste" 
 lists as rejected or keep-as-is unless they regressed. Return 0-${MAXF} findings, most severe first, with ids ${l.key}-1,
 ${l.key}-2, ...; fill fix_status for the ledger items your lens covers if the brief has a ledger for this round (else leave it empty);
 leave out items outside your lens.
-${boxed(BOX_LENS, 'stop measuring and report what you have, most severe first; set box to the limit you hit and list in not_reached every part of your lens brief you did not review; a ledger item of your lens you did not reach gets fix_status not_checked. Inside the box: box not_hit, not_reached empty.')}
+${boxed({ ...BOX_LENS, ...(l.box || {}) }, 'stop measuring and report what you have, most severe first; set box to the limit you hit and list in not_reached every part of your lens brief you did not review; a ledger item of your lens you did not reach gets fix_status not_checked. Inside the box: box not_hit, not_reached empty.')}
 ${filing(`${RD}/${l.key}.json`)}
 
 LENS ${l.key}: ${l.prompt}`, { label: `review:${l.key}`, phase: 'Review', schema: FINDINGS, effort: EFFORT }),
@@ -334,16 +371,27 @@ if (unverifiedHM.length) log(`SIGNAL (RV-03): ${unverifiedHM.length} high/medium
 const deadLenses = dead.filter(d => d.startsWith('review:')).map(d => d.slice(7))
 
 phase('Synthesize')
-const plan = await agent(`${COMMON}
+const PLAN_FILE = `${RD}/lead.json`
+const planPrompt = `${COMMON}
 ${ALL_REF}
-You are the lead material artist for round ${R}. Merge duplicates (keep source ids; agreement across lenses = confidence),
+You are the lead material artist (the plan lead) for round ${R}. Merge duplicates (keep source ids; agreement across lenses = confidence),
 re-measure any disputed number yourself, correct wrong premises (Histogram Scan centre = 1 - Position; Blend divide = dst/src),
 resolve conflicts with the user's requirements in writing, and order fixes by dependency (layout -> height/structure ->
-process masks -> colour -> micro-detail). At most ${R === 1 ? 10 : R === 2 ? 8 : 5} fixes, each with acceptance checks and
-guard rails. Fill the requirements scorecard (one row per requirement per variant) and the invariants table from the
-current scorecards in the round folder. List keep-as-is, deferred items, conflicts resolved, premises corrected.
+process masks -> colour -> micro-detail). Each fix gets acceptance checks and guard rails.
+Each fix names its tell: the visible defect this change could create, in one line.
+Its guards are {check, variant, bound: [lo, hi], null for an open end} on checks in that variant's config (may be empty): they become ledger guard rows that fixcheck judges, and the run cannot demote one to a note.
+Its intended_lowfreq lists the checks (a check id or check@variant) of a tile-period feature the fix means to add, e.g. a one-cycle meander (may be empty): it exempts a row only when declared here, before the build. ${R === 1
+  ? 'Round 1 plans highs and mediums, at most 10 fixes; a low enters only as a check defect a planned fix needs.'
+  : 'Round ' + R + ' fixes highs only: plan verified highs, hard requirement or invariant breaks, and the check defects those fixes need, at most 5 fixes.'}
+Every confirmed or spot-checked finding you do not plan goes in residuals (one row each, why_open, next_lever): it is
+reported, and never deferred with a numeric target. Taste is low and gets no acceptance target. A target that a build
+showing the fix's own tell would meet better than the clean build is invalid.
+A scorecard lead writes the requirements scorecard (${RD}/scorecard.json) at the same time, and make_brief.py wrote the
+invariants table (${RD}/invariants.json): read both when a fix or a conflict turns on a requirement or an invariant
+(scorecard.json may not have landed yet: then read the round's scorecard_<variant>.json files and the confirmed
+findings). List keep-as-is, deferred items, conflicts resolved, premises corrected.
 UNVERIFIED findings are lens claims that no verifier re-measured: re-measure every high or medium among them yourself
-before planning it (one spot_checks row each); plan a low only on numbers you reproduced, else defer it.
+before planning it (one spot_checks row each); a low enters the plan only as a check defect, on numbers you reproduced.
 REJECTED findings got a verdict of real=false or severity none (why = the verifier's reasoning). Leave them out of the
 plan, unless you re-measure one and find the rejection wrong: then plan it and say so in premises_corrected.
 A FIX STATUS row marked not_checked is one a boxed lens never reached: unless another lens reported that fix, read its
@@ -353,11 +401,23 @@ Every carried item in the brief that is not a ledger item (last round's deferred
 gets one outcome: planned (its id in a fix's source_ids), re-deferred (a deferred entry that starts with its id, e.g.
 "r2:deferred:2: ...") or closed (a keep_as_is or conflicts_resolved entry that starts with its id and gives the reason).
 Spot-check an OWNED ITEM REPORTS row marked not_checked before you close its item.
-Every choice only the user can make (between looks, a requirement trade, a deviation) goes in design_calls: the question,
-2-4 options with the recommended one first, and what the answer changes. Write each fix a call touches for the recommended
-option. The plan gate asks every call in one batch; nothing is asked during the apply.
-At most ${R >= 3 ? 3 : 4} design calls (AskUserQuestion takes 4 questions${R >= 3 ? '; from round 3 the ask for another round takes one' : ''}); put any further call in deferred.
-${filing(`${RD}/lead.json`)}
+Every choice between looks, a requirement trade or a deviation goes in design_calls: the question, 2-4 options with the
+recommended one first, and what the answer changes. Nobody is asked: the standing decisions settle each call.
+- Per option, adds_pattern (yes, no, unknown) and pattern_evidence. A measured tile-period stat decides: yes when the
+  draft, a model or a 1K-scale numpy model puts row or column-mean harmonics at k = 1..3, the column-mean envelope CV or
+  lowfreq std above the current build by more than max(5 % of the current value, the check's tolerance), else no. An
+  option whose text names a new repeat, lane, band, lattice or tiling landmark: measure it with a model before you
+  decide; only if it cannot be measured, yes by its wording. An option that leaves the build as it is: no. Anything
+  else unmeasured: unknown.
+- SD-1: take the recommended option. SD-2, for a call with any yes (a look trade): unknown counts as yes; take the
+  first option in your order that is no (rule no_pattern); if none is, the smallest measured increase (rule
+  smallest_pattern). A call with no yes follows SD-1 (rule recommended). Put the label in settled, and write each fix
+  the call touches for it.
+- changes_spec: true when an option changes a spec value, a requirement reading or a check target.
+- A fix may change a value the user gave verbatim only through a design call with changes_spec true, and never
+  retargets, relaxes or demotes a check to turn it green.
+At most 4 design calls; put any further call in deferred, starting "design call:".
+${filing(PLAN_FILE)}
 
 CONFIRMED FINDINGS (with verifier notes):
 ${JSON.stringify(confirmed, null, 1)}
@@ -380,8 +440,45 @@ OWNED ITEM REPORTS:
 ${JSON.stringify(owned, null, 1)}
 
 STRENGTHS:
-${JSON.stringify(strengths, null, 1)}`, { label: 'synthesize', phase: 'Synthesize', schema: PLAN, effort: EFFORT })
+${JSON.stringify(strengths, null, 1)}`
+
+// R-17: the scorecard lead judges the requirements from the lens evidence and the scorecards, not from the plan.
+const scPrompt = `${COMMON}
+${ALL_REF}
+You are the scorecard lead for round ${R}. A plan lead writes the fix plan (${RD}/lead.json) at the same time: you write
+no plan. Write one row per requirement (R-id) per variant, each with requirement (the bare id, R<k>: R7, not "R7 (mortar)"), variant (a variant name as in the round's scorecard_<variant>.json files, or * for every variant), verdict met, mostly_met or not_met, hard (true when
+the requirement is a hard acceptance criterion per the spec's requirements section, BRIEF R1; an eye criterion the user
+made soft is false) and evidence. Judge each row from the confirmed findings' evidence (their requirement_ids), from the
+unverified findings (say so in the row's evidence; re-measure a not_met verdict that rests only on an unverified
+finding), from the FIX STATUS reports, from the round's scorecard_<variant>.json files and from ${RD}/invariants.json
+(make_brief.py wrote it from those scorecards); judge eye criteria from the lenses' judge-map evidence; give numbers with
+their source.
+${filing(`${RD}/scorecard.json`)}
+
+CONFIRMED FINDINGS (with verifier notes):
+${JSON.stringify(confirmed, null, 1)}
+
+UNVERIFIED FINDINGS (reason in why_unverified):
+${JSON.stringify(unverified, null, 1)}
+${deadLenses.length ? `
+LENSES THAT RETURNED NOTHING (their areas are unreviewed this round; do not score them as reviewed): ${deadLenses.join(', ')}
+` : ''}${cut.length ? `
+LENSES CUT BY THE TIME BOX (not_reached areas are unreviewed this round; do not score them as reviewed):
+${JSON.stringify(cut, null, 1)}
+` : ''}
+FIX STATUS REPORTS:
+${JSON.stringify(fixStatus, null, 1)}`
+
+// Both leads start together; the plan lead keeps the label `synthesize` (pathclock and timing read it).
+const [plan, sc] = await parallel([
+  () => agent(planPrompt, { label: 'synthesize', phase: 'Synthesize', schema: PLAN, effort: EFFORT }),
+  () => agent(scPrompt, { label: 'scorecard', phase: 'Synthesize', schema: SCORECARD, effort: EFFORT }),
+])
 if (!plan) { dead.push('synthesize'); log(`lead returned nothing; the agents' files are in ${RD}`) }
+if (!sc) { dead.push('scorecard'); log(`scorecard lead returned nothing; the plan is returned without requirements_scorecard (${RD}/scorecard.json may still land)`) }
+// review_result.json, make_brief's read_previous and morning_report read plan.requirements_scorecard.
+if (plan) plan.requirements_scorecard = sc && Array.isArray(sc.requirements_scorecard) ? sc.requirements_scorecard : []
+
 // RV-05 signal: premises the lead had to correct; a rise round over round means a lens's REFERENCE sections were
 // cut too far.
 stats.premises_corrected = plan && Array.isArray(plan.premises_corrected) ? plan.premises_corrected.length : 0
@@ -402,6 +499,7 @@ lenses.forEach((l, i) => {
 })
 if (redo.length) row('reverify', reverify)
 row('synthesize', plan)
+row('scorecard', sc)
 const starts = timing.map(t => parse(t.started)).filter(t => t !== null)
 const ends = timing.map(t => parse(t.ended)).filter(t => t !== null)
 const panel_min = starts.length && ends.length ? Math.round((Math.max(...ends) - Math.min(...starts)) / 6000) / 10 : null

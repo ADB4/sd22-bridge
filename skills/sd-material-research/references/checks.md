@@ -27,10 +27,10 @@ two types read can have two defaults (`tolerance_mm`: 1e-6 in `ck_order`, 0.05 i
 |---|---|
 | config | `material`, `variant` (names the scorecard), `scale` {`tile_m` (m, or [x, y]), `height_depth_mm`, `resolution`, `normal_format` directx/opengl}, `maps` {`dir`, `prefix`, `ext` (default `.png`), logical name → file stem, `masks` {name → stem}, `id`}, `compare` {render → {`dir`, `prefix`}}, `regions` {name → region}, `checks` [...], `out_dir`, `previews` |
 | check | `id`, `type`, `severity` hard/soft (default soft), `why`, `min_px`, `skip`, and a target: `target` [min, max] with `null` for an open end, or `target_mm`, `target_deg` (the same [min, max]), `max_violation_frac`, `max_changed_frac`, `max_frac` (a number: the upper bound). Without a target a check reports `info`, except `value_order` and `normal_valid`: their implicit target is [1, null], so they pass or fail like a targeted check (a failing soft one is a soft miss; a vacuous one reports vacuous) |
-| shared | `region`, `within`, `map`, `stat` (median mean min max std cv count sum pNN), `channel` (luma r g b lab_l lab_a lab_b chroma hue), `space` (raw linear srgb255 mm), `axis` (x y both) |
-| space | Default `raw` (the stored 0-1 values) for `value_range`, `value_order`, `orientation` and `spacing` on a `map`, per_element `value_mean`, the region `map` base, and `below_local` on a map other than height (on height it reads mm); `linear` for `lowfreq`, `boundary_profile`, per_element `luma_mean` / `luma_median`, and `rel_below`. So a basecolor `value_range` reads sRGB-encoded values unless you set `space`. `mm` is height × `height_depth_mm`, on the height map only (on any other map it reads raw). `space` applies to luma and r/g/b; a CIELAB channel ignores it, mm included. On a region `map` base, select height with `min_mm` / `max_mm` and no `space`: the two together scale twice |
+| shared | `region`, `within`, `map`, `stat` (median mean min max std cv count sum pNN), `channel` (luma r g b lab_l lab_a lab_b chroma hue), `space` (raw linear srgb255 mm), `axis` (x y both; `col` `row` both on `tile_harmonic`) |
+| space | Default `raw` (the stored 0-1 values) for `value_range`, `value_order`, `orientation` and `spacing` on a `map`, per_element `value_mean`, the region `map` base, and `below_local` on a map other than height (on height it reads mm); `linear` for `lowfreq`, `tile_harmonic`, `boundary_profile`, per_element `luma_mean` / `luma_median`, and `rel_below`. So a basecolor `value_range` reads sRGB-encoded values unless you set `space`. `mm` is height × `height_depth_mm`, on the height map only (on any other map it reads raw). `space` applies to luma and r/g/b; a CIELAB channel ignores it, mm included. On a region `map` base, select height with `min_mm` / `max_mm` and no `space`: the two together scale twice |
 | region | one base (`mask` + `threshold` or `range`, `map` + `min`/`max`, `height_split`, `below_local`, `rel_below`, `boundary`, `sweep`, or none), then `invert` (flips the base; ignored when there is no base, so write "neither a nor b" with `not`), then `or` → `and` → `not` → `erode_mm` → `dilate_mm` |
-| types | run_length components coverage concentration height_diff order mask_invariance envelope per_element slope edge_profile boundary_profile dispersion step lowfreq seam value_range value_order orientation spacing ridge normal_valid height_usage |
+| types | run_length components coverage concentration height_diff order mask_invariance envelope per_element slope edge_profile boundary_profile dispersion step lowfreq tile_harmonic seam value_range value_order orientation spacing ridge normal_valid height_usage |
 
 Units: lengths in **mm**, converted with `scale.tile_m` and the map size. Heights are in **mm** too: the height
 map's 0-1 range spans `height_depth_mm`. All filters, morphology and connected components wrap around the tile
@@ -154,7 +154,7 @@ interior is reproduced by 3.6 mm at 0.88 mm/px; 3.5 mm keeps the pixels exactly 
 | type | value | key params | use for |
 |---|---|---|---|
 | `run_length` | stat of the widths of a region along scanlines (mm) | `region`, `axis` x/y/both, `min_mm` / `max_mm` filter, `step_px` | joint/gap width, plank width, brick height and length. Runs wrap across the tile border and count once; a scanline entirely inside the region gives no run (a band parallel to the scan axis is NaN); widths are whole pixels, so a median can flip by one pixel |
-| `components` | from connected parts of a region (tile-wrapped) | `region`, `within`, `metric` count / count_per_m2 / eq_diameter_mm / largest_mm / small_island_count / small_island_frac / aspect (PCA elongation, 1 = round) / fill (area ÷ bounding box), `min_mm`, `below_mm`, `stat`, `connectivity` 4/8, `border_px` (opt-in: only components that reach within N px of the tile border) | pits, chips, exposed aggregate, potholes, knots, floating islands; aspect for checks vs knots, fill for ragged vs blobby outlines; `small_island_count` + `border_px` for the specks a warped coordinate draws where it interpolates across the wrap |
+| `components` | from connected parts of a region (tile-wrapped) | `region`, `within`, `metric` count / count_per_m2 / eq_diameter_mm / largest_mm / small_island_count / small_island_frac / aspect (PCA elongation, 1 = round) / fill (area ÷ bounding box) / solidity (area ÷ the convex hull of its pixel squares: a disc 0.97; rotation-dependent under about 20 px wide) / lobes, blunt10, taper30 (the outline's width profile along its PCA axis, or its reach from a `reach_from` region: bumps, blunt ends, tapering ends; keys `lobe_sigma_mm`, `lobe_prominence`, `end_frac`, `taper_reach`, `min_size_mm`, `reach_max_mm`), `min_mm`, `below_mm`, `stat`, `connectivity` 4/8, `border_px` (opt-in: only components that reach within N px of the tile border) | pits, chips, exposed aggregate, potholes, knots, floating islands; aspect for checks vs knots, fill for ragged vs blobby outlines; solidity, lobes and the end metrics for removal shapes (spalls, scaled floors, pop-outs), with `n` and per-component `samples` for the power test; `small_island_count` + `border_px` for the specks a warped coordinate draws where it interpolates across the wrap |
 | `coverage` | \|region ∩ within\| ÷ \|within\|: the share of `within` that `region` covers (whole tile without `within`) | `region`, `within` | damage %, raveled %, moss %. To ask "what share of the deposits sit near cracks", the deposits are `within` and the crack band is `region`; swapping them asks the opposite question |
 | `concentration` | coverage inside a driver region ÷ coverage outside it (`inf` when the region never occurs outside; NaN when `within` has nothing outside the driver) | `region`, `driver`, `within` | "chips sit on arrises", "raveling is in the wheel paths" |
 | `height_diff` | stat(h in a) − stat(h in b), in mm | `a`, `b`, `stat` (or `stat_a` / `stat_b`), optional `local_mm` (compare block by block), `over_blocks` | joint recess, sub-layer depth, ridge height, aggregate protrusion |
@@ -168,7 +168,8 @@ interior is reproduced by 3.6 mm at 0.88 mm/px; 3.5 mm keeps the pixels exactly 
 | `dispersion` | variance ÷ mean of feature counts in `window_mm` windows (index; Poisson scatter ≈ 1, a regular grid < 1, clustering > 1), or the share of empty windows | `region`, `window_mm` (default 30), `metric` index / empty_window_frac, `min_mm` (feature size floor), `within` + `min_cover` (default 0.5: windows mostly inside), `connectivity` | "pits cluster", "knots sit in whorls", "pop-outs are scattered", catching a uniform random sprinkle where nature clusters |
 | `step` | fraction of neighbouring pixel pairs inside a region (eroded 1 px) whose height differs by more than `threshold_mm` | `region`, `threshold_mm` (default 1), `axis` x/y/both | cliffs inside what should be a smooth surface (a damage floor, a rut, a patch): stair-stepping from 8-bit height or a hard-edged mask leaking into height |
 | `lowfreq` | the worst over `sigma_mm` of a statistic of luma after a Gaussian low-pass, relative to the mean | `map`, `sigma_mm` list (default [40, 160]), `space` (default linear), `channel`, `stat` std_over_mean (default) / frac_beyond (share beyond ± `pct` %, default 8) / peak_pct / trough_pct / pNN (% deviation of that percentile), `region` (a masked, normalised low-pass inside it, e.g. faces only) | blotches that print a lattice when tiled; peak_pct and trough_pct catch one bright or dark patch that std hides |
-| `seam` | the worst \|z\| of the wrapped border pair's mean difference against the distribution of all interior adjacent column (row) pairs: about 0-2 for a seamless tile | `maps` (default `["height", "basecolor"]` only), `two_sided` (default true), `axis` x (the left\|right border: the tile repeats along x) / y (top\|bottom) / both (default), `method` mean_abs (default) / rowmedian (opt-in), `floor_mm` / `floor` | tileability; a strip that tiles along one direction only uses `axis`. Target ≤ 3 (est.: an interior pair is rarely more than 3σ off); `details` also gives the old ratio (border ÷ mean neighbour difference). Two-sided also flags a border *smoother* than the interior (brick classic: roughness −1.67); `two_sided: false` flags only rough seams. A non-tiling map gives a very large z. On busy maps (cracks, holes, deposits crossing the border) the mean statistic's spread grows until only a ~0.1-1 mm step fails; `method: rowmedian` scores the median over rows of the signed second difference at the border pair instead (scale floor 0.005 mm for the height, 0.5/255 for the other maps), which fails a 0.02 mm lane / 0.005 mm detail step and stays ≤ 3 on a seamless tile (asphalt round 1: 0 of 150 maps; ~0.5 % of interior positions exceed 3). Keep both |
+| `tile_harmonic` | the largest of the DFT harmonics k = 1.. (k cycles per tile) of a map's column-mean and row-mean profiles, amplitude in % of the mean (the M8 lenses' "column k1"); `details` also gives each harmonic's share of the map's variance | `map` (default basecolor), `space` (default linear), `channel`, `region`, `axis` col / row / both (default), `ks` (default [1, 2, 3]), `stat` max_amp (default) / max_share / `col_k<k>` / `row_k<k>` / `share_col_k<k>` / `share_row_k<k>` | a U-only stripe that repeats with every tile (broom lanes, a shared envelope). Concrete detail: round 3's lanes read col k1 3.82 % (pre-lane 0.73, after the fix 0.36-0.45). A map that does not tile gives a large k 1 (a linear ramp: 0.61 of the variance). Wrong build: `wrong_builds.column_band` (k1 cosine, 15 % of the p5-p95 range) |
+| `seam` | the worst \|z\| of the wrapped border pair's mean difference against the distribution of all interior adjacent column (row) pairs: about 0-2 for a seamless tile | `maps` (default `["height", "basecolor"]` only), `two_sided` (default true), `axis` x (the left\|right border: the tile repeats along x) / y (top\|bottom) / both (default), `method` mean_abs (default) / rowmedian (opt-in), `floor_mm` / `floor`, `block_mm` (rowmedian only) | tileability; a strip that tiles along one direction only uses `axis`. Target ≤ 3 (est.: an interior pair is rarely more than 3σ off); `details` also gives the old ratio (border ÷ mean neighbour difference). Two-sided also flags a border *smoother* than the interior (brick classic: roughness −1.67); `two_sided: false` flags only rough seams. A non-tiling map gives a very large z. On busy maps (cracks, holes, deposits crossing the border) the mean statistic's spread grows until only a ~0.1-1 mm step fails; `method: rowmedian` scores the median over rows of the signed second difference at the border pair instead (scale floor 0.005 mm for the height, 0.5/255 for the other maps), which fails a 0.02 mm lane / 0.005 mm detail step and stays ≤ 3 on a seamless tile (asphalt round 1: 0 of 150 maps; ~0.5 % of interior positions exceed 3). Keep both Relief that runs parallel to the tested border at a fine pitch (broom striations) gives every row a coherent median: on the concrete detail 9-23 % of interior rows scored > 3 across the striations. There, test that axis alone with `block_mm` (~4-8 striation pitches; 16 mm on a 2 mm broom), which averages blocks before differencing: seamless 0.2-1.2, a 0.06 / 0.5 mm V step 4.6-31. Give the blocked axis its own wrong build (a step on that border). |
 | `value_range` | stat of a map in a region | `map`, `region`, `space` raw / srgb255 / linear, `channel` luma/r/g/b | albedo and roughness targets |
 | `value_order` | 1 if the stats are ordered across regions, else 0 | `map`, `regions`, `stat`, `order` ascending/descending, `min_gap` | roughness face < damage < mortar |
 | `orientation` | coherence-weighted fraction of structure within `tolerance_deg` (default 15) of `axis_deg` (counter-clockwise from +x, y up), from a structure tensor | `region` or `map`, `window_mm`, `pre_sigma_mm` | checks run along the grain; transverse cracks run across the lane. `dominant_deg` in details is a 15° bin centre (±7.5°) |
@@ -185,7 +186,9 @@ interior is reproduced by 3.6 mm at 0.88 mm/px; 3.5 mm keeps the pixels exactly 
      off value. Keep what was built or placed on purpose: the layout, the as-built finish and markings, and
      maintenance features at the moment they were placed (patches, repointing, sealant footprints). `sk.nowear`
      zeroes only the parameters you list, so list the aging ones, not the maintenance ones.
-   - Check `mask_invariance` on every layout mask against it.
+   - Check `mask_invariance` on every layout mask against it. A full suite run is red on a non-constant mask that
+     is byte-identical to `nowear` in every worn variant and that no `mask_invariance` check reads
+     (`uncovered_layout_mask`).
 2. **Envelope and ordering.** Removal processes only lower the surface, and they reveal what lies *beneath* the
    removed material in the same component.
    - `envelope` against `nowear`, with the deposit masks in `except`, covers "only goes down". When a deposit mask
@@ -206,9 +209,13 @@ dry runs found the same failure modes in every material, so check each hard chec
   every map that tiles, along every axis that should tile (`axis` for strips). List those maps in `maps`: without it,
   `seam` reads only height and basecolor. A soft seam check with no target lets a seam through every automated gate.
 - **A certain direction gets a hard check, even when the magnitude is an estimate.** If the physics fixes the order
-  (oiled wood is darker and more saturated than weathered grey; wet is darker than dry; fresh fracture is lighter
-  than a sooted face), add a hard `value_order` on the right channel (`lab_l`, `chroma`) between layout regions, with
-  a small `min_gap`. Keep the magnitude targets soft. Otherwise a build with the order reversed passes every hard gate.
+  (oiled wood is darker and more saturated than weathered grey; wet is darker than dry; fresh fracture is lighter than a
+  sooted face), add a hard `value_order` on the right channel (`lab_l`, `chroma`) between layout regions, with a small
+  `min_gap` (at most 5 on a CIELAB channel or in srgb255, 0.02 on 0-1 values, 0.1 mm; a `concentration` at most 1.2, or
+  capped at 0.833 or more: speccheck's direction levels). Keep the magnitude targets soft: list each estimate in the
+  spec values block's `estimates` with the checks whose numbers it sets, and speccheck flags a hard one
+  (`hard_on_estimate`) until both ends of the range are shown to pass it (`ends_checked`). Otherwise a build with the
+  order reversed passes every hard gate.
 - **Measure the rendered maps, not the mask wiring.** A deposit multiplied by mask M and then checked to lie inside M
   passes by construction. So does a `concentration` whose driver is the map the mask was built from, or a
   `mask_invariance` / `coverage` between two masks built from the same layout bands. These checks only prove the
@@ -223,8 +230,17 @@ dry runs found the same failure modes in every material, so check each hard chec
     alone does not.
   - the driver mask's own shape (`orientation`, `run_length`, a `sweep` band) when the mask itself is the claim
 - **Every hard check names the wrong build it catches.** In the spec, write one line per hard check: the mistake it
-  fails, and why the spec's own default passes it (soft edges, anti-aliasing, seeds, the estimated ranges of other
-  parameters). A check that fails the spec's own default, or that no plausible mistake can fail, is not hard.
+  fails, and why the spec's own default passes it (soft edges, anti-aliasing, seeds, both ends of every estimated range,
+  its own included, and every layer composited over it: a grime film multiplied over efflorescence took 12 L* off its
+  gap in a concrete eval). A check that fails the spec's own default, or that no plausible mistake can fail, is not
+  hard.
+- **A check steers only after its steer tests** (null, tell and power: "Soft checks that steer" below). In M8 a seed
+  was picked on `wear_lines`, which scored the broom's own sidebands, and the picked seed printed lanes.
+- **A cap gets a check on its other side.** A min or max cap added in an apply (a film cap, a depth clamp) gets a
+  check that the capped feature still shows: M8's film cap took the groove fill from 17.0 to 0.00 mm with every hard
+  check green.
+- **Re-export after a set_seed probe loop.** Measure a seed only on a fresh export, never on the first export after a
+  `set_seed` in a probe loop.
 
 `scripts/wrong_builds.py` replays those lines on the exported maps. Each case edits the maps in memory into the named
 wrong build and runs the check through matcheck's own functions; it behaves when the check passes the real maps and
@@ -265,6 +281,47 @@ $PY <skill>/scripts/wrong_builds.py --cases <tools>/checks/wrong_build_cases.py 
 - `--list` and `--merge` serve the suite: one `--only` job per config and group, merged into what one serial run
   writes (the script's docstring).
 - A case takes about 0.5 s at 2048 (a `normal_valid` case about 1 s), plus about 0.4 s per config to load its maps.
+
+## Soft checks that steer
+A check, or a custom measure (a ladder stat, a seed-screen stat), may pick a seed, set a calibration, decide a design
+option or gate an acceptance (a fix's acceptance row, a seed screen, a design call's measured stat) only after it
+passes three tests on the current maps. `wrong_builds.py --steer` runs them from the cases module's `STEER` list and
+records them in `checks/steer_tests.json` (with `steer.md` beside it):
+- **null**: on a control build that lacks the feature (the nowear compare render, an unworn preset, a no-op or pre-fix
+  build) the check reads "feature absent" (a defect check passes, a check that asks for the feature misses), and the
+  target is reachable: the clean build meets it, or a `reach_edit` surrogate does. In M8 the first `wear_lines` read
+  5.6 at k 669 on the unworn broom height against a cap of 4.9: it found wear lines in a build with no wear, and it
+  rejected seed 316. Its whitened replacement (k < 495) passes null.
+- **tell**: a surrogate of the clean build with the fix's tell painted in (`tell_edit`) scores worse, further from
+  the target, than the clean build. Both inside the target means the check cannot see the tell, and fails. M8's
+  `x_half` (target >= 120 mm) read 84-91 mm on the clean build and 144-148 mm on a surrogate with shared lanes, the
+  very defect it was meant to prevent; its target was unreachable from the clean build as well.
+- **power**: n >= 20 measured units (components, elements, runs, blocks, profiles), or, with 8 or more per-unit
+  samples (a components shape metric or a custom measure), a bootstrap 90 % interval of the stat narrower than a
+  two-sided target band; a pixel statistic is "n/a" and passes. A one-sided target below 20 units fails power. M8's `spall_reach` p90 over 3 spalls had none.
+
+A reading that is not a measurement (an error, a vacuous check, a custom measure that raises) is never evidence: that
+build fails its test. A NaN value counts as infinitely far from the target. A shape target from a research card (an
+exemplar or an est. band: `references/method.md`, the card's Shape and scale) starts as a report-only soft check in
+the round 1 configs and steers only once its steer tests pass on the material's own builds.
+
+```python
+STEER = [
+    {"config": "detail_weathered_path", "check": "wear_lines",
+     "tell": "lines along the broom with no wear under them",
+     "tell_edit": lambda ctx: [("", "height", paint_lines(ctx.main.height, cycles=40))],
+     "control": {"render": "nowear"}, "expect_control": "pass"},
+    {"config": "slab_distressed", "name": "spall_lobes",
+     "measure": lambda ctx: lobes_stat(ctx),   # {"value", "target": [2, None], "n", "samples", "stat": "median"}
+     "tell": "D-shaped bites", "tell_edit": lambda ctx: hull_each_spall(ctx),
+     "control": {"edit": lambda ctx: d_shaped_spalls(ctx)}, "expect_control": "miss"},
+]
+```
+Edits have the wrong-build shape: a list of (render, map, array), "" for the main render. Write a case when a check
+first steers anything (stage 4 for the configs' steering checks, the apply for a fix's acceptance rows and seed
+screens) and rerun `--steer` after its config or the build changes. A check that fails a test still reports, in the
+scorecard and the ledger, but steers nothing: its acceptance rows are report-only, a seed or calibration it would have
+picked is not picked on it, and a design call does not count it as measured (SD-2).
 
 ## Tips
 
@@ -388,7 +445,8 @@ $PY <skill>/scripts/suite.py <tools>/SUITE.json --out <tools>/review/round<N> \
 nonzero exit, a missing or stale output, a hard check that failed, errored or was vacuous (no waiver: `nowear` stays a
 `compare` render inside the variant configs), a wrong build that misbehaves or measured nothing, a failed command
 `gate` or a timeout. **R6:** a config whose hard check has no case is red (ids under `uncovered`), and every config
-with a hard check is when SUITE.json has no `cases`. Exit code 0 green, 1 red, 2 refused (no job run, no report).
+with a hard check is when SUITE.json has no `cases`. On a full run, the same job is red for every
+`uncovered_layout_mask` (Two families, 1; names under `uncovered_layout_masks`). Exit code 0 green, 1 red, 2 refused (no job run, no report).
 
 **Workers.** Default CPUs − 2, capped by RAM (1.5 GB a 2K job) and the job count: 6 on an 8-CPU Mac. Beside a
 Designer build (stage 7's targeted sets) pass `--beside-designer`: about half the cores. Beside a review panel, no
@@ -416,6 +474,21 @@ of `scripts/fixcheck.py`.
 ```bash
 $PY <skill>/scripts/fixcheck.py --ledger <tools>/review/round<N>/ledger.json [--rerun]
 ```
+Fill mode writes the ledger's numbers instead of judging them (the apply, `SKILL.md` stage 7; it never flags, run
+the normal mode after it):
+```bash
+$PY <skill>/scripts/fixcheck.py --ledger <ledger> --fill before --item <id> --scorecards <the last scorecards dir>
+$PY <skill>/scripts/fixcheck.py --ledger <ledger> --fill after [--item <id> ...]
+```
+Merge mode puts the verified row files of `ledger.js` into the ledger (change, note, status, misses, script_misses; no
+language model; it keeps `ledger.json.premerge`; exit 1 when a row is skipped), then run the normal mode:
+```bash
+$PY <skill>/scripts/fixcheck.py --ledger <ledger> --merge-rows <tools>/review/round<N>/ledger_rows [--item <id> ...]
+```
+`before` comes from the scorecards measured just before the item's batch and is never overwritten (`--force` does);
+`after` from the scorecards beside the ledger, re-measured when stale, and the item's `status` from its target rows
+(a "reverted:" item and a `user_edit` item keep theirs). A row with no target takes the config's (`target_from`), and
+each filled row records its sources in `fill`.
 A row's `check` must be a check id in its `variant`'s config. fixcheck reads that variant's `scorecard_<variant>.json`
 beside the ledger when it is fresh (the current export, newer than it and the config), else re-runs `matcheck.py
 --only` into `fixcheck/<variant>/` (`--rerun`: always). Read `fixcheck/fixcheck.json`. Row status:
@@ -426,5 +499,6 @@ beside the ledger when it is fresh (the current export, newer than it and the co
 
 An item landed when it has rows and every row holds or drifted. Flags: `done_not_landed` (status `done`, not landed),
 `claim_contradicted` (the ledger's `after` meets the target, the re-measure misses), `measure_failed` (matcheck could
-not re-measure a variant). Exit code 0: no flag; 1: a flag; 2: a usage, checks-dir or ledger error (nothing written).
+not re-measure a variant), `promotion_missing` (a row with `promote_hard` true whose check is still soft in the
+config). Exit code 0: no flag; 1: a flag; 2: a usage, checks-dir or ledger error (nothing written).
 About 0.07 s on fresh scorecards; a re-run about 1.6 s per variant at 2K (`mac-loaded`).

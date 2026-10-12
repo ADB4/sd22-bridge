@@ -10,13 +10,20 @@
 - Nodes get short names ("tg", "ff_rg3", "dmg_rake"), mapped to node uids per graph.
 - The map lives on the sd module (it survives importlib.reload). save_registry() writes it to <tools>/registry.json.
   Uids are stored in the .sbs, so the map stays valid across sessions.
+- sk.graph_snapshot(key, path) records a graph (nodes, parameters, connections, presets, input defaults) and a digest
+  of its build; sk.graph_diff(path) lists what changed since a snapshot. export_outputs writes the digest into the
+  manifest as graph_digest, and its exported_at is UTC with a Z. sk.edit_diff(edit_dir) does step 1 of "Iterate on a
+  finished material" (SKILL.md): it diffs every graph of the package against the newest saved snapshot and records new ones.
 - Designer is single-threaded: one run_python at a time. Keep each call under ~45 s. The MCP client gives up at ~60 s
   while Designer keeps working, so never retry a call that timed out. For long jobs use scripts/sdcall.py from a shell.
 """
 import contextlib
+import hashlib
 import json
 import os
+import re
 import time
+import xml.etree.ElementTree as ET
 import zlib
 import importlib
 
@@ -948,9 +955,17 @@ def export_outputs(key=None, out_dir=None, prefix=None, size=None, only=None, no
         if C._try(n.getReferencedResource) is not None and not _is_library(n):
             inst[n.getIdentifier()] = {"of": C._gid(n.getReferencedResource()), "params": get_params(n)}
     manifest = {"graph": gid, "package": C._try(g.getPackage().getFilePath), "prefix": prefix, "out_dir": out_dir,
-                "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "compute_s": round(tc, 2),
+                "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "compute_s": round(tc, 2),
                 "total_s": round(time.time() - t0, 2), "outputs": rows, "instances": inst,
                 "graph_params": C._js(C._try(lambda: C._graph_params(g))), "note": note}
+    # The graph as exported (temporary overrides included), without the input values presets drive: an unchanged build
+    # keeps its digest across exports. A failed read must not cost the maps, so it is recorded, not raised.
+    try:
+        snap = graph_snapshot(key)
+        manifest["graph_digest"], manifest["preset_digests"] = snap["digest"], snap["preset_digests"]
+    except C.ERRORS as e:
+        manifest["graph_digest"], manifest["preset_digests"] = None, {}
+        manifest["digest_error"] = "%s: %s" % (type(e).__name__, e)
     # In the file too, so matcheck's scorecard repeats them.
     eight = [r["output"] for r in rows if r["output"] in ("height", "normal")
              and "16" not in r["format"] and "32" not in r["format"]]
@@ -970,6 +985,286 @@ def _is_library(n):
     if not path:
         return False
     return os.path.normcase(os.path.normpath(os.path.dirname(path))) == os.path.normcase(os.path.normpath(lib_dir()))
+
+
+# ----------------------------------------------------------------------------- graph snapshots and diffs
+
+def _hash(obj):
+    return hashlib.sha1(json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def _node_def(n):
+    """A node's definition id; an instance node (it has a referenced graph) reads "instance:<package>/<graph id>"."""
+    res = C._try(n.getReferencedResource)
+    if res is not None:
+        return "instance:%s/%s" % (_lib_base(n) or "-", C._gid(res))
+    return C._try(lambda: n.getDefinition().getId()) or "?"
+
+
+def _fn_digest(fg):
+    """Short hash of a function graph, independent of its node uids (drive() makes new ones on every call): each node
+    by its definition and constants, each connection by the descriptors at its ends."""
+    nodes = C._items(C._try(fg.getNodes))
+    desc = {n.getIdentifier(): _hash([_node_def(n), _node_inputs(n, driven=False)]) for n in nodes}
+    conns = sorted(_hash([desc.get(c[0]), c[1], desc.get(c[2]), c[3]]) for c in C._connections(nodes))
+    return _hash([sorted(desc.values()), conns])[:12]
+
+
+def _node_inputs(n, driven=True):
+    """{property id: JSON-safe value} of a node's parameters (not its ports). A function-driven parameter reads
+    "fn:<hash of the function graph>". Output and input nodes also give "@identifier" (and an output "@usage")."""
+    out = {}
+    for p in C._items(n.getProperties(SDPropertyCategory.Input)):
+        if C._try(p.isConnectable, False):
+            continue
+        fg = C._try(lambda p=p: n.getPropertyGraph(p)) if driven else None
+        out[p.getId()] = "fn:" + _fn_digest(fg) if fg is not None else C._js(C._try(lambda p=p: C._param_value(n, p)))
+    if driven:
+        short = (C._try(lambda: n.getDefinition().getId()) or "").split("::")[-1]
+        if short == "output" or short.startswith("input"):
+            out["@identifier"] = C._js(C._try(lambda: n.getAnnotationPropertyValueFromId("identifier")))
+        if short == "output":
+            out["@usage"] = _usage(n)
+    return out
+
+
+def _read_presets(package_path, graph_id):
+    """{preset label: {input id: value}} of one graph, read from its .sbs file (Designer 12.4.1's API cannot read or
+    write presets). {} when the package was never saved or the graph has none. Values: a bool, an int or float, or a
+    list for vectors."""
+    if not package_path or not os.path.isfile(package_path):
+        return {}
+    with open(package_path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    for m in re.finditer(r'<graph>\s*<identifier v="([^"]*)"', text):
+        if m.group(1) != graph_id:
+            continue
+        block = text[m.start():text.index("</graph>", m.start())]
+        sp = re.search(r"<sbspresets>.*?</sbspresets>", block, re.S)
+        out = {}
+        for pr in (ET.fromstring(sp.group(0)) if sp else []):
+            label, n = pr.find("label").get("v"), 1
+            while label in out:
+                n += 1
+                label = "%s #%d" % (pr.find("label").get("v"), n)
+            vals = {}
+            for pi in (pr.find("presetinputs") if pr.find("presetinputs") is not None else []):
+                pv = pi.find("paramValue")
+                vals[pi.find("identifier").get("v")] = _preset_value(pv[0]) if pv is not None and len(pv) else None
+            out[label] = vals
+        return out
+    return {}
+
+
+def _preset_value(el):
+    raw = el.get("v") or ""
+    try:
+        if el.tag.endswith("Bool"):
+            return raw.strip().lower() in ("1", "true")
+        nums = [int(float(x)) if "Int" in el.tag else float(x) for x in raw.split()]
+    except ValueError:
+        return raw
+    return nums[0] if len(nums) == 1 else nums
+
+
+def graph_snapshot(key=None, path=None):
+    """Record a graph as plain data: {"graph", "nodes" (count), "digest", "params" {node uid: {"def", "name" (the
+    registry short name or None), "inputs" {property id: value}}}, "connections" [[src uid, src port, dst uid,
+    dst port]], "presets" {label: {input id: value}}, "preset_digests" {label: hash}, "input_defaults" {input id:
+    value}, "base" {$id: [value, inheritance]}}. Written to path when given (atomically). Read-only on the graph.
+    The digest is a sha1 over the sorted nodes (uid, definition), their parameters, the connections and the base
+    parameters ($outputsize, $format, $randomseed). It leaves out the graph's own input values (presets drive those),
+    registry names and node positions, so applying a preset or renaming a node keeps it and any build change moves it.
+    Presets are read from the package file, so they show the last save."""
+    g = graph(key)
+    nodes = C._items(g.getNodes())
+    inv = {v: k for k, v in S["reg"].get(key or S["graph"], {}).items()}
+    params, defs = {}, {}
+    for n in nodes:
+        nid = n.getIdentifier()
+        defs[nid] = _node_def(n)
+        params[nid] = {"def": defs[nid], "name": inv.get(nid), "inputs": _node_inputs(n)}
+    conns = sorted(list(c) for c in C._connections(nodes))
+    gp = C._js(C._try(lambda: C._graph_params(g))) or {}
+    defaults = {k: v.get("value") for k, v in gp.items() if not k.startswith("$")}
+    base = {k: [v.get("value"), v.get("inheritance")] for k, v in gp.items() if k.startswith("$")}
+    gid = C._gid(g)
+    presets = _read_presets(C._try(g.getPackage().getFilePath), gid)
+    body = {"nodes": sorted([k, d] for k, d in defs.items()),
+            "params": {k: v["inputs"] for k, v in params.items()}, "connections": conns, "base": base}
+    snap = {"graph": gid, "nodes": len(nodes), "digest": _hash(body), "params": params, "connections": conns,
+            "presets": presets, "preset_digests": {k: _hash(v) for k, v in presets.items()},
+            "input_defaults": defaults, "base": base}
+    if path:
+        path = os.path.abspath(os.path.expanduser(path))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(snap, fh, indent=1, sort_keys=True)
+        os.replace(tmp, path)
+    return snap
+
+
+def _changes(before, after, **extra):
+    """[{key..., before, after}] for each id whose value differs between two dicts (a missing one reads None)."""
+    return [dict(extra, input=k, before=before.get(k), after=after.get(k))
+            for k in sorted(set(before) | set(after)) if before.get(k) != after.get(k)]
+
+
+def diff_snapshots(old, new):
+    """What differs between two graph_snapshot() results (pure Python; see graph_diff)."""
+    po, pn = old.get("params", {}), new.get("params", {})
+    out = {"graph": new.get("graph"), "digest_changed": old.get("digest") != new.get("digest"),
+           "nodes_added": [[u, pn[u]["def"], pn[u].get("name")] for u in sorted(set(pn) - set(po))],
+           "nodes_removed": [[u, po[u]["def"], po[u].get("name")] for u in sorted(set(po) - set(pn))],
+           "params_changed": []}
+    for u in sorted(set(po) & set(pn)):
+        a, b = po[u], pn[u]
+        rows = [("@def", a["def"], b["def"])] if a["def"] != b["def"] else []
+        rows += [(k, a["inputs"].get(k), b["inputs"].get(k))
+                 for k in sorted(set(a["inputs"]) | set(b["inputs"])) if a["inputs"].get(k) != b["inputs"].get(k)]
+        out["params_changed"] += [{"uid": u, "name": b.get("name"), "def": b["def"], "prop": k, "before": x, "after": y}
+                                  for k, x, y in rows]
+    co, cn = {tuple(c) for c in old.get("connections", [])}, {tuple(c) for c in new.get("connections", [])}
+    out["connections_added"] = [list(c) for c in sorted(cn - co)]
+    out["connections_removed"] = [list(c) for c in sorted(co - cn)]
+    ro, rn = old.get("presets", {}), new.get("presets", {})
+    out["presets_changed"] = [{"preset": p, "input": r["input"], "before": r["before"], "after": r["after"]}
+                              for p in sorted(set(ro) | set(rn))
+                              for r in _changes(ro.get(p, {}), rn.get(p, {}))]
+    out["input_defaults_changed"] = _changes(old.get("input_defaults", {}), new.get("input_defaults", {}))
+    out["base_changed"] = _changes(old.get("base", {}), new.get("base", {}))
+    return out
+
+
+def graph_diff(snapshot_path, key=None):
+    """Compare the graph now with a snapshot file made by graph_snapshot(path=...): {"graph", "digest_changed",
+    "nodes_added" [uid, def, name], "nodes_removed", "params_changed" [{uid, name, def, prop, before, after}],
+    "connections_added", "connections_removed", "presets_changed" [{preset, input, before, after}],
+    "input_defaults_changed" [{input, before, after}], "base_changed"}. Empty lists and digest_changed false: the same
+    build. Raises ValueError when the snapshot is of another graph."""
+    with open(snapshot_path, encoding="utf-8") as fh:
+        old = json.load(fh)
+    new = json.loads(json.dumps(graph_snapshot(key), default=str))  # the same JSON round trip the file went through
+    if old.get("graph") != new["graph"]:
+        raise ValueError("snapshot %s is of graph %r, not %r" % (snapshot_path, old.get("graph"), new["graph"]))
+    return diff_snapshots(old, new)
+
+
+def _newest_snapshot(tools, gid, skip_dir):
+    """The newest (by mtime) review/round*/ or review/edit*/ graph_<gid>.snapshot.json under tools, leaving out the
+    files inside skip_dir; None when there is none."""
+    review = os.path.join(tools, "review")
+    skip = os.path.realpath(skip_dir)
+    best = None
+    try:
+        names = os.listdir(review)
+    except OSError:
+        return None
+    for name in names:
+        if not re.match(r"^(round|edit)\d+$", name):
+            continue
+        d = os.path.join(review, name)
+        f = os.path.join(d, "graph_%s.snapshot.json" % gid)
+        if os.path.realpath(d) == skip or not os.path.isfile(f):
+            continue
+        m = re.match(r"^(round|edit)(\d+)$", name)
+        # a tie (copied or checked-out folder) goes to the highest edit, then the highest round, as guards.py baseline
+        cand = (os.path.getmtime(f), 1 if m.group(1) == "edit" else 0, int(m.group(2)), f)
+        if best is None or cand > best:
+            best = cand
+    return best[-1] if best else None
+
+
+def _rel_tools(tools, path):
+    try:
+        return os.path.relpath(path, tools).replace(os.sep, "/")
+    except ValueError:  # Windows: another drive
+        return path.replace(os.sep, "/")
+
+
+def edit_diff(edit_dir, keys=None, save=True):
+    """Step 1 of 'Iterate on a finished material' in one call: what did the user change in Designer since the last
+    recorded state. edit_dir: absolute, or relative to the tools folder (created when missing). keys: the graph keys
+    to check ("<package file>::<graph id>"); default every SDSBSCompGraph of the current graph's package. save: save
+    the package first (once per package), because presets are read from the file. For each key, the newest (by mtime)
+    review/round*/ or review/edit*/ graph_<id>.snapshot.json outside edit_dir is the 'against' state; graph_diff
+    compares the live graph with it, then the live graph is recorded as edit_dir/graph_<id>.snapshot.json.
+    Writes edit_dir/edit_diff.json (atomically) and returns the same dict: {"utc", "edit_dir" (relative to the tools
+    folder), "graphs" {graph id: {"key", "against" (relative to tools, or null), "changed" (true when the digest
+    moved or any diff list is non-empty, presets and input defaults included; null with no 'against'), "diff" (the
+    graph_diff dict or null)}}, "build_newer" [files under build/ (.py and .json, not *.result.json or *.done) newer
+    than the oldest 'against' used, relative to tools: scripts the edit may need to be written back into]}.
+    Raises RuntimeError without configure() or, for the default keys, use(). Nothing is written until every key has
+    resolved and diffed; the snapshots then go in and edit_diff.json last, and a failure in that phase removes what
+    this call wrote, so a retry never finds a half-written edit_dir as its newest state."""
+    tools = S.get("tools")
+    if not tools:
+        raise RuntimeError("call sk.configure first")
+    edit_dir = os.path.abspath(os.path.join(tools, os.path.expanduser(edit_dir)))
+    if keys is None:
+        if not S.get("graph"):
+            raise RuntimeError("call sk.use first")
+        pkg = C._graph(S["graph"]).getPackage()
+        base = os.path.basename(C._try(pkg.getFilePath) or "")
+        keys = ["%s::%s" % (base, C._gid(r)) for r in C._graphs_in(pkg) if C._cls(r) == "SDSBSCompGraph"]
+    for k in keys:
+        graph(k)  # a bad key raises here, before anything is written
+    if save:
+        saved = set()
+        for k in keys:
+            path = C._try(graph(k).getPackage().getFilePath)
+            if path not in saved:
+                saved.add(path)
+                globals()["save"](k)  # the parameter `save` hides the function
+    graphs, againsts = {}, []
+    for k in keys:  # every diff first, nothing written yet
+        gid = C._gid(graph(k))
+        against = _newest_snapshot(tools, gid, edit_dir)
+        diff = graph_diff(against, k) if against else None
+        changed = None
+        if diff is not None:
+            changed = bool(diff.get("digest_changed")) or any(isinstance(v, list) and v for v in diff.values())
+            againsts.append(os.path.getmtime(against))
+        graphs[gid] = {"key": k, "against": _rel_tools(tools, against) if against else None, "changed": changed,
+                       "diff": diff}
+    newer = []
+    if againsts:
+        cutoff = min(againsts)
+        for root, dirs, files in os.walk(os.path.join(tools, "build")):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in files:
+                if f.endswith((".py", ".json")) and not f.endswith(".result.json") and not f.endswith(".done"):
+                    if os.path.getmtime(os.path.join(root, f)) > cutoff:
+                        newer.append(_rel_tools(tools, os.path.join(root, f)))
+    out = {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "edit_dir": _rel_tools(tools, edit_dir),
+           "graphs": graphs, "build_newer": sorted(newer)}
+    existed = os.path.isdir(edit_dir)
+    written = []
+    try:  # the write phase: all snapshots, then edit_diff.json last; a failure leaves edit_dir as it was
+        os.makedirs(edit_dir, exist_ok=True)
+        for g in graphs.values():
+            snap = os.path.join(edit_dir, "graph_%s.snapshot.json" % C._gid(graph(g["key"])))
+            written.append(snap)
+            graph_snapshot(g["key"], path=snap)
+        path = os.path.join(edit_dir, "edit_diff.json")
+        written.append(path + ".tmp")
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(out, fh, indent=1, default=str)
+        os.replace(path + ".tmp", path)
+    except BaseException:
+        for f in written + [os.path.join(edit_dir, "edit_diff.json")]:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        if not existed:
+            try:
+                os.rmdir(edit_dir)
+            except OSError:
+                pass
+        raise
+    return out
 
 
 # ----------------------------------------------------------------------------- variants
@@ -1127,6 +1422,176 @@ def prune_dead(dry_run=True, include_unregistered=False):
     return out
 
 
+# ----------------------------------------------------------------------------- clamp candidates and probe (R-19)
+
+BLEND_DEF = "sbs::compositing::blend"
+LEVELS_DEF = "sbs::compositing::levels"
+# Blend modes whose result can exceed 1: the option ids sdkit sets (BLEND_MODES: "add" = Add / Linear Dodge,
+# "addsub" = Add Sub, dst + 2*(src - 0.5), "divide" = dst / src, above 1 where src < dst) and the enum numbers behind
+# them (1, 4 and 8) in case a read gives a number. Not covered on purpose: substract (clamps at 0, not 1), switch,
+# overlay, screen and soft light (stay inside 0-1 for inputs inside 0-1).
+CLAMP_BLEND_MODES = {"add": "add", "lineardodge": "add", "addsub": "addsub", "divide": "divide",
+                     "1": "add", "4": "addsub", "8": "divide"}
+CLAMP_WHY = {"add": "Add / Linear Dodge", "addsub": "Add Sub (dst + 2*(src - 0.5))", "divide": "Divide (dst / src)"}
+
+
+def _blend_mode_name(v):
+    """A Blend's blendingmode value as a lower-case option id ("add", "addsub", "multiply", ...), or None."""
+    if v is None or isinstance(v, bool):
+        return None
+    raw = str(v).strip().lower()
+    key = re.sub(r"[^a-z0-9]", "", raw)
+    return CLAMP_BLEND_MODES.get(key, raw or None)
+
+
+def _usage_names(u):
+    """Usage names out of an Output node's "usages" value (a name, a {"usage": name, ...}, or a list of those)."""
+    if isinstance(u, str):
+        return [u]
+    if isinstance(u, dict):
+        return _usage_names(u.get("usage"))
+    if isinstance(u, (list, tuple)):
+        return [x for i in u for x in _usage_names(i)]
+    return []
+
+
+def _walk_up(starts, up):
+    """Pure. [(node id, distance)] for every node reachable upstream from starts, nearest first (ties by id).
+    up: {node id: iterable of the ids feeding it}. A start is distance 0; a cycle ends where it closes."""
+    dist, frontier, d = {}, sorted(set(starts)), 0
+    while frontier:
+        nxt = set()
+        for nid in frontier:
+            if nid not in dist:
+                dist[nid] = d
+                nxt.update(u for u in up.get(nid, ()) if u not in dist)
+        frontier, d = sorted(nxt), d + 1
+    return sorted(dist.items(), key=lambda t: (t[1], t[0]))
+
+
+def _clamp_scan(starts, up, defs, modes, names):
+    """Pure. Candidate rows for the nodes upstream of starts: Blend nodes whose mode can exceed 1 and every Levels
+    node, nearest first. defs: {id: definition id}; modes: {id: blendingmode value}; names: {id: registry name}."""
+    rows = []
+    for nid, dist in _walk_up(starts, up):
+        d = defs.get(nid)
+        name = names.get(nid, nid)
+        if d == BLEND_DEF:
+            mode = _blend_mode_name(modes.get(nid))
+            if mode in CLAMP_WHY:
+                why = "Blend %s: the result can exceed 1 and a 16-bit fixed-point Blend clamps it there" % CLAMP_WHY[mode]
+                rows.append({"name": name, "id": nid, "def": d, "mode": mode, "distance": dist, "why": why})
+        elif d == LEVELS_DEF:
+            rows.append({"name": name, "id": nid, "def": d, "mode": None, "distance": dist,
+                         "why": "Levels: a 16-bit fixed-point Levels clamps at 1 (output high, or an input past the in-high)"})
+    return rows
+
+
+def _output_nodes_named(g, output):
+    """Output nodes whose identifier is `output` or that carry a usage of that name."""
+    out = []
+    for o in C._items(g.getOutputNodes()):
+        ident = C._js(C._try(lambda o=o: o.getAnnotationPropertyValueFromId("identifier")))
+        if ident == output or output in _usage_names(_usage(o)):
+            out.append(o.getIdentifier())
+    return out
+
+
+def clamp_candidates(key=None, output="height"):
+    """Blend add / Levels nodes on the path to an output, nearest first. A static walk upstream (every input port,
+    opacity included, across the graph and not into referenced sub-graphs) from the Output node(s) whose identifier or
+    usage is `output`. Rows {name (registry name, else the node id), id, def, mode, distance, why}: Blend nodes in
+    Add / Linear Dodge ("add"), Add Sub ("addsub") or Divide ("divide"), and every Levels node. No compute. Input ranges cannot be read
+    statically, so this lists where a 16-bit clamp could happen; sk.clamp_probe() and clampcheck.py measure it."""
+    prev = S["graph"]
+    if key and key != prev:
+        use(key)  # resolves a spelling of the graph to the key its registry names are under
+    try:
+        g = graph()
+        nodes, up = _upstream(g)
+        inv = {v: k for k, v in S["reg"].get(S["graph"], {}).items()}
+        defs, modes = {}, {}
+        for nid, n in nodes.items():
+            defs[nid] = C._try(lambda n=n: n.getDefinition().getId())
+            if defs[nid] == BLEND_DEF:
+                p = C._try(lambda n=n: n.getPropertyFromId("blendingmode", SDPropertyCategory.Input))
+                modes[nid] = C._try(lambda n=n, p=p: C._param_value(n, p)) if p is not None else None
+        return _clamp_scan(_output_nodes_named(g, output), up, defs, modes, inv)
+    finally:
+        S["graph"] = prev
+
+
+def clamp_probe(key=None, output="height", names=None, out_dir=None, size=None, exempt=None):
+    """Save the textures of the clamp candidates (or of `names`) so clampcheck.py can count saturated pixels. One
+    compute through probe(); its temporary outputs are removed. Writes <out_dir>/<name>.png and
+    <out_dir>/clamp_probe.json {graph, output, utc, size, exempt, rows}; out_dir defaults to <dump>/clamp_probe, size
+    is a log2 like probe's (None: the graph's own). exempt: {name: reason} for a node meant to saturate: still probed,
+    its row is marked. A node that cannot be probed gets a row with `error` instead of `path`; nothing raises for one
+    node. A candidate without a registry name is probed under its node id. The JSON also has outputs_found, the number
+    of Output nodes whose identifier or usage is `output` (0: the name matches nothing, and clampcheck.py exits 2).
+    Returns the JSON as a dict."""
+    prev = S["graph"]
+    if key and key != prev:
+        use(key)
+    try:
+        g = graph()
+        cands = {c["name"]: c for c in clamp_candidates(None, output)}
+        names = list(cands) if names is None else ([names] if isinstance(names, str) else list(names))
+        names = list(dict.fromkeys(names))  # a name twice would make two temporary outputs with one identifier
+        if isinstance(exempt, (list, tuple, set)):
+            exempt = {n: "exempt" for n in exempt}
+        exempt = {str(k): str(v) or "exempt" for k, v in (exempt or {}).items()}  # an empty reason is still exempt
+        out_dir = os.path.abspath(os.path.expanduser(out_dir or os.path.join(S["dump"], "clamp_probe")))
+        os.makedirs(out_dir, exist_ok=True)
+        by_id = {n.getIdentifier(): n for n in C._items(g.getNodes())}
+        r, rows, todo, alias = reg(), {}, [], []
+        for nm in names:
+            c = cands.get(nm, {})
+            base = {"name": nm, "def": c.get("def"), "mode": c.get("mode")}
+            if nm not in r and nm in by_id:  # a node without a registry name: probe() finds it by name
+                r[nm] = nm
+                alias.append(nm)
+            if nm not in r:
+                rows[nm] = dict(base, error="no node %r in %s (not a registry name or a node id)" % (nm, S["graph"]))
+                continue
+            if base["def"] is None:
+                base["def"] = C._try(lambda nm=nm: node(nm).getDefinition().getId())
+            rows[nm] = base
+            todo.append(nm)
+        try:
+            got = {}
+            if todo:
+                try:
+                    got = {x["name"]: x for x in probe(todo, out_dir=out_dir, size=size)}
+                except C.ERRORS:  # one bad node must not cost the others: probe them one at a time
+                    for nm in todo:
+                        try:
+                            got.update({x["name"]: x for x in probe([nm], out_dir=out_dir, size=size)})
+                        except C.ERRORS as e:
+                            rows[nm]["error"] = "%s: %s" % (type(e).__name__, e)
+        finally:
+            for nm in alias:
+                r.pop(nm, None)
+        for nm in todo:
+            if nm in got:
+                rows[nm].update({k: got[nm][k] for k in ("path", "format", "size", "seconds", "warning") if k in got[nm]})
+            elif "error" not in rows[nm]:
+                rows[nm]["error"] = "probe returned no texture"
+        for nm, why in exempt.items():
+            if nm in rows:
+                rows[nm]["exempt"] = why
+        result = {"graph": C._gid(g), "output": output, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "size": size, "outputs_found": len(_output_nodes_named(g, output)), "exempt": exempt,
+                  "rows": [rows[nm] for nm in names]}
+        path = os.path.join(out_dir, "clamp_probe.json")
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(result, fh, indent=1, default=str)
+        os.replace(path + ".tmp", path)
+        return result
+    finally:
+        S["graph"] = prev
+
+
 def layout(dx=190.0, dy=125.0, pad=90.0, frame_tag="sdkit"):
     """Layered layout: x = longest path from sources, one horizontal band (and frame) per section().
     Only frames sdkit made (description == frame_tag) are replaced."""
@@ -1187,7 +1652,7 @@ def layout(dx=190.0, dy=125.0, pad=90.0, frame_tag="sdkit"):
 
 def lint():
     """Cheap static checks: heavy noises, 8-bit format, unnamed nodes, outputs without identifier, Blend kind mismatches
-    (needs a previous compute)."""
+    (needs a previous compute), Blend add / Levels nodes on the height path (clamp_candidates)."""
     g = graph()
     msgs = []
     for n in C._items(g.getNodes()):
@@ -1217,6 +1682,11 @@ def lint():
     notes = C._try(lambda: C._blend_notes(g))
     if notes:
         msgs.extend(notes if isinstance(notes, list) else [str(notes)])
+    cands = C._try(lambda: clamp_candidates(None, "height")) or []
+    if cands:
+        nm = [c["name"] for c in cands]
+        msgs.append("%d Blend add / Levels nodes on the height path (%s): run sk.clamp_probe() after the rebuild and "
+                    "clampcheck.py on its folder" % (len(nm), ", ".join(nm[:6]) + (", ..." if len(nm) > 6 else "")))
     return msgs
 
 

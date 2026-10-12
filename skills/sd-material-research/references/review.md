@@ -9,63 +9,114 @@ only on material that already passes its numeric checks.
 ## 1. Before a round (preflight)
 
 1. Export every variant and the `nowear` reference at 2048 (`sk.export_outputs`, `sk.nowear`). Run them as one
-   foreground `sdcall.py` job when they take more than ~40 s.
+   foreground `sdcall.py` job when they take more than ~40 s. After a final gate, skip the export when it still
+   stands: no `<tools>/build/*.py` is newer than the oldest manifest's `exported_at`, and every manifest's
+   `graph_digest` equals the graph's current one. Read the current digests with `sk.graph_snapshot(key)["digest"]` and
+   pass each to `make_brief.py` as `--graph-digest GID=DIGEST` (GID is the manifest's `graph`). A parameter set through
+   MCP with no build script changes the digest, so it forces an export. The digest covers the graph's own nodes, not a
+   graph its instance nodes reference (an MCP edit inside a wrapper's core goes unseen: only the build-script rule
+   covers it), and a `render_variant` override on an instance node is part of it, so that export is repeated. The
+   `.sbs` mtime does not count, because the skill saves after each stage. With no digest given, or a manifest from
+   before the field, `make_brief.py` keeps its old warning and says why. `exported_at` is UTC with a Z; a value with no
+   zone (an older manifest) is read as this machine's local time.
 2. Start the suite from one background shell (Bash `run_in_background`):
    `$PY <skill>/scripts/suite.py <tools>/SUITE.json --out <tools>/review/round<N>`. It runs matcheck, the wrong
    builds and the previews one config per job, in parallel, then merges the wrong builds and assembles the previews;
    it never calls Designer (`references/checks.md`, "Suite"). A material from before the suite has no `SUITE.json`:
-   write it first (`SKILL.md` stage 3).
+   write it first (`SKILL.md` stage 3). After a final gate, its `suite.json` stands in for this run when it started
+   after every `checks/*.json`, `checks/wrong_build_cases.py`, `gen_checks.py`, `SUITE.json` and export. Otherwise
+   `make_brief.py` says "rerun the suite only", and the export is not repeated.
 3. While it runs, do steps 4 and 5 except `fixcheck.py` and `make_brief.py`, which wait for it: the ledger,
-   REFERENCE.md and its `Valid for:`, the lens table. When it lands, read `round<N>/suite.json` (a refused run, exit
-   2, leaves none), never a grep of its text: it is green only with `green` true, `rc` 0 and `full` true. Otherwise
-   each `red` entry names a job and its reasons: a hard check that failed or measured nothing, a wrong build that
-   misbehaved, a hard check without a case (also under `uncovered`), a missing or stale output, a timeout; the job's
-   log is in `round<N>/suite/logs/`. A `suite_partial.json` (a filtered run, which moves `suite.json` aside) never
+   REFERENCE.md and its `Valid for:` (round 1), the lens table. When it lands, read `round<N>/suite.json` (a refused
+   run, exit 2, leaves none), never a grep of its text: it is green only with `green` true, `rc` 0 and `full` true.
+   Otherwise each `red` entry names a job and its reasons: a hard check that failed or measured nothing, a wrong build
+   that misbehaved, a hard check without a case (also under `uncovered`), a layout mask no `mask_invariance` check
+   reads (`uncovered_layout_masks`), a missing or stale output, a timeout; the job's log is in
+   `round<N>/suite/logs/`. A `suite_partial.json` (a filtered run, which moves `suite.json` aside) never
    counts, and a `suite.json` that started before the last export counts as red. **Fix every red job first**, then
-   steps 1-3 again: bring the REFERENCE sections (R4's parameters) and ledger rows the fix touched up to date, and
-   reset `Valid for:` to the new export. `fixcheck.py`, `make_brief.py` and the lenses wait for a green suite. No
-   `checks/` configs is not green: write them (`SKILL.md` stage 3), or have the user waive the gate and say so in the
-   hand-off's measured state.
+   steps 1-3 again: bring the ledger rows the fix touched up to date and, in round 1 only (REFERENCE is frozen after
+   it, §2), the REFERENCE sections it touched (R4's parameters) and `Valid for:`. `fixcheck.py`, `make_brief.py` and
+   the lenses wait for a green suite. No `checks/` configs is not green: write them (`SKILL.md` stage 3), or have the
+   user waive the gate and say so in the hand-off's measured state.
 4. Fill the fix ledger `review/round<N>/ledger.json` (round 2 on): for every planned fix, record the implemented change
    (node names, params, script), its acceptance checks with the measured before/after values, and anything not done
    and why. One row per plan item, even when one batch applied several; a row without a measured after value counts
-   as `not_landed`. The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
+   as `not_landed`. The numbers come from `fixcheck.py --fill` (before per item, just before its edit; after per
+   targeted set; `references/checks.md`, Fixcheck), and after the last batch `assets/workflows/ledger.js` writes each
+   row's change, note and misses and verifies every number into one row file per item, which you merge into the ledger with
+   `fixcheck.py --merge-rows` and then check with fixcheck (`SKILL.md` stage 7). The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
    build, 2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
-   `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is answered and after the last batch's targeted checks, and put
-   `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, or on a
-   Designer job past its expected time). After a split, `apply.split` holds its stamps (§6); `started` is the plan-gate
-   answer. `decisions` holds the last gate's design calls and their answers, verbatim. Keep these field names
-   (`fixcheck.py` reads them):
+   `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is settled and after the last batch's targeted checks, and put
+   `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, on a
+   Designer job past its expected time, or on a delegated agent past its box). `apply.overlap` lists each background
+   agent or workflow the apply launched, `{label, launched, overlap_task}` (`SKILL.md`, Delegating while you own
+   Designer). After a split, `apply.split` holds its stamps (§6); `started` is the plan-gate answer. `decisions` holds
+   the last gate's design calls and their settled options, `{id, question, answer}` with the decision log's id. Keep
+   these field names (`fixcheck.py` reads them):
    ```json
    {"apply": {"started": "2026-10-05T01:00:00Z", "ended": "2026-10-05T01:40:00Z", "stall_min": 0,
               "split": {"panel_launch": "2026-10-05T00:10:00Z", "context_prompt": "2026-10-05T00:13:00Z",
                         "new_session": "2026-10-05T00:15:00Z", "lead_json": "2026-10-05T00:57:00Z",
-                        "first_call": "2026-10-05T01:02:00Z"}},
-    "decisions": [{"question": "...", "answer": "..."}],
+                        "first_call": "2026-10-05T01:02:00Z"},
+              "overlap": [{"label": "diag-fill", "launched": "2026-10-05T01:12:00Z",
+                           "overlap_task": "detail graph batch"}]},
+    "decisions": [{"id": "D1-1", "question": "...", "answer": "..."}],
     "items": [{"id": "P1", "title": "...", "change": "nodes, params, script",
                "status": "done | partial | not_done", "note": "what was not done and why",
+               "tell": "the visible defect this change could create", "intended_lowfreq": [], "trades": [],
                "acceptance": [{"check": "joint_half_depth", "variant": "classic", "target": [9.5, 11],
-                               "before": 10.1, "after": 10.5}]}]}
+                               "before": 10.1, "after": 10.5},
+                              {"check": "guard_harm_basecolor", "variant": "classic", "role": "guard",
+                               "bound": [null, 0.92], "before": 0.73, "after": 0.70}]}]}
    ```
+   `before` is the value on the export just before the item's batch, not the round's baseline. Guard rows (`role`
+   guard, a `bound`) come from the plan's `guards`, from `guards.py rows` (the standard guards: each touched preset's
+   tile-period stripe and low-frequency std, bound at max(1.25 x before, before + a floor)), and from any shape or tone
+   target round 1's lead gave for a family the fix touches. A guard row is never demoted to a note. `tell`,
+   `intended_lowfreq` and `trades` copy the plan's fix fields; only what the plan or a decisions.json row declared
+   before the build exempts a row.
    Each acceptance `check` is a check id in that `variant`'s config, so it can be re-measured: when a fix needs a new
-   measure, add it to the config as a soft check in the apply (no target needed when the row has one). On a green
+   measure, add it to the config as a soft check in the apply (no target needed when the row has one). A fix that
+   makes a check hard says so on its row with `promote_hard` true. On a green
    suite, run `$PY <skill>/scripts/fixcheck.py --ledger <tools>/review/round<N>/ledger.json` (about 0.1 s on the
    round's scorecards; `references/checks.md`, "Fixcheck") and read `round<N>/fixcheck/fixcheck.json`. Exit 1 names a
    `done` item that did not land (`done_not_landed`) or an `after` the re-measure contradicts (`claim_contradicted`):
    correct those rows (status, after, note) and every `drifted` after, then run it again. It also names a variant
-   matcheck could not re-measure (`measure_failed`): fix its config or export first. Exit 2 is a ledger or usage
-   error. `make_brief.py` waits for exit 0.
-5. Round 1: write `review/REFERENCE.md` from `assets/reference_template.md`; later rounds: check that the apply
-   brought it up to date (§2). Then set its `Valid for:` to each manifest's `exported_at` from step 1's export. Write
-   the lens table `review/round<N>/lenses.json` (§3). On a green suite (step 3) and, from round 2, a fixcheck exit 0
-   (step 4), run `python3 <skill>/scripts/make_brief.py --review-dir <tools>/review --round <N> --python "$PY"`. In
-   about a second it writes the delta brief `round<N>/BRIEF.md` and the panel args `round<N>/panel_args.json`. Exit 1
-   names an ownership or ledger error, 2 a usage, REFERENCE or lens-table error (the message says which). Read its
-   warnings: a scorecard missing, failing or older than its export (re-run the suite before any lens starts); an
-   export newer than REFERENCE's `Valid for:`, or none after the apply; a REFERENCE older than the apply, or an R5
-   that differs from `sd_craft.md` §5; `build/` files edited before the last plan gate (§6); a lens naming no
-   sections; a brief over 250 lines; last round's `lead.json` or `review_result.json` missing; carried items last
-   round's lead left open.
+   matcheck could not re-measure (`measure_failed`): fix its config or export first; and a `promote_hard` row whose
+   check is still soft in the config (`promotion_missing`): make it hard there, with its wrong-build case. It also exits
+   1 on a `regressed` row (farther from its target than before by more than max(5 % of before, the tolerance)) or a
+   `guard_broken` one:
+   in an apply that is the regression gate (`SKILL.md` stage 7), never a row to correct. Exit 2 is a ledger or usage
+   error. `make_brief.py` and the final gate wait for exit 0.
+
+   **Decision log** `review/decisions.json` (run-level and append-only, so it also holds stage 4's technical calls
+   made before any ledger exists; `scripts/decisions.py`, whose docstring is the reference). One row per call or
+   choice the run settles without the user: design calls at the auto gate, draft questions, look trades (seeds and
+   calibrations too), technical defaults, user steers and user edits. `decisions.py add --row '<json>'` assigns the id
+   `D<round>-<k>` (round 0 before the first review) and the time. A row: `kind` (design_call, requirement_trade,
+   look_trade, draft_question, technical, deviation_from_user_answer, not_made_needs_user, user_steer, user_edit),
+   `question`, `options`, `recommended`, `chosen`, `rule` (recommended, no_pattern, smallest_pattern,
+   requirement_trade, technical_default, user), `gave_up` (the target given up and why, one line), `items`, `scripts`
+   and `revert` {`alternative` (the lead's option text plus the draft's alternative section, else "draft at
+   reversal"), `est_min`, `graphs`}. Every applied plan item keeps its own patch: `decisions.py snap` its stage
+   scripts before the edit and `decisions.py patch` after (`review/patches/r<round>/<item>.patch`); `revert-plan`
+   names an item's patch, the later items that touched the same files and the rebuild, and `revert` undoes one item
+   and keeps the rest (file copies and patches, never commits).
+5. Round 1: write `review/REFERENCE.md` from `assets/reference_template.md`, with the line `Frozen at round 1;
+   current parameters are in build/ and the ledger.` in its header, and set its `Valid for:` to each manifest's
+   `exported_at` from step 1's export. Later rounds leave it frozen (§2). Write the lens table
+   `review/round<N>/lenses.json` (§3). On a green suite (step 3) and, from round 2, a fixcheck exit 0 (step 4), run
+   `python3 <skill>/scripts/make_brief.py --review-dir <tools>/review --round <N> --python "$PY"`, with
+   `--graph-digest GID=DIGEST` per graph (step 1). In about a second it writes the delta brief `round<N>/BRIEF.md`,
+   the panel args `round<N>/panel_args.json` and the invariants table `round<N>/invariants.json` (each INV of spec §6
+   with its checks' pass or fail per variant, from the scorecards; an INV with no check anywhere is a `*` gap row). Exit 1 names an ownership or ledger error, 2 a usage, REFERENCE or
+   lens-table error (the message says which). Read its warnings: a scorecard missing, failing or older than its export
+   (re-run the suite before any lens starts); no export after the apply that does not stand as the preflight (step
+   1); a suite that does not stand ("rerun the suite only"); an R5 that differs from `sd_craft.md` §5; `build/` files
+   edited before the last plan gate (§6); a lens naming no sections; a brief over 250 lines; last round's `lead.json`
+   or `review_result.json` missing; carried items last round's lead left open. A REFERENCE without the frozen line
+   (a material from before it) also gets the old warnings: an export newer than its `Valid for:`, and a REFERENCE
+   older than the apply.
 6. Leave Designer idle until the plan gate. Reviewers work from files only.
 
 ## 2. Reference and delta brief
@@ -75,10 +126,18 @@ hadn't changed, and every agent read all 1,779 lines. So the stable part lives i
 short delta each round.
 
 **`review/REFERENCE.md`** (persistent, from `assets/reference_template.md`). Write it in round 1, before the first
-delta. At the end of each apply, rewrite the sections the apply changed and any section one of the last lead's
-`premises_corrected` entries contradicts, plus `Changed in the last update:`. A corrected node-semantics premise also
-goes into R5, and into the hand-off notes for the skill's `sd_craft.md` §5. `Valid for:` (each variant's
-`exported_at` from its `<prefix>manifest.json`, and the spec version) is set after the preflight export (§1 step 5).
+delta, and freeze it there: its header carries `Frozen at round 1; current parameters are in build/ and the ledger.`
+After that the only edit is a premise patch. When `lead.json` lands, each `premises_corrected` entry that contradicts
+a REFERENCE line gets a one-line patch of that line by the main session, ending `(premise patch r<N>)`; a corrected
+node-semantics premise goes into R5, and into the hand-off notes for the skill's `sd_craft.md` §5. That takes seconds
+and needs no workflow. R4 goes stale after round 1: the delta brief lists every build script newer than the REFERENCE
+export under Changed since REFERENCE, with the ledger items that touched it, and lenses read those scripts for current
+parameters. The docs pass after the last final gate (`SKILL.md`, Stop point) rewrites the file once to the final
+build, sets `Valid for:` to the final gate's exports and the line to `Frozen at round <N+1>`. `Valid for:` (each
+variant's `exported_at` from its `<prefix>manifest.json`, and the spec version) is set after round 1's preflight
+export (§1 step 5). In M8, rewriting it after every apply took two docs workflows (40 and 54 min) between a green
+final gate and the next panel, grew it from 490 to 1,173 lines, and its drafters wrote 77 errors their verifiers had
+to correct.
 Sections, each headed `## R<k> <title>`:
 - **R1 Requirements**, verbatim, with ids R1..Rn, each marked hard or soft. Include the interview answers, the
   defaults and the intentional deviations.
@@ -101,39 +160,46 @@ Sections, each headed `## R<k> <title>`:
 **Everyone reads R1, R5 and R9:** `make_brief.py` copies them into every delta, because Histogram Scan direction and
 Blend divide order have caused wrong fixes. Each lens also reads the sections its row in the lens table names (§3), or
 all of REFERENCE.md when it names none. Verifiers, the re-verify agent and the lead read all of it: the premise check
-(§4) needs R4's parameter values. `make_brief.py` exits 2 while R5 or R9 still hold the template's text.
+(§4) needs R4's parameter values, and after round 1 the build scripts the brief lists under Changed since REFERENCE.
+`make_brief.py` exits 2 while R5 or R9 still hold the template's text.
 
 **`review/round<N>/BRIEF.md`** (the delta, made by `make_brief.py`, about 250 lines). Every agent reads it in full:
 1. **Rules:** Designer off, read-only inputs, where helper scripts go, the Python and matcheck to use, 2 threads.
 2. **Read by everyone:** R1, R5 and R9, verbatim.
-3. **Decisions** at the last gate (the ledger's `decisions`).
-4. **Scorecard** per variant (hard failed, hard unmeasured, soft misses, vacuous, errors, the file), with a warning
-   for a scorecard older than its export or an export newer than REFERENCE's `Valid for:`.
-5. **Ledger:** one line per item, each acceptance check before → after [target], and its owner.
-6. **Keep-as-is** (the regression contract), **rejected** (don't re-report), **deferred** and **unverified** items,
+3. **Changed since REFERENCE** (a frozen REFERENCE): every build script newer than its export, with the ledger items
+   that touched it.
+4. **Decisions** at the last gate (the ledger's `decisions`).
+5. **Scorecard** per variant (hard failed, hard unmeasured, soft misses, vacuous, errors, the file), with a warning
+   for a scorecard older than its export.
+6. **Ledger:** one line per item, each acceptance check before → after [target], and its owner.
+7. **Keep-as-is** (the regression contract), **rejected** (don't re-report), **deferred** and **unverified** items,
    and the **premises the lead corrected**, of the last round, in full, one line each, with a pointer to its
    findings.md.
-7. **Output:** result files and schemas.
-8. **Lenses and owners:** scope, owned items, REFERENCE sections, lines to read.
+8. **Output:** result files and schemas.
+9. **Lenses and owners:** scope, owned items, REFERENCE sections, lines to read.
 
 Over budget, it warns and names the largest sections: shorten their sources, not the copy. A material reviewed before
 the delta brief keeps its `review/BRIEF.md`; the runner reads it when `round<N>/BRIEF.md` is missing.
 
 **Severity rubric and acceptance-target rules** (REFERENCE R9; copy them there verbatim):
 - **Severity rubric:**
-  - **high:** breaks a hard requirement or invariant, or is a tell visible at the variant's use distance
-    (whole tile or tiled)
-  - **medium:** visible at 1:1 or in raking light, or a realism problem
+  - **high:** a tell visible at the variant's use distance on the whole-tile or tiled sheet, confirmed there by its
+    verifier (the verdict names the sheet). Not visible there: medium at most, whatever its numbers.
+  - **medium:** visible at 1:1 or in raking light, a realism problem, or a hard requirement or invariant break not
+    visible at use distance (round 2 still plans it, §5)
   - **low:** close-zoom polish
-  - Admissibility: every finding maps to an R-id, an INV-id or a cited spec fact. Taste gets said as taste, and
-    capped at low.
+  - Admissibility: every finding maps to an R-id, an INV-id or a cited spec fact. Taste gets said as taste, capped
+    at low, and gets no acceptance target.
 - **Acceptance-target rules:** compute every target on current data and check it against a baseline (the clean
   variant, a shifted or shuffled control). Prefer rank-based or local-reference metrics. Unreachable targets get
-  replaced, not chased.
+  replaced, not chased. A target that a build showing the fix's own tell meets better than the clean build is invalid.
 
 ## 3. Lenses
 
-**Round 1: 4-6 lenses.**
+Two full rounds (SD-3), the same depth both times. **Round 1:** the families G1-G5, G3 split by process cards (M8
+ran G1, G2, G3a, G3b, G4, G5), G6 when colour variants matter, plus one check-audit lens. **Round 2:** round 1's
+families again, plus fixcheck and regressions, with full verifiers, re-verify and lead. A third round runs only when
+the user asks for it the next day.
 - **G1 Requirements and invariants.** One verdict per R-id and per INV-id. Try to break each invariant visually and
   numerically: layout invariance against nowear, envelope, order, registration of colour/roughness/height switches.
 - **G2 Scale, proportion and layout.** Dimensions against the sheet, installer tolerances, calibration of parameters
@@ -146,25 +212,27 @@ the delta brief keeps its `review/BRIEF.md`; the runner reads it when `round<N>/
   low-frequency blotches, outlier units.
 - **G6 Colour, PBR and variants.** Albedo and roughness against sheet §7, value order, deposits, revealed-layer colour,
   variant distinctness.
-
-**Round 2 and later: 3-5 lenses.**
-- **Fixcheck:** fill `fix_status` for every ledger item it owns (all of them by default), starting from
+- **Check audit** (round 1). For every hard and acceptance check (spec §9, `checks/*.json`,
+  `checks/wrong_build_cases.py`): does it read the rendered maps, measure the property it names, and fail on the defect
+  it guards? Look for requirements and visible defects with no instrument, slack or region choices that hide a defect,
+  circular checks (mask against mask) and hard checks no wrong build exercises. In M8 it alone produced round 1's
+  first fix.
+- **Fixcheck** (round 2): fill `fix_status` for every ledger item it owns (all of them by default), starting from
   `fixcheck/fixcheck.md` (§1 step 4).
-- **Regressions:** check the keep-as-is contract and compare previous and current numbers.
-- **Fresh-eyes realism:** what still reads CG at 1:1 and 3×?
-- Plus G1 and G5.
-
-**Final round: 3 lenses.** Fixcheck; requirements plus tiling; realism plus regressions.
+- **Regressions** (round 2): owns every feature round 1's apply touched, the detail tile first; checks the keep-as-is
+  contract and compares previous and current numbers. It covers more ground than the others: give it a wider `box`.
 
 **Lens table** (`review/round<N>/lenses.json`, read by `make_brief.py`):
 ```json
-{"lenses": [{"key": "G5", "prompt": "...", "sections": ["R7"], "owns": ["r1:G5/G5-2"]}],
+{"lenses": [{"key": "G5", "prompt": "...", "sections": ["R7"], "owns": ["r1:G5/G5-2"]},
+            {"key": "regressions", "prompt": "...", "box": {"min": 22, "calls": 50}}],
  "open": [{"id": "H1", "text": "..."}]}
 ```
 Keys: letters, digits, `_` or `-`, unique ignoring case, not `lead`, `reverify`, `ledger`, `review_result`, `lenses`,
-`panel_args`, `suite`, `suite_partial`, `wrong_builds` or `scorecard_*` (file names in `round<N>/`). `sections` names
-the REFERENCE sections the lens needs besides R1, R5 and R9 (defaults per lens family in the template); `open` holds
-builder hypotheses and user questions.
+`panel_args`, `scorecard`, `invariants`, `suite`, `suite_partial`, `wrong_builds` or `scorecard_*` (file names in
+`round<N>/`). `sections` names
+the REFERENCE sections the lens needs besides R1, R5 and R9 (defaults per lens family in the template); `box`
+overrides the round's lens time box for that lens (§6); `open` holds builder hypotheses and user questions.
 
 **One owner per carried item.** The carried items are every ledger item, every `unverified` finding and `deferred`
 entry of the last round (ids `r<N-1>:<lens>/<id>` and `r<N-1>:deferred:<k>`; k counts the last round's `deferred` list
@@ -180,7 +248,7 @@ asphalt round 2, four issue clusters were each found by 2-4 lenses and verified 
 - Every invariant goes to G1. Every revealed layer gets a sub-brief: colour from its own unit, depth, rake wall,
   texture coarser than the skin, no ring.
 - Every row of the sheet's common-mistakes table goes to exactly one lens as a "look for" item.
-- Merge down to 4-6 lenses by shared maps and regions.
+- Merge G3 cards by shared maps and regions (M8: two G3 lenses).
 
 **CG tells that numbers can catch** (add the matching check to `checks.json` once a lens finds one):
 
@@ -204,7 +272,8 @@ asphalt round 2, four issue clusters were each found by 2-4 lenses and verified 
 1. **Reproduce independently.** Recompute at least one key number per finding with your own script on the full-res
    16-bit maps, not the reviewer's script and not the previews.
 2. **Refute claim by claim**, in this order:
-   1. Is it visible in the maps?
+   1. Is it visible in the maps? A high must be visible at use distance on the whole-tile or tiled sheet: name the
+      sheet, or make it medium at most.
    2. Is it a preview-shader artifact? Does it appear in albedo-only or the hillshade, or only in lit views?
    3. Is it a downsampling artifact? Check at 1:1.
    4. Is it a metric artifact? Look at threshold choice, a reference window that includes the feature, a global vs
@@ -219,7 +288,9 @@ asphalt round 2, four issue clusters were each found by 2-4 lenses and verified 
    itself: a finding that is entirely an artifact is `real=false`.
 4. **Review the fix.** Would it create a singular feature or lattice, add a bevel, break an invariant or registration,
    rescale other layers, or conflict with another requirement (e.g. "subtle")? Give a better fix.
-5. **Check the acceptance target** on current data and on a baseline. Replace it if it's unreachable.
+5. **Check the acceptance target** on current data and on a baseline. Replace it if it's unreachable. A target that
+   a build showing the fix's tell meets as well as the clean build, or better, is invalid: the check cannot see the
+   defect (`references/checks.md`, "Soft checks that steer"; its steer tests in `checks/steer_tests.json`).
 
 Verifiers take every finding of their lens: highs, then mediums, then lows. They read all of REFERENCE.md, not only
 their lens's sections: in brick round 3, three premise errors rested on sections the lens had not read. Never guess a
@@ -237,13 +308,21 @@ calibration from the verifier, not a high rejection rate.
 - Re-measure disputed numbers itself, and correct wrong premises.
 - Resolve conflicts with the user's requirements in writing (e.g. "don't add colour variety: the user asked for subtle").
 - Order fixes by dependency: layout → height/structure → process masks → colour → micro-detail.
-- Cap the list (10 / 8 / 5 by round), and give every fix acceptance checks and guard rails.
+- Admit by round, and give every fix acceptance checks and guard rails:
+  - round 1 plans highs and mediums, at most 10 fixes; a low enters only as a check defect a planned fix needs;
+  - round 2 (SD-4) plans verified highs, hard requirement or invariant breaks, and the check defects those fixes need,
+    at most 5 fixes.
+  Everything else goes to `residuals` {id, family, severity, variants, visible_at, numbers, why_open, next_lever}:
+  reported, never deferred with a numeric target.
 - Re-measure every `unverified` high or medium before planning it (`spot_checks`); defer an unverified low unless its
   numbers reproduce.
-- Put every choice only the user can make (between looks, a requirement trade, a deviation) in `design_calls`: the
-  question, 2-4 options, the recommended one, and what the answer changes. At most 4 calls (AskUserQuestion takes 4
-  questions), 3 from round 3 on, where the ask for another round joins the batch; any further call goes in deferred.
-- List keep-as-is, deferred and rejected items.
+- Put every choice between looks, a requirement trade or a deviation in `design_calls`: the question, 2-4 options
+  with the recommended one first, what the answer changes, and per option `adds_pattern` with `pattern_evidence`
+  (`SKILL.md`, Unattended run, SD-2). The lead applies SD-1 and SD-2 itself: `settled` names the option they pick and
+  `rule` says how (`recommended`, `no_pattern` or `smallest_pattern`); `changes_spec` marks a call that changes a spec
+  value, a requirement reading or a check target. Every fix a call touches is written for the settled option. At most
+  4 calls; any further call goes in deferred as `design call: ...`, for the report.
+- List keep-as-is, deferred (with no numeric target) and rejected items.
 - Plan, re-defer or close every carried item that is not a ledger item, starting the entry with its id;
   `make_brief.py` warns next round about any it left open.
 
@@ -251,63 +330,65 @@ calibration from the verifier, not a high rejection rate.
 - `review/round<N>/review_result.json`
 - `review/round<N>/findings.md`, in this format:
   - OVERALL: 2-6 paragraphs
-  - `SC: met|mostly_met|not_met | R-id requirement (variant) | evidence`
-  - `INV: pass|fail | INV-id | values`
+  - `SC: met|mostly_met|not_met | R-id requirement (variant) | evidence` (from `scorecard.json`)
+  - `INV: pass|fail | INV-id | values` (from `invariants.json`)
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
-  - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
+  - COVERAGE: flagged fixes, uncovered hard ids (exit 3), and which entry covers each hard id (§6 item 4)
+  - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, RESIDUALS, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
     per-agent table, `panel_min`, and `round<N>/ledger.json`'s `apply`, §6)
-- Show the user the scorecard and the plan before building the fixes, and ask the plan's `design_calls` there, in one
-  batch (`SKILL.md` stage 7); none during the apply. If they said not to stop, take each call's recommended
-  option and list it in the report.
+- **Auto gate** (unattended, the default): check each call's `settled` against SD-1 and SD-2, measure a named
+  pattern the lead could not (a 1K probe), re-settle a call the lead got wrong (its fixes are then rewritten for the new
+  option), patch REFERENCE for each premise the lead corrected (§2), read `review/steer.jsonl` (`SKILL.md`, Unattended
+  run: Mid-run look), log one decisions.json row per call (§1), and start the apply. Nobody is asked. In an attended run
+  the plan gate shows the user the scorecard and the plan and asks the calls in one batch, the settled option first.
 
-**Stop when:**
-- all hard checks pass in every variant;
-- every hard requirement is `met` and every soft one at least `mostly_met`;
-- there are 0 high findings, and no medium finding visible at use distance;
-- the last round's fixes landed.
+**Stop (SD-3).** At most 2 full panels: the run ends after round 2's apply and its final gate. Skip round 1's apply
+when round 1 is dry (no new medium-or-higher finding confirmed by a verifier, the re-verify agent or the lead's
+`spot_checks`, and every lens returned), and round 2's when it confirms 0 highs and 0 hard breaks. A third round runs
+only when the user asks for it the next day. The finished-material targets stay, and the report lists each one not
+reached: all hard checks pass in every variant; every hard requirement is `met` and every soft one at least
+`mostly_met`; 0 highs; the last round's fixes landed. A requirement judged by eye alone (M8's R13) is reported per
+variant and never blocks the stop.
 
-**Also stop:**
-- after a dry round (no new medium-or-higher finding confirmed by a verifier, the re-verify agent or the lead's
-  `spot_checks`) in which every lens returned;
-- after 3 full rounds (ask the user before a 4th);
-- when the user accepts.
-
-When more than half the ledger is partial, run a cheap fixcheck-only round (the suite and `fixcheck.py`, plus one
-agent) instead of the full panel.
-
-**Final gate.** The last change is followed by a 2048 export of every variant and its `nowear`, then a full suite (no
-`--configs` or `--kinds`) into `review/round<N+1>`, the folder whose ledger records the last apply, and `fixcheck.py`
-on that ledger (§1 steps 2-4). Draft the report while the suite runs; finalize it only on that `suite.json` with
-`green` true, `rc` 0 and `full` true. The report says what was verified after the last change, and which fixes landed.
-Don't say "three review rounds confirmed it" when the final fixes were never reviewed.
+**Final gate.** The last change is followed by a 2048 export of every variant and its `nowear` (and each graph's
+snapshot, `SKILL.md` stage 7), then a full suite (no `--configs` or `--kinds`) into `review/round<N+1>`, the folder
+whose ledger records the last apply, and `fixcheck.py` on that ledger (§1 steps 2-4). Draft the report while the
+suite runs; finalize it only on that `suite.json` with `green` true, `rc` 0 and `full` true. The report says what was
+verified after the last change, and which fixes landed, and that round 2's apply was not reviewed by a panel.
 
 ## 6. Running it
 
-- **Workflow** (the default): `Workflow({scriptPath: "<skill>/assets/workflows/review_round.js", args: {...}})`, the
-  args being `review/round<N>/panel_args.json` from `make_brief.py`; add `max_findings`, `box_lens` or `box_verify`
-  to change a default (documented in the script). It pipelines review → verify per lens, sends every high or medium
-  left without a verdict to one re-verify agent (its verdicts match by `lens/id`, or by a bare id no other finding sent
-  to it shares), then runs the lead. Lenses read the REFERENCE sections their row names; verifiers, the re-verify
-  agent and the lead read all of it (§2). Every agent runs at xhigh; the runtime caps concurrency.
-- **Time boxes:** lens 15 min and 35 tool calls, verifier 12 min and 25 (args `box_lens`, `box_verify`). The re-verify
-  agent and the lead have none. A lens cut by its box names the limit in `box` and lists what it skipped in
+- **Workflow** (the default): `Workflow({scriptPath: "<skill>/assets/workflows/review_round.js", args: {...}})` with
+  `<skill>` the literal output of `realpath` on the skill folder (the symlink path is refused; a copy of the script in
+  the tools folder is the fallback), the args being `review/round<N>/panel_args.json` from `make_brief.py`; add
+  `max_findings`, `box_lens` or `box_verify` to change a default (documented in the script). It pipelines review →
+  verify per lens, sends every high or medium left without a verdict to one re-verify agent (its verdicts match by
+  `lens/id`, or by a bare id no other finding sent to it shares), then runs the lead. Lenses read the REFERENCE sections
+  their row names; verifiers, the re-verify agent and the lead read all of it (§2). Every agent runs at xhigh; the
+  runtime caps concurrency.
+- **Time boxes:** lens 15 min and 35 tool calls, verifier 12 min and 25 (args `box_lens`, `box_verify`; a lens row's
+  `box` overrides `box_lens` for that lens, e.g. round 2's regressions lens). The re-verify agent and the lead have
+  none. A lens cut by its box names the limit in `box` and lists what it skipped in
   `not_reached`; the lead is told, and those areas count as unreviewed.
 - **Status:** `confirmed`; `rejected` (the verdict says `real=false` or severity `none`; `artifact` alone never
   rejects); `unverified` (no verdict). An unverified finding goes to the lead marked so, never into rejected. The lead
   also gets the rejected list (id, lens, title, why) and can overrule a rejection it re-measures. Save the result as
   `review/round<N>/review_result.json` (after a split, the new session saves it from the run's file: below).
-- **`dead`:** agents that returned nothing. A dead lens leaves its area unreviewed: say so at the plan gate, and run it
-  again in the next round, or now with the Agent tool from the script's lens and verifier prompts. A one-lens Workflow
-  would overwrite `lead.json`.
+- **`dead`:** agents that returned nothing. Rerun a dead lens once, at once, in the background with the Agent tool from
+  the script's lens and verifier prompts (a one-lens Workflow would overwrite `lead.json`); its verified findings join
+  the plan at the gate by the lead's rules. If it dies again, its area is unreviewed: the plan and the report say so.
 - **Files and stamps:** each agent runs `date -u` first and last and writes its result, stamps first, to
-  `review/round<N>/`: `<lens>.json`, `<lens>.verdicts.json`, `reverify.verdicts.json`, `lead.json`. The result's
+  `review/round<N>/`: `<lens>.json`, `<lens>.verdicts.json`, `reverify.verdicts.json`, `lead.json` (the plan lead) and
+  `scorecard.json` (the scorecard lead: the requirements scorecard, one row per R-id per variant with `hard`). The two
+  leads start together at the barrier, at full depth and with no box; the runner merges the scorecard rows into the
+  returned plan's `requirements_scorecard`. A dead scorecard lead leaves the plan with none (`dead` names
+  `scorecard`): rerun it once with the Agent tool from the script's prompt. The result's
   `timing` table and `panel_min` come from those stamps and stay in `review_result.json`; findings.md TIMING lists
   them with `round<N>/ledger.json`'s `apply` (§1), the apply this round reviewed. This round's split stamps show in
   the next round's TIMING.
-- **Agent tool** (fallback, only when Workflow is unavailable; launch it only when this session's records show xhigh,
-  `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
+- **Agent tool** (fallback, only when Workflow is unavailable, and never below xhigh, `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
   verifier per non-empty lens, given all its findings, highs first; one re-verify agent for every high or medium
-  without a verdict or in a `not_checked` list; then the lead.
+  without a verdict or in a `not_checked` list; then the plan lead and the scorecard lead in one message.
 - **While the panel runs,** work from its files, in this order. Run no suite or numpy jobs beside it (its agents
   measure too), never edit the maps it reads, and never call Designer from a subagent.
   1. As each `<lens>.json` lands: note which findings touch the same node or stage script (one draft per cluster).
@@ -318,42 +399,54 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
      896k).
   3. Prepare the next ledger's rows in `review/round<N+1>/ledger.json` from the drafts, status `not_done` until
      applied (ids filled in when the plan lands, `apply.split` as the stamps come), and the hand-off notes.
-  4. When `lead.json` lands: reconcile, one draft per plan item, rewritten to the lead's `change` and the verifier's
-     `better_fix` and `acceptance_fixed`; drop the drafts of rejected or deferred findings. Then hold the plan gate
-     from `lead.json` (scorecard, plan, every design call; any `/effort` switch goes in the same message). While the
-     user answers, write findings.md (§5) from `review_result.json`, and the next ledger's rows. Apply only once
-     findings.md is newer than `lead.json`.
+  4. When `lead.json` lands, and again when `scorecard.json` lands: run `$PY <skill>/scripts/findings.py --round-dir
+     <tools>/review/round<N>`. It writes findings.md (§5) from `lead.json`, `scorecard.json`, `invariants.json` and the
+     lens, verdict and re-verify files in seconds, so it needs no `review_result.json` and findings.md never gates the
+     apply for more than those seconds. It refuses to overwrite a findings.md newer than both leads' files unless
+     `--force`. Its COVERAGE section cross-checks the two leads: it flags a planned fix whose requirement and invariant
+     ids are all met (listed, no exit change), and exit 3 lists each hard R-id not met or mostly met, and each hard INV
+     failing, that no fix, residual, deferred or keep-as-is entry names. For each one, add a residual row to
+     `lead.json` (`why_open`, `next_lever`), or a fix when it is a high the round must fix (the auto gate's rules), and
+     rerun with `--force` until exit 0; the report lists the residuals. The drafts launch at `lead.json`, not after findings.md:
+     `assets/workflows/drafts.js` in the background (`SKILL.md` stage 7) writes one checked draft per plan item from
+     the lead's `change`, the verifier's `better_fix` and `acceptance_fixed` and your drafts from items 1-2; drafts of
+     rejected or deferred findings are dropped. Then the auto gate (§5) from `lead.json`,
+     and the next ledger's rows. Apply only once findings.md is newer than `lead.json` and `scorecard.json` (or the
+     scorecard lead is dead and its rerun too) and findings.py exits 0. The apply starts with the check
+     items and builds each item once its own checked draft lands.
 
   Drafts stay drafts until the plan gate: none runs in Designer and none is copied into `build/` before it.
-- **Split at lens launch** (`SKILL.md` stage 6), on the Workflow route only and unless the user said not to stop. On
-  the Agent-tool fallback, or when told not to stop, one session runs the panel, waits, drafts, reconciles, holds the
-  plan gate and applies. Two sessions share the tools folder, so each keeps to its part. The Workflow call prints
-  `Run ID: <run id>` and `Transcript dir: <session dir>/subagents/workflows/<run id>`: `<session dir>` is the printed
+- **Split at lens launch** (`SKILL.md` stage 6): only in an attended run when the user asks for it, on the Workflow
+  route. Otherwise (unattended, the default, and always on the Agent-tool fallback) one session runs the panel, waits,
+  drafts, reconciles, settles the plan at the auto gate and applies. Two sessions share the tools folder, so each
+  keeps to its part. The Workflow call prints `Run ID: <run id>` and `Transcript dir: <session dir>/subagents/workflows/<run id>`: `<session dir>` is the printed
   dir minus `/subagents/workflows/<run id>` (the old session's `~/.claude/projects/<project>/<session id>/`), and its
   basename is the session id. A stamp is `date -u +%Y-%m-%dT%H:%M:%SZ`.
   - **Old session.** Stamp just before the Workflow call (panel launch). When the call returns, write the panel
     hand-off (`assets/context_prompt_template.md`) at the top of `<tools>/CONTEXT_PROMPT.md`, add one pointer line
     with no status to the material's project memory note (`panel hand-off for round <N> at <tools>/CONTEXT_PROMPT.md;
     skip it if it says Spent`), give the user the hand-off's kick-off line in a code block and ask them to open the
-    new session now in a new window or tab, run `/effort xhigh` there first, and leave this one open (no `/exit`,
-    `/clear` or archive) until it says the panel finished. After that: no Designer call, no file write, no new work.
+    new session now in a new window or tab, and leave this one open (no `/exit`, `/clear` or archive) until it says
+    the panel finished. After that: no Designer call, no file write, no new work.
     Stay open until the panel's completion notice: an idle session keeps its panel running, but closing it mid-run was
     never tested and may stop the panel. On the notice, only say the panel finished.
   - **New session.** Stamp first (new session start), and take the hand-off's write time with
-    `date -u -r "<tools>/CONTEXT_PROMPT.md" +%Y-%m-%dT%H:%M:%SZ`. Confirm xhigh on this session's records (`SKILL.md`
-    Effort; here the JSONL under `~/.claude/projects/` that holds the kick-off line; if not, ask and wait). Do items
-    1-3 above for the files already there, then watch the round folder with a Monitor (`timeout_ms` 1800000, its cap;
-    re-arm it on each expiry and skip lines for files already handled). It prints one line per panel file as it lands.
-    After `lead.json` it waits up to 2 min for `$WF` and ends on `run ended` or `no runner result 2 min after
+    `date -u -r "<tools>/CONTEXT_PROMPT.md" +%Y-%m-%dT%H:%M:%SZ`. Stamp this session's effort. Do items
+    1-3 above for the files already there, then watch the round folder with the loop below, run as a background Bash
+    (`run_in_background`), not a Monitor (a Monitor expires at 30 min whatever its script does). The loop ends at each
+    landing with one `landed` line; relaunch it after each landing with `seen` set to the files already handled. Once
+    `lead.json` is in `seen` it waits up to 2 min for `$WF` and ends on `run ended` or `no runner result 2 min after
     lead.json`; it also ends on a run that ended without `lead.json`, or when no agent file changed in 20 min (a live
     agent can think for 10 min without a write):
     ```bash
-    RD="<tools>/review/round<N>"; WF="<session dir>/workflows/<run id>.json"; TD="<transcript dir>"; seen="|"
+    RD="<tools>/review/round<N>"; WF="<session dir>/workflows/<run id>.json"; TD="<transcript dir>"
+    seen="|"  # on a relaunch: the handled files, e.g. seen="|ux.json|ux.verdicts.json|"
     [ -d "$TD" ] || { echo "no transcript dir: check the hand-off"; exit 1; }
     while :; do
       for f in "$RD"/*.json; do b=$(basename "$f"); case "$seen" in *"|$b|"*) continue;; esac
-        [ -s "$f" ] && [ "$f" -nt "$RD/panel_args.json" ] && { echo "landed $b $(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ)"; seen="$seen$b|"; }
+        [ -s "$f" ] && [ "$f" -nt "$RD/panel_args.json" ] && { echo "landed $b $(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ)"; seen="$seen$b|"; hit=1; }
       done
+      [ -n "$hit" ] && break
       case "$seen" in *"|lead.json|"*) n=0; while [ ! -f "$WF" ] && [ $n -lt 8 ]; do sleep 15; n=$((n+1)); done
         [ -f "$WF" ] && echo "run ended" || echo "no runner result 2 min after lead.json"; break;; esac
       [ -f "$WF" ] && { echo "ended without lead.json"; break; }
@@ -370,8 +463,8 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
     RD="<tools>/review/round<N>"; WF="<session dir>/workflows/<run id>.json"
     python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["status"]=="completed", d["status"]; json.dump(d["result"], open(sys.argv[2], "w"), indent=1)' "$WF" "$RD/review_result.json"
     ```
-    Then item 4: reconcile, the plan gate with every design call in one batch (`SKILL.md` stage 7), findings.md while
-    the user answers, then the apply. Only this session calls Designer. Once the gate is answered, rewrite the
+    Then item 4: findings.py, reconcile, the plan gate with every design call in one batch (`SKILL.md` stage 7), then
+    the apply. Only this session calls Designer. Once the gate is answered, rewrite the
     panel block's `Next:` line in `CONTEXT_PROMPT.md` as `Spent: plan gate answered <UTC>; this block is history.
     Split stamps: <panel_launch, context_prompt, new_session, lead_json>`, and add `first_call` when taken: a resumed
     session then skips the block, and the stamps survive a session that dies mid-apply.
@@ -382,15 +475,17 @@ Don't say "three review rounds confirmed it" when the final fixes were never rev
   - **If the panel stopped.** `$WF` present, any status (`ended without lead.json`, or a `status` other than
     `completed`): the run is over. Ask nothing; the dead agents are its `dead` list (status `completed`), or else
     every agent whose file never landed (`dead`, above). On `stalled` or `no runner result 2 min after lead.json` (the
-    old session may have closed): ask the user whether the old session is still open with its panel running (its
-    task list shows it); if so, keep waiting (re-arm the watch; after `lead.json`, re-check `$WF`); if not, every
-    agent whose file never landed is dead. Just before each rerun with the Agent tool from the script's prompts,
+    old session may have closed): check it instead of asking (get_session on the session id from the hand-off: open,
+    with the panel's Workflow still running); if so, keep waiting (relaunch the watch; after `lead.json`, re-check
+    `$WF`); if not, or when the check is unavailable and no `agent-*.jsonl` in the transcript dir changed in 20 min,
+    every agent whose file never landed is dead. Just before each rerun with the Agent tool from the script's prompts,
     check again that its file has not landed and, with no `$WF`, that no `agent-*.jsonl` in the transcript dir
     changed in 20 min. A rerun writes `<name>.rerun.json`, moved into place only if the original is still absent
     (`[ -e lead.json ] || mv lead.rerun.json lead.json`). If a file from the runner lands later anyway, stop and tell
     the user before the plan gate. With no runner result, write `review_result.json` yourself by the Status rules
     above: `plan` from `lead.json`; `confirmed`, `unverified` (each with `lens`, `id`, `title`, `why_unverified`) and
-    `rejected` (`id`, `lens`, `title`, `why`) from the lens and verdict files. Then findings.md from it.
+    `rejected` (`id`, `lens`, `title`, `why`) from the lens and verdict files (the next round's `make_brief.py` reads
+    it). findings.md needs no result: item 4.
 
 ## 7. Catch ledger
 
@@ -401,8 +496,11 @@ trade adds its row before it is used.
 | Trade | Still caught | Could be missed | Signal |
 |---|---|---|---|
 | One build-measure batch per graph (`SKILL.md` stage 7) | fixes that didn't land: each ledger row keeps its measured before/after values, `fixcheck.py` re-measures them (§1 step 4), and a full suite follows the last change | which fix in a batch caused a regression; brick's ledger found 2 of 10 and 1 of 8 fixes fully landed (§1) | fixcheck flags (`done_not_landed`, `claim_contradicted`); more `partial`, `not_landed`, `regressed` or `not_checked` fix_status rows next round |
-| High effort for scripted stages (`SKILL.md`, Effort) | design turns stay at xhigh (spec, panel); no past catch is tied to xhigh (round-3 speed review) | reasoning depth in check-fix and fix turns | a lower share of hard checks passing at the first 1K export, more fix cycles, wrong builds regressing, or the developer's eval re-run below 30/30 |
 | Time-boxed lenses and verifiers (§6) | every high or medium gets a verdict at xhigh by the verifier's own method: what a box left goes to the re-verify agent (§4); verifiers take lows after them | a finding a boxed lens never reached; a ledger item a boxed lens never reached (fix_status `not_checked`); an overstated low the verifier's box cut (it reaches the lead `unverified`, never re-verified); verifiers changed 11 of 35 severities (`win`) and 10 of 25 on brick (`mac-tx`) | a high or medium reaching the lead `unverified`; lows reaching the lead `unverified` (`stats.unverified` above `stats.unverified_high_medium`); `stats.severity_changed` per verified high or medium below those rates (widen `box_verify`); a lens whose `box` is not `not_hit` or whose `not_reached` is non-empty (`stats.lenses_boxed`); fix_status `not_checked` rows |
 | Delta brief and section-scoped REFERENCE reads (§2) | the requirements, cheat sheet, rubric and verifier checklist are in every delta; verifiers, the re-verify agent and the lead read all of REFERENCE.md | a cross-section fact a lens skipped; wrong premises on Histogram Scan direction and Blend divide once caused wrong fixes (§2) | the lead's `premises_corrected` (`stats.premises_corrected`) rising round over round, or a verdict's `premise_errors` citing a REFERENCE section its lens didn't read |
 | Fix drafts from verdict files while the panel runs (§6) | drafts start from confirmed verdicts, take the verifier's fix, are rewritten to the lead's plan, and never run in Designer before the plan gate | an overstated number or wrong premise in a draft; about 18 brick fixes were rewritten by verifiers (§4) | a draft that reaches Designer before the plan gate (`make_brief.py` warns on `build/` files edited between the last panel's first lens start and the apply's start; it only sees edits not overwritten later in the apply), or one that differs from the verifier's fix |
+| Auto design calls (`SKILL.md`, Unattended run) | every call is settled by SD-1 or SD-2, logged in `decisions.json` with its alternative and a per-fix revert patch; requirement trades are listed first in the report | a call the user would have decided otherwise, seen only the next day; a look trade whose pattern no stat or wording showed | a call reversed the next day; a `smallest_pattern` flag |
+| Edit reviews off the build path (`SKILL.md` stage 7, `edits.js`) | every edit is still reviewed for fidelity to its draft and sdkit use, plus a cross-check; a blocker is repaired before the final gate, which waits for every review; the targeted suite and guard rows measure each rebuild | a defect a reviewer would have caught before the first rebuild costs one extra rebuild (30-70 s); in M8 the reviewers said GO on the defect a 19-s diff found | a blocker that lands after its item's targeted set was green; a repair item `<id>r` |
+| Boxed background diagnosis (`SKILL.md`, Delegating while you own Designer) | the first cause, written as `FIRST CAUSE` in the progress file; a diagnosis still open after one extension goes to per-fix attribution, which reverts what it cannot explain | a second cause the box cut (in M8 the envelope cause showed about 22 min into a 62-min diagnosis) | a red job that comes back after its first cause is fixed; an extension that ends with no `FIRST CAUSE` line |
+| REFERENCE frozen after round 1 (§2) | the requirements, physics digest, cheat sheet and rubric, which no apply changes; every premise a lead corrected, patched in at once; the brief names each build script newer than R4 with its ledger items | a lens that trusts a stale R4 value for a node no listed script names | a verdict's `premise_errors` citing R4; a finding on a script listed under Changed since REFERENCE that its script contradicts |
 | Section-scoped sheet reads (`SKILL.md` stage 2) | invariants (§5) and targets (§9) are read in full | an interaction held in a skipped process card (asphalt I10: sealant only on cracks) | a sheet §5 invariant of the layout or a chosen process missing from `spec.md`, in its §6 without a check id, or on its left-out list while a preset has the process or feature it governs |

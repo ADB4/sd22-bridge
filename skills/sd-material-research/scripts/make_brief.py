@@ -5,6 +5,7 @@ last round's files.
 Usage:
     python3 make_brief.py --review-dir <tools>/review --round N [--lenses round<N>/lenses.json] [--checks CFG ...]
                           [--max-lines 250] [--python <venv python>] [--skill-dir <skill>]
+                          [--graph-digest GID=DIGEST ...]
 
 Reads review/REFERENCE.md (sections headed `## R<k> <title>`), review/round<N>/lenses.json, review/round<N>/ledger.json
 (required from round 2), review/round<N-1>/review_result.json, lead.json, panel_args.json, ledger.json and its lens
@@ -13,11 +14,50 @@ files' `started` stamps, the file times under <tools>/build/, and the scorecard 
 R5 and R9, decisions, scorecard, ledger, carried items, lens table), and review/round<N>/panel_args.json, the args for
 assets/workflows/review_round.js. Prints lines per section, lines to read per lens, seconds, warnings. Each carried item
 (ledger ids, the last round's unverified and deferred items, open entries) needs exactly one owner; a lens keyed
-`fixcheck` owns every ledger id no other lens names. Documented in references/review.md §1-§3.
+`fixcheck` owns every ledger id no other lens names. A lens may set `box: {min, calls}` (positive integers), its own
+time box, copied into its panel_args row. Documented in references/review.md §1-§3.
+Invariants table: when at least one scorecard was read, also writes review/round<N>/invariants.json (atomic), the
+mechanical half of the old lead's work: {utc, source: {spec, configs}, invariants: [{id, variant, pass, hard, hard_failed, checks:
+[{id, value, target, passed, severity}], value, mapped_by}]}. An INV's checks come from <tools>/spec.md section 6
+(each paragraph or list item that starts with INV-<k>, or whose first bold span holds it, gets every backticked token
+after "Check:", up to a "Severity:" or "Wrong build:" label, that is a check id in some config) and, as a union, from the configs' checks whose `why` starts with
+INV-<k> (INV-1, INV-2 too); mapped_by says which gave it (spec, why, spec+why). One row per variant whose scorecard holds
+any of the INV's checks: pass = every one of them passed (the scorecard's own verdict; a soft miss or an unmeasured
+check is not a pass), hard = any is severity hard, hard_failed = any hard check did not pass (findings.py's
+"hard failing" test: a row that fails only on soft checks has hard true and hard_failed false). An INV with no check in any scorecard gets one row with variant "*",
+pass null, checks [] and a warning. No spec.md or no section 6: the `why` rule only, source.spec null, a warning. The
+BRIEF's scorecard section gets one line naming the file and its pass count.
+Time zones: a stamp with no zone (a manifest's exported_at or the suite's stamps from before they carried a Z, and
+REFERENCE `Valid for:`) is this machine's local time. A stamp with Z or an offset (+HH:MM, -HHMM) is read as such.
+The ledger's and the lens files' stamps (`date -u`) with no zone stay UTC.
+Reuse of the last final gate (references/review.md §1 step 1), decided here:
+- The export stands as this round's preflight when the apply has ended after `Valid for:` (the old warning to export
+  again) and no <tools>/build/**/*.py is newer than the oldest manifest's exported_at and every manifest's
+  `graph_digest` equals the digest passed for its graph (`--graph-digest GID=DIGEST`, repeatable, GID the manifest's
+  `graph`; read the current digest from sdkit). With no digest given for a graph, or a manifest without the field (an
+  old export), the old rule applies: the warning stays, and it says why the export does not stand.
+- The suite (review/round<N>/suite.json) stands when it started after every checks config, checks/wrong_build_cases.py,
+  gen_checks.py (<tools>/ or <tools>/checks/), SUITE.json and manifest exported_at. Otherwise the output says "rerun the
+  suite only". A file within 1 s of the stamp counts as before it (stamps are whole seconds).
+A frozen REFERENCE (the header line `Frozen at round <k>; current parameters are in build/ and the ledger.`, written in
+round 1 and never rewritten, review.md §2) turns off the warnings that assumed REFERENCE follows every apply:
+"REFERENCE.md was last written before the apply ended", "N exports newer than every time in REFERENCE `Valid for:`" and
+"REFERENCE `Valid for:` names no export after the apply ended". The reuse decision above is then keyed on the exports:
+when the apply has ended and the newest manifest's exported_at is missing or older than it, export_decision runs, and
+the output either notes that the last final gate's export stands or warns that no export followed the apply and why this
+one does not stand. The brief's REFERENCE line says frozen and drops "Changed in the last update", the rules gain a
+bullet (read a listed build script, not R4), and a section `## Changed since REFERENCE` follows "Read by everyone":
+every <tools>/build/**/*.py modified after the latest `Valid for:` time (else REFERENCE.md's mtime), newest first, at
+most 20, each with the plan items that touched it, from review/patches/order.jsonl (decisions.py: {utc, round, item,
+files}; the item's title from review/round<round>/ledger.json, review/edit<K>/ledger.json for a U<K> item; a row whose
+round is missing or not an int reads "no ledger"), and for a file no row names, from the ledger items of review/round*/
+and review/edit*/ whose `change` text names the file's stem (a ledger whose apply ended before that time is skipped). A
+build script that cannot be stat'ed (a dangling symlink) is skipped here and in the reuse rule above. Without the frozen
+line the output is unchanged.
 Exit code: 0 written (warnings allowed); 1 an ownership error, a round 2+ without a ledger, or an invalid ledger;
 2 a usage or REFERENCE error (missing or unreadable file, R1/R5/R9 missing, R5 or R9 still the template's text, a lens
-naming a section REFERENCE lacks, a bad lens key). Nothing is written unless it exits 0. Standard library only: it
-runs with any python3, no venv.
+naming a section REFERENCE lacks, a bad lens key or box, a bad --graph-digest). Nothing is written unless it exits 0.
+Standard library only: it runs with any python3, no venv.
 """
 import argparse
 import datetime
@@ -29,12 +69,15 @@ import sys
 import time
 
 EVERYONE = ("R1", "R5", "R9")  # requirements, node cheat sheet, rubric + verifier checklist: in every delta
-RESERVED = ("lead", "reverify", "ledger", "review_result", "lenses", "panel_args")  # <name>.json in round<N>/
+RESERVED = ("lead", "reverify", "ledger", "review_result", "lenses", "panel_args", "scorecard", "invariants", "suite",
+            "suite_partial", "wrong_builds")  # <name>.json in round<N>/; a key starting scorecard_ is reserved too
+RESERVED_PREFIX = "scorecard_"  # scorecard_<variant>.json in round<N>/
 KEY_RE = re.compile(r"[A-Za-z0-9_-]+")  # used with fullmatch: `$` would pass a trailing newline
 SID_RE = re.compile(r"R[1-9][0-9]*")
 PREV_KEYS = ("keep_as_is", "deferred", "premises_corrected")
 HEAD_RE = re.compile(r"^## (R[1-9][0-9]*)(?: |$)")
-TIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?")
+TIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(Z|[+-]\d{2}:?\d{2})?|(Z))?")
+STAMP_SLACK = 1.0  # stamps are whole seconds: a file written within this many seconds after one counts as before it
 THREADS = "OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 VECLIB_MAXIMUM_THREADS=2"
 CUT = 100
 
@@ -96,15 +139,31 @@ def rel(path, base):
     return path if r.startswith("..") else r
 
 
-def times_in(s):
-    """Datetimes in a text; a time without seconds stands for its whole minute. Zone suffixes are ignored: every time
-    is read as UTC."""
-    return [datetime.datetime.strptime("%s %s:%s:%s" % (m.group(1), m.group(2), m.group(3), m.group(4) or "59"),
-                                       "%Y-%m-%d %H:%M:%S") for m in TIME_RE.finditer(s or "")]
+def times_in(s, local=False):
+    """Datetimes (naive, UTC) in a text; a time without seconds stands for its whole minute. A time with Z or an offset
+    (which needs seconds) is read as such. A time with no zone is UTC, or this machine's local time with local=True."""
+    out = []
+    for m in TIME_RE.finditer(s or ""):
+        t = datetime.datetime.strptime("%s %s:%s:%s" % (m.group(1), m.group(2), m.group(3), m.group(4) or "59"),
+                                       "%Y-%m-%d %H:%M:%S")
+        zone = m.group(5)
+        if zone and zone != "Z":
+            sign = -1 if zone[0] == "-" else 1
+            digits = zone[1:].replace(":", "")
+            t -= sign * datetime.timedelta(hours=int(digits[:2]), minutes=int(digits[2:]))
+        elif not (zone or m.group(6)) and local:
+            t = datetime.datetime.fromtimestamp(time.mktime(t.timetuple()), datetime.timezone.utc).replace(tzinfo=None)
+        out.append(t)
+    return out
 
 
 def epoch(t):
     return t.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def stamp_z(t):
+    """An epoch time as YYYY-MM-DDTHH:MM:SSZ (UTC)."""
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def measured(v):
@@ -155,7 +214,16 @@ def read_reference(path):
         raise Fail(2, ["%s: %s (the template's pointer text is not the content)" % (path, u) for u in unfilled])
     pick =lambda tag: next((ln[len(tag):].strip() for ln in header if ln.startswith(tag)), None)
     return {"path": path, "sections": sections, "order": order, "lines": len(lines),
-            "valid": pick("Valid for:"), "changed": pick("Changed in the last update:")}
+            "valid": pick("Valid for:"), "changed": pick("Changed in the last update:"), "frozen": frozen_round(header)}
+
+
+def frozen_round(header):
+    """The round of a header line `Frozen at round <k>` (REFERENCE is written in round 1 and then frozen), else None."""
+    for ln in header:
+        m = re.match(r"Frozen at round (\d+)\b", ln)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def drift_r5(ref, skill):
@@ -187,10 +255,11 @@ def read_lenses(path, ref):
             continue
         k = l.get("key")
         kk = str(k or "").lower()
-        if not isinstance(k, str) or not KEY_RE.fullmatch(k) or kk in RESERVED or kk in seen \
-                or not isinstance(l.get("prompt"), str) or not l["prompt"].strip():
+        if not isinstance(k, str) or not KEY_RE.fullmatch(k) or kk in RESERVED or kk.startswith(RESERVED_PREFIX) \
+                or kk in seen or not isinstance(l.get("prompt"), str) or not l["prompt"].strip():
             errs.append("lens %s: needs a prompt and a key of letters, digits, _ or -, unique ignoring case, not %s "
-                        "in any case" % (json.dumps(k), ", ".join(RESERVED)))
+                        "or starting with %s (scorecard_<variant>.json files) in any case"
+                        % (json.dumps(k), ", ".join(RESERVED), RESERVED_PREFIX))
         seen.add(kk)
         secs = l.get("sections")
         if secs is not None:
@@ -203,6 +272,11 @@ def read_lenses(path, ref):
         owns = l.get("owns")
         if owns is not None and (not isinstance(owns, list) or not all(isinstance(o, str) for o in owns)):
             errs.append("lens %s: owns must be a list of item ids" % json.dumps(k))
+        box = l.get("box")
+        if "box" in l and not (isinstance(box, dict) and box and set(box) <= {"min", "calls"}
+                               and all(type(v) is int and v > 0 for v in box.values())):  # type: not true or 1.5
+            errs.append("lens %s: box must be an object with min and/or calls, each a positive integer"
+                        % json.dumps(k))
     if not isinstance(open_, list) or not all(isinstance(o, dict) and isinstance(o.get("id"), str) and o["id"]
                                               for o in open_):
         errs.append("%s: open must be a list of {\"id\", \"text\"}" % path)
@@ -321,7 +395,7 @@ def edited_before_gate(tools, review_dir, rnd, ledger):
     starts = []
     for p in glob.glob(os.path.join(review_dir, "round%d" % (rnd - 1), "*.json")):
         stem = os.path.basename(p)[:-5]
-        if stem.lower() in RESERVED or "." in stem:  # <lens>.verdicts.json, lead.json, ledger.json, ...
+        if stem.lower() in RESERVED or stem.lower().startswith(RESERVED_PREFIX) or "." in stem:  # <lens>.verdicts.json, lead.json, ledger.json, ...
             continue
         try:
             d = load_json(p)
@@ -392,10 +466,12 @@ def assign_owners(lenses, carried, ledger_ids):
     return {cid: who[0] for cid, who in owners.items() if who}, defaulted, errs
 
 
-def scorecards(cfgs, tools, review_dir, rnd, ref):
-    """One row per checks config, plus the stale and missing warnings (they also go into §4)."""
-    rows, read, warns, newer = [], 0, [], []
-    valid = times_in(ref["valid"])
+def scorecards(cfgs, tools, review_dir, rnd, ref, cards=None):
+    """One row per checks config, the stale and missing warnings (they also go into §4), and one dict per readable
+    manifest {variant, graph, exported (epoch or None), digest, path} for the reuse decision. A list passed as `cards`
+    gets one {variant, config, card, path} per readable scorecard, for the invariants table."""
+    rows, read, warns, newer, exports = [], 0, [], [], []
+    valid = times_in(ref["valid"], local=True)
     newest_export = None
     for cp in cfgs:
         try:
@@ -417,14 +493,20 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
         mdir = maps.get("dir") or "."
         mdir = mdir if os.path.isabs(mdir) else os.path.normpath(os.path.join(base, mdir))
         mp = os.path.join(mdir, (maps.get("prefix") or "") + "manifest.json")
-        exported = None
+        exported, man = None, None
         if os.path.isfile(mp):
             try:
-                exported = load_json(mp).get("exported_at")
+                man = load_json(mp)
+                exported = man.get("exported_at")
             except (OSError, ValueError, AttributeError):
+                man = None
                 warns.append("%s: unreadable manifest" % rel(mp, tools))
-        if exported and times_in(exported):
-            t = times_in(exported)[0]
+        stamps = times_in(exported, local=True) if exported else []
+        if isinstance(man, dict):
+            exports.append({"variant": variant, "graph": man.get("graph"), "path": rel(mp, tools),
+                            "exported": epoch(stamps[0]) if stamps else None, "digest": man.get("graph_digest")})
+        if stamps:
+            t = stamps[0]
             newest_export = max(newest_export or t, t)
             if valid and t > max(valid):
                 newer.append("%s %s" % (variant, exported))
@@ -439,6 +521,8 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
             warns.append("%s: unreadable scorecard (%s)" % (rel(sp, tools), e))
             rows.append((variant, "unreadable", "", "", "", "", rel(sp, tools)))
             continue
+        if cards is not None and isinstance(card, dict):
+            cards.append({"variant": variant, "config": cp, "card": card, "path": sp})
         stale = os.path.isfile(mp) and os.path.getmtime(sp) < os.path.getmtime(mp)
         was = ((card.get("manifest") or {}).get("exported_at")) if isinstance(card.get("manifest"), dict) else None
         if stale or (exported and was and was != exported):
@@ -451,13 +535,359 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
         hu = names(card["hard_unmeasured"]) if "hard_unmeasured" in card else "n/a"
         rows.append((variant, names(hf), hu, str(len(card.get("soft_failed") or [])), names(card.get("vacuous")),
                      names(card.get("errors")), rel(sp, tools)))
-    if newer:
+    if newer and not ref.get("frozen"):  # a frozen REFERENCE does not follow the exports
         warns.append("%d export%s newer than every time in REFERENCE `Valid for:` (%s): after the preflight export, "
                      "set Valid for to each manifest's exported_at (review.md §1 step 5)"
                      % (len(newer), "s are" if len(newer) > 1 else " is", cut(", ".join(newer), 120)))
     if newest_export and not valid:
         warns.append("REFERENCE `Valid for:` names no export time: write the exported_at of each manifest there")
-    return rows, read, warns
+    return rows, read, warns, exports
+
+
+# ----------------------------------------------------------------------------- the invariants table
+
+
+INV_RE = re.compile(r"INV-([1-9][0-9]*)")
+INV_LEAD_RE = re.compile(r"\s*(INV-[1-9][0-9]*(?:\s*(?:,|/|\+|&|and)\s*INV-[1-9][0-9]*)*)(?![0-9A-Za-z])")
+ITEM_RE = re.compile(r"\s*(?:[-*+]|[0-9]+[.)])\s+")
+CHECK_RE = re.compile(r"Checks?:")
+STOP_RE = re.compile(r"(?:Severity|Wrong[ -]builds?)[*_]*\s*:", re.I)
+
+
+def spec_invariants(spec_path):
+    """{INV id: [check tokens]} from <tools>/spec.md section 6 (the "## 6." heading to the next "## "): each paragraph
+    or list item that starts with INV-<k>, or whose first bold span holds it, gets every backticked token after
+    "Check:" in it, up to the first "Severity" or "Wrong build" label (those clauses name other checks; a check id
+    written only there is not mapped). Returns (map or None when there is no readable spec or no section 6, why)."""
+    try:
+        text = read_text(spec_path)
+    except (OSError, ValueError) as e:
+        return None, "no readable spec (%s)" % e
+    lines, sec = text.splitlines(), None
+    for i, ln in enumerate(lines):
+        if re.match(r"##\s+6\.", ln):
+            sec = i + 1
+            break
+    if sec is None:
+        return None, "%s has no '## 6.' section" % os.path.basename(spec_path)
+    body = []
+    for ln in lines[sec:]:
+        if ln.startswith("## "):
+            break
+        body.append(ln)
+    items, cur, cur_item, cur_ind = [], [], False, 0
+    for ln in body:
+        ind = len(ln) - len(ln.lstrip())
+        if not ln.strip():
+            if cur:
+                items.append(" ".join(cur))
+            cur, cur_item = [], False
+            continue
+        m = ITEM_RE.match(ln)
+        # A list marker starts a new item after a blank line, after a list item when this line is not indented
+        # deeper than that item, or when the text after the marker opens with an INV id (also inside a bold span).
+        # Otherwise it is a wrapped line of the paragraph above ("... see\n- 3 for ...") and continues it.
+        new = bool(m) and (not cur or (cur_item and ind <= cur_ind)
+                           or re.match(r"(?:\*\*)?\s*INV-[1-9]", ln[m.end():]) is not None)
+        if new:
+            if cur:
+                items.append(" ".join(cur))
+            cur, cur_item, cur_ind = [ln.strip()], True, ind
+        elif not cur:
+            cur, cur_item, cur_ind = [ln.strip()], False, ind
+        else:
+            cur.append(ln.strip())
+    if cur:
+        items.append(" ".join(cur))
+    out = {}
+    for it in items:
+        lead = ITEM_RE.match(it)
+        t = it[lead.end():] if lead else it
+        ids = []
+        m = re.match(r"\*\*(.+?)\*\*", t)
+        head = m.group(1) if m else t
+        m = INV_LEAD_RE.match(head)
+        if m:
+            ids = INV_RE.findall(m.group(1))
+        if not ids:
+            continue
+        c = CHECK_RE.search(t)
+        tail = t[c.end():] if c else ""
+        stop = STOP_RE.search(tail)  # the Wrong build and Severity clauses name other checks, not this INV's
+        toks = re.findall(r"`([^`]+)`", tail[:stop.start()] if stop else tail) if c else []
+        for k in ids:
+            out.setdefault("INV-" + k, [])
+            out["INV-" + k] += [x for x in dict.fromkeys(toks) if x not in out["INV-" + k]]
+    return out, None
+
+
+def why_invariants(cfg_checks):
+    """{check id: [INV ids]} from the `why` of each config check that starts with INV-<k> (INV-1, INV-2: ... too)."""
+    out = {}
+    for c in cfg_checks:
+        if not isinstance(c, dict) or not isinstance(c.get("id"), str):
+            continue
+        m = INV_LEAD_RE.match(str(c.get("why") or ""))
+        if m:
+            for k in INV_RE.findall(m.group(1)):
+                out.setdefault(c["id"], [])
+                if "INV-" + k not in out[c["id"]]:
+                    out[c["id"]].append("INV-" + k)
+    return out
+
+
+def inv_value(c):
+    def short(v, n):
+        if v is None:
+            return "?"
+        if isinstance(v, float):
+            return "%g" % round(v, 5)
+        if isinstance(v, (list, dict)):
+            return cut(json.dumps(v, separators=(",", ":")), n)
+        return cut(str(v), n)
+    t = c["target"]
+    tt = "" if t is None else " [%s]" % short(t, 30)
+    return "%s %s%s %s" % (c["id"], short(c["value"], 30), tt, "ok" if c["passed"] else "miss")
+
+
+def invariants_table(cfgs, cards, spec_path, tools):
+    """(document, warnings). One row per (INV, variant) with checks in that variant's scorecard; an INV with no check
+    in any scorecard gets one row with variant "*", pass null, checks []. See references/review.md section 6."""
+    warns = []
+    spec, why = spec_invariants(spec_path)
+    if spec is None:
+        warns.append("invariants table: %s: INV -> check ids from the checks' `why` only" % why)
+    cfg_ids, whys = set(), {}
+    for cp in cfgs:
+        try:
+            cfg = load_json(cp)
+        except (OSError, ValueError):
+            continue
+        if isinstance(cfg, dict) and isinstance(cfg.get("checks"), list):
+            cfg_ids |= {c["id"] for c in cfg["checks"] if isinstance(c, dict) and isinstance(c.get("id"), str)}
+            for cid, invs in why_invariants(cfg["checks"]).items():
+                whys.setdefault(cid, [])
+                whys[cid] += [i for i in invs if i not in whys[cid]]
+    by_spec = {}  # INV -> check ids from the spec that are check ids in some config
+    for inv, toks in (spec or {}).items():
+        by_spec[inv] = [t for t in toks if t in cfg_ids]
+    by_why = {}
+    for cid, invs in whys.items():
+        for inv in invs:
+            by_why.setdefault(inv, []).append(cid)
+    invs = sorted(set(by_spec) | set(by_why), key=lambda x: int(x[4:]))
+    rows = []
+    for inv in invs:
+        ids = list(dict.fromkeys(by_spec.get(inv, []) + by_why.get(inv, [])))
+        via = "+".join(n for n, d in (("spec", by_spec), ("why", by_why)) if d.get(inv))
+        found = False
+        for cd in cards:
+            res = {r["id"]: r for r in cd["card"].get("results") or [] if isinstance(r, dict) and "id" in r}
+            checks = []
+            for cid in ids:
+                r = res.get(cid)
+                if r is not None:
+                    checks.append({"id": cid, "value": r.get("value"), "target": r.get("target"),
+                                   "passed": r.get("passed") is True, "severity": r.get("severity")})
+            if not checks:
+                continue
+            found = True
+            rows.append({"id": inv, "variant": cd["variant"], "pass": all(c["passed"] for c in checks),
+                         "hard": any(c["severity"] == "hard" for c in checks),
+                         "hard_failed": any(c["severity"] == "hard" and not c["passed"] for c in checks),
+                         "checks": checks,
+                         "value": cut("; ".join(inv_value(c) for c in checks), 400), "mapped_by": via or "none"})
+        if not found:
+            rows.append({"id": inv, "variant": "*", "pass": None, "hard": False, "hard_failed": False, "checks": [],
+                         "value": "no check in any scorecard" + ("" if ids else " (no check id maps to it)"),
+                         "mapped_by": via or "none"})
+    gaps = [r["id"] for r in rows if r["variant"] == "*"]
+    if gaps:
+        warns.append("invariants table: no check in any scorecard for %s (a gap: add a check or drop the INV)"
+                     % ", ".join(gaps))
+    doc = {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "source": {"spec": rel(spec_path, tools) if spec is not None else None,
+                      "configs": [rel(cp, tools) for cp in cfgs]},
+           "invariants": rows}
+    return doc, warns
+
+
+def write_json_atomic(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(obj, fh, indent=1)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+# ----------------------------------------------------------------------------- reuse of the last final gate
+
+
+def build_scripts(tools):
+    """[(mtime, path relative to tools)] of every .py under <tools>/build/ (no __pycache__ or dot names); a file that
+    cannot be stat'ed (a dangling symlink) is skipped."""
+    found = []
+    for root, dirs, files in os.walk(os.path.join(tools, "build")):
+        dirs[:] = [d for d in dirs if d != "__pycache__" and not d.startswith(".")]
+        for f in files:
+            if f.endswith(".py") and not f.startswith("."):
+                p = os.path.join(root, f)
+                try:
+                    found.append((os.path.getmtime(p), rel(p, tools)))
+                except OSError:
+                    pass
+    return found
+
+
+def newest_build_file(tools):
+    """(mtime, path relative to tools) of the newest .py under <tools>/build/, or None."""
+    return max(build_scripts(tools), default=None)
+
+
+def export_decision(exports, digests, build):
+    """(stands, reason). The last final gate's export stands as the next round's preflight when no build script is newer
+    than the oldest manifest's exported_at and every manifest's graph_digest equals the current one. `exports` are
+    scorecards()' manifest dicts, `digests` {graph id: current digest}, `build` newest_build_file()'s result."""
+    if not exports:
+        return False, "no manifest was read"
+    for e in exports:
+        if e["exported"] is None:
+            return False, "the manifest of %s has no exported_at" % e["variant"]
+    if not digests:
+        return False, "no --graph-digest given, so the old rule (an export after the apply) applies"
+    for e in exports:
+        if e["digest"] in (None, ""):
+            return False, "the manifest of %s has no graph_digest (an export from before the field), so the old rule " \
+                          "applies" % e["variant"]
+        if e["graph"] not in digests:
+            return False, "no --graph-digest given for graph %s (variant %s), so the old rule applies" \
+                          % (e["graph"], e["variant"])
+        if str(e["digest"]) != str(digests[e["graph"]]):
+            return False, "graph %s changed since the export of %s (digest %s in the manifest, %s now)" \
+                          % (e["graph"], e["variant"], e["digest"], digests[e["graph"]])
+    oldest = min(e["exported"] for e in exports)
+    if build and build[0] > oldest + STAMP_SLACK:
+        return False, "%s was edited after the oldest export (%s)" % (
+            build[1], datetime.datetime.fromtimestamp(oldest, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return True, ""
+
+
+def suite_decision(started, inputs):
+    """(stands, reason). `started` is the suite's start (epoch or None), `inputs` [(label, mtime or epoch)]: the suite
+    stands only when it started after every one of them."""
+    if started is None:
+        return False, "suite.json has no readable started stamp"
+    late = [label for label, t in inputs if t > started + STAMP_SLACK]
+    if late:
+        return False, "%s changed after the suite started" % cut(", ".join(late), 200)
+    return True, ""
+
+
+def suite_inputs(tools, cfgs, exports):
+    """[(label, time)] the suite depends on: the checks configs, wrong_build_cases.py, gen_checks.py, SUITE.json and
+    each manifest's exported_at."""
+    paths = set(cfgs) | set(glob.glob(os.path.join(tools, "checks", "*.json")))
+    paths |= {os.path.join(tools, "checks", "wrong_build_cases.py"), os.path.join(tools, "gen_checks.py"),
+              os.path.join(tools, "checks", "gen_checks.py"), os.path.join(tools, "SUITE.json")}
+    out = [(rel(p, tools), os.path.getmtime(p)) for p in sorted(paths) if os.path.isfile(p)]
+    return out + [("the export of %s" % e["variant"], e["exported"]) for e in exports if e["exported"] is not None]
+
+
+def parse_digests(items):
+    """{graph id: digest} from GID=DIGEST arguments; a bad one is a usage error (exit 2)."""
+    out = {}
+    for it in items or []:
+        gid, eq, dig = it.partition("=")
+        if not eq or not gid.strip() or not dig.strip():
+            raise Fail(2, ["--graph-digest %r: write GID=DIGEST" % it])
+        out[gid.strip()] = dig.strip()
+    return out
+
+
+# ----------------------------------------------------------------------------- changed since a frozen REFERENCE
+
+MAX_CHANGED = 20
+
+
+def ledger_items(path):
+    """[(item id, item dict)] and the apply.ended time (epoch or None) of a ledger file; ([], None) when unreadable."""
+    try:
+        led = load_json(path)
+        items = [(it["id"], it) for it in led.get("items") or []
+                 if isinstance(it, dict) and isinstance(it.get("id"), str)]
+        end = times_in(str(((led.get("apply") or {}).get("ended")) or ""))
+        return items, epoch(end[0]) if end else None
+    except (OSError, ValueError, AttributeError, TypeError):
+        return [], None
+
+
+def changed_since(tools, review_dir, ref):
+    """The lines of the `## Changed since REFERENCE` section (frozen mode): the build scripts modified after the latest
+    `Valid for:` time (else REFERENCE.md's mtime), newest first, each with the plan items that touched it."""
+    valid = times_in(ref["valid"], local=True)
+    since = epoch(max(valid)) if valid else os.path.getmtime(ref["path"])
+    found = sorted(((t, p.replace(os.sep, "/")) for t, p in build_scripts(tools) if t > since + STAMP_SLACK),
+                   reverse=True)
+    out = ["REFERENCE is frozen at round %d: R4 and its parameters are from before these edits. Build scripts modified "
+           "after %s, newest first, with the plan items that touched them (review/patches/order.jsonl, else the "
+           "ledgers' change text):" % (ref["frozen"], stamp_z(since))]
+    if not found:
+        return out + ["None: no build script is newer than the REFERENCE export, so R4 matches the build."]
+    cache = {}
+
+    def ledger(name):
+        if name not in cache:
+            cache[name] = ledger_items(os.path.join(review_dir, name, "ledger.json"))
+        return cache[name]
+    rows = []  # order.jsonl rows after `since`, in application order
+    op = os.path.join(review_dir, "patches", "order.jsonl")
+    try:
+        for ln in read_text(op).split("\n"):
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            t = times_in(str(r.get("utc") or "")) if isinstance(r, dict) else []
+            if t and epoch(t[0]) > since and isinstance(r.get("files"), list) and isinstance(r.get("item"), str):
+                rows.append(r)
+    except (OSError, UnicodeDecodeError):
+        pass
+    led_names = sorted(os.path.basename(os.path.dirname(p)) for pat in ("round*", "edit*")
+                       for p in glob.glob(os.path.join(review_dir, pat, "ledger.json")))
+
+    def ledger_name(r):
+        """The ledger folder of a patch row's item (edit<K> for a U<K> item), None when the row has no int round."""
+        em, rnd = re.fullmatch(r"U(\d+)", r["item"]), r.get("round")
+        if em:
+            return "edit%s" % em.group(1)
+        return "round%d" % rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None
+
+    def tag(item, name, title):
+        return "%s (%s)" % (item, "no ledger" if name is None else
+                            "%s ledger%s" % (name, ", '%s'" % cut(title, 50) if title else ""))
+    for mtime, path in found:
+        base, hit = os.path.basename(path), []
+        for r in rows:
+            if any(str(f).replace("\\", "/") == path or os.path.basename(str(f)) == base for f in r["files"]):
+                name = ledger_name(r)
+                title = dict(ledger(name)[0]).get(r["item"], {}).get("title") if name else None
+                t = tag(r["item"], name, title)
+                hit += [t] if t not in hit else []
+        if not hit:  # no patch row names the file (no order.jsonl, or a round from before it): the ledgers' change text
+            stem = re.compile(r"(?<!\w)%s(?!\w)" % re.escape(os.path.splitext(base)[0]))
+            for name in led_names:
+                items, end = ledger(name)
+                if end is not None and end < since:
+                    continue  # that apply ended before the REFERENCE export
+                hit += [tag(i, name, it.get("title")) for i, it in items
+                        if stem.search(it["change"] if isinstance(it.get("change"), str)
+                                       else json.dumps(it.get("change")))]
+        out.append("- `%s` (modified %s): %s" % (path, stamp_z(mtime), ", ".join(hit) or "(no ledger item names it)"))
+        if len(out) - 1 == MAX_CHANGED:  # the intro line, then one line per file
+            break
+    if len(found) > MAX_CHANGED:
+        out.append("- and %d more (oldest first omitted)" % (len(found) - MAX_CHANGED))
+    return out
 
 
 # ----------------------------------------------------------------------------- the brief
@@ -483,8 +913,12 @@ def build(a, ref, lenses, ledger, prev, carried, owner, defaulted, sc_rows, n_cf
     prd = rel(os.path.join(DIR, pr), tools)
     head = ["# Round %d delta brief (%s)" % (R, now), "",
             "Made by `make_brief.py`. Tools folder: `%s`; paths below are relative to it." % tools,
-            "- REFERENCE: `%s`. Valid for: %s. Changed in the last update: %s." % (
-                rel(ref["path"], tools), (ref["valid"] or "?").rstrip("."), (ref["changed"] or "?").rstrip(".")),
+            ("- REFERENCE: `%s`, frozen at round %d; R4 may be stale, so read the build scripts listed under Changed "
+             "since REFERENCE. Valid for: %s." % (rel(ref["path"], tools), ref["frozen"],
+                                                   (ref["valid"] or "?").rstrip("."))
+             if ref["frozen"] else
+             "- REFERENCE: `%s`. Valid for: %s. Changed in the last update: %s." % (
+                 rel(ref["path"], tools), (ref["valid"] or "?").rstrip("."), (ref["changed"] or "?").rstrip("."))),
             "- Ledger: %s." % ("`%s` (%d items)" % (rel(a.ledger_path, tools), len(ledger.get("items", [])))
                                if ledger else "none (round 1)"),
             "- Last round: %s." % ("none (round 1)" if R < 2 else ", ".join(
@@ -505,12 +939,15 @@ def build(a, ref, lenses, ledger, prev, carried, owner, defaulted, sc_rows, n_cf
         % THREADS,
         "- Time boxes and the finding cap are in your prompt (review_round.js).",
         "- A REFERENCE section: `sed -n '/^## R4 /,/^## R5 /p' \"%s\"` prints R4 (up to the R5 heading)."
-        % ref["path"]]))
+        % ref["path"]] + (["- REFERENCE is frozen at round %d: for a node a listed build script touches, read the "
+                           "script, not R4." % ref["frozen"]] if ref["frozen"] else [])))
     body = ["## 2. Read by everyone: REFERENCE R1, R5 and R9", ""]
     for sid in EVERYONE:
         sec = ref["sections"][sid]
         body += ["#" + sec[0]] + sec[1:] + [""]
     S.append(("2. Read by everyone", body[:-1]))
+    if ref["frozen"]:
+        S.append(("Changed since REFERENCE", ["## Changed since REFERENCE", ""] + changed_since(tools, DIR, ref)))
     dec = ["## 3. Decisions at the last gate", ""]
     if R < 2 and not ledger:
         dec.append("None (round 1).")
@@ -526,6 +963,8 @@ def build(a, ref, lenses, ledger, prev, carried, owner, defaulted, sc_rows, n_cf
         sc += ["| variant | hard failed | hard unmeasured | soft misses | vacuous | errors | scorecard |",
                "|---|---|---|---|---|---|---|"]
         sc += ["| %s |" % " | ".join(r) for r in sc_rows]
+        if getattr(a, "inv_line", None):
+            sc.append(a.inv_line)
         if any(r[2] == "n/a" for r in sc_rows):
             sc.append("Hard unmeasured `n/a`: a scorecard from a matcheck without that field.")
     else:
@@ -624,9 +1063,13 @@ def main(argv=None):
     ap.add_argument("--max-lines", type=int, default=250, help="warn above this many brief lines (default 250)")
     ap.add_argument("--python", help="the venv python agents use (default: $(bash <skill>/scripts/setup_env.sh))")
     ap.add_argument("--skill-dir", help="the skill folder (default: this script's)")
+    ap.add_argument("--graph-digest", action="append", metavar="GID=DIGEST",
+                    help="the graph's current digest, read from sdkit (repeatable); lets the last final gate's export "
+                         "stand as the preflight")
     a = ap.parse_args(argv)
-    warns = []
+    warns, notes = [], []
     try:
+        digests = parse_digests(a.graph_digest)
         if a.round < 1:
             raise Fail(2, ["--round must be 1 or more"])
         a.review_dir = os.path.abspath(a.review_dir)
@@ -648,14 +1091,10 @@ def main(argv=None):
         a.ledger_path = os.path.join(a.round_dir, "ledger.json")
         ledger = read_ledger(a.ledger_path, a.round)
         end = times_in(str(((ledger or {}).get("apply") or {}).get("ended") or ""))
-        if end and os.path.getmtime(ref["path"]) < epoch(end[0]):
+        if end and not ref["frozen"] and os.path.getmtime(ref["path"]) < epoch(end[0]):
             warns.append("REFERENCE.md was last written before the apply ended (%s): bring the sections the apply "
                          "changed up to date, then set Valid for (review.md §1 step 5)" % ledger["apply"]["ended"])
-        valid = times_in(ref["valid"])
-        if end and valid and max(valid) < end[0]:
-            warns.append("REFERENCE `Valid for:` names no export after the apply ended (%s; latest %s): export every "
-                         "variant (review.md §1 step 1), then set Valid for to the new exported_at (step 5)"
-                         % (ledger["apply"]["ended"], max(valid).strftime("%Y-%m-%dT%H:%M:%S")))
+        valid = times_in(ref["valid"], local=True)
         early = edited_before_gate(tools, a.review_dir, a.round, ledger)
         if early and early[2]:
             warns.append("%d build/ file%s edited before the plan gate (after round %d's first lens started %s, before "
@@ -681,8 +1120,52 @@ def main(argv=None):
         for c in cfgs:
             if not os.path.isfile(c):
                 raise Fail(2, ["no checks config %s" % c])
-        sc_rows, n_cfg, sc_warns = scorecards(cfgs, tools, a.review_dir, a.round, ref)
+        cards = []
+        sc_rows, n_cfg, sc_warns, exports = scorecards(cfgs, tools, a.review_dir, a.round, ref, cards)
         warns += sc_warns
+        inv_doc, a.inv_line = None, None
+        if cards:  # nothing to tabulate without a readable scorecard
+            inv_doc, inv_warns = invariants_table(cfgs, cards, os.path.join(tools, "spec.md"), tools)
+            warns += inv_warns
+            rows = inv_doc["invariants"]
+            a.inv_line = "Invariants table: round%d/invariants.json (%d of %d rows pass)" % (
+                a.round, len([r for r in rows if r["pass"] is True]), len(rows))
+        latest = max((e["exported"] for e in exports if e["exported"] is not None), default=None)
+        if ref["frozen"]:  # REFERENCE does not follow the exports: decide on the exports themselves
+            if end and (latest is None or latest < epoch(end[0])):
+                stands, why = export_decision(exports, digests, newest_build_file(tools))
+                if stands:
+                    notes.append("the last final gate's export stands as this round's preflight (no build script newer "
+                                 "than the oldest export, %d graph digest%s match)" % (len(exports),
+                                                                                       "s" if len(exports) > 1 else ""))
+                else:
+                    warns.append("no export after the apply ended (%s; latest export %s) and the last final gate's "
+                                 "export does not stand (%s): export every variant (review.md §1 step 1)"
+                                 % (ledger["apply"]["ended"], "none" if latest is None else stamp_z(latest), why))
+        elif end and valid and max(valid) < end[0]:
+            stands, why = export_decision(exports, digests, newest_build_file(tools))
+            if stands:
+                notes.append("the last final gate's export stands as this round's preflight (no build script newer "
+                             "than the oldest export, %d graph digest%s match): only set Valid for to its exported_at "
+                             "(review.md §1 step 5)" % (len(exports), "s" if len(exports) > 1 else ""))
+            else:
+                warns.append("REFERENCE `Valid for:` names no export after the apply ended (%s; latest %s) and the "
+                             "last final gate's export does not stand (%s): export every variant (review.md §1 step "
+                             "1), then set Valid for to the new exported_at (step 5)"
+                             % (ledger["apply"]["ended"], max(valid).strftime("%Y-%m-%dT%H:%M:%SZ"), why))
+        sp = os.path.join(a.round_dir, "suite.json")
+        if os.path.isfile(sp):
+            try:
+                st = times_in(str(load_json(sp).get("started") or ""), local=True)
+            except (OSError, ValueError, AttributeError):
+                st = []
+            stands, why = suite_decision(epoch(st[0]) if st else None, suite_inputs(tools, cfgs, exports))
+            if stands:
+                notes.append("round%d/suite.json started after every checks file and export: the suite stands "
+                             "(review.md §1 step 1)" % a.round)
+            else:
+                warns.append("round%d/suite.json does not stand (%s): rerun the suite only (review.md §1 step 2)"
+                             % (a.round, why))
         if not n_cfg:
             warns.append("no checks configs found (%s)" % (", ".join(cfgs) or os.path.join(tools, "checks", "*.json")))
         for l in lenses:
@@ -709,6 +1192,8 @@ def main(argv=None):
         if l["sections"]:
             row["sections"] = l["sections"]
         row["owns"] = l["owns"]
+        if "box" in l:
+            row["box"] = l["box"]
         args["lenses"].append(row)
     if a.python:
         args["python"] = a.python
@@ -716,14 +1201,23 @@ def main(argv=None):
     with open(os.path.join(a.round_dir, "panel_args.json"), "w", encoding="utf-8", newline="\n") as fh:
         json.dump(args, fh, indent=1)
         fh.write("\n")
+    if inv_doc is not None:
+        write_json_atomic(os.path.join(a.round_dir, "invariants.json"), inv_doc)
     print("make_brief: round %d -> %s/BRIEF.md, panel_args.json" % (a.round, a.round_dir))
     print("  lines: %s; total %d (budget %d)" % (", ".join("%s %d" % s for s in sizes), total, a.max_lines))
     print("  lines to read: %s; verifiers, re-verify and lead %d + %d = %d" % (
         "; ".join("%s %d + %d = %d" % (k, d, e, d + e) for k, (d, e) in reads.items() if k != "*"),
         reads["*"][0], reads["*"][1], sum(reads["*"])))
+    if inv_doc is not None:
+        rows = inv_doc["invariants"]
+        print("  invariants: %s; %d rows, %d pass, %d fail, %d gap" % (
+            os.path.join("round%d" % a.round, "invariants.json"), len(rows), len([r for r in rows if r["pass"] is True]),
+            len([r for r in rows if r["pass"] is False]), len([r for r in rows if r["pass"] is None])))
     print("  carried items: %d (%s)" % (len(carried), ", ".join("%s %s" % (cid, owner[cid]) for cid in carried)
                                         or "none"))
     print("  %.2f s" % (time.time() - t0))
+    for n in notes:
+        print("  note: %s" % n)
     for w in warns:
         print("  warning: %s" % w)
     return 0

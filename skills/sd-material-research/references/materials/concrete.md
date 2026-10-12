@@ -444,7 +444,13 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
   industrial joints under hard wheels [6].
 - **Shape and scale:** elongated along the joint; width from the joint face L < 75, M 75-150, H > 150 mm [17]; shallow
   road joint spalls up to 75 mm wide by 150-300 mm long are often left unrepaired (source inconsistent [16]);
-  partial-depth repair limit = top 1/3 of the slab [16]; conchoidal, ragged outline (est.).
+  partial-depth repair limit = top 1/3 of the slab [16]; conchoidal, ragged outline (est.). Outline in numbers
+  (matcheck `components`, reach profile from the joint; all (est.), from synthetic outlines hung off a straight joint,
+  not from a build: a D-shaped bite, a parabola, a triangle, lenses with 2-4 bumps): solidity 0.70-0.95 (a smooth D
+  bite reads 0.99), blunt10 0.15-0.50 (D bite 0.60, parabola 0.38), taper30 0.06-0.20 (D bite 0.02, parabola 0.08),
+  lobes >= 2 on spalls >= 250 mm long. Report-only soft checks until their steer tests pass; lobes stays report-only
+  (a tile holds too few spalls of 250 mm for power). Replace them with readings from measured photos when a card gets
+  them.
 - **Progression:** chipped arris (few mm) -> raveled band (10-30 mm, est.) -> 75-150 mm spalls -> loose pieces and patches
   [16][17].
 - **Signature per map:** height ramp from the envelope down to 10-40 mm at the joint face (est.), sharp outer breakout

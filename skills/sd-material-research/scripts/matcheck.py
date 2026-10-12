@@ -7,6 +7,8 @@ Usage:
 The check vocabulary is documented in references/checks.md. Exit code: 0 when every hard check
 passes, 1 when a hard check fails (a NaN value on a hard check with a target counts as failing), 2 on a
 configuration error, 3 when none failed but a hard check errored or was vacuous.
+`components` also measures per-component outline shape (metric solidity / lobes / blunt10 / taper30, see ck_components):
+each such result carries `n` (components measured) and the per-component values as `samples`.
 Needs numpy, Pillow and scipy, plus opencv-python-headless to read 16-bit colour PNGs at full precision
 (scripts/setup_env.sh creates an environment with them).
 """
@@ -20,6 +22,8 @@ import time
 import numpy as np
 from PIL import Image
 from scipy import ndimage as ndi
+from scipy.signal import find_peaks
+from scipy.spatial import ConvexHull
 
 try:
     import cv2
@@ -694,7 +698,158 @@ def component_shapes(lab, n):
     return aspect[1:], fill
 
 
+SHAPE_METRICS = ("solidity", "lobes", "blunt10", "taper30")
+
+
+def unwrap_axis(c, size):
+    """Coordinates c (ints in 0..size-1) of one component along one tile axis, unwrapped so that the component is
+    contiguous: cut the cycle at its largest empty gap, so a component across the seam gives the same offsets as
+    the same shape away from it. Offsets start at 0."""
+    u = np.unique(c)
+    if u.size == 1:
+        return np.zeros(c.shape, np.int64)
+    gaps = np.diff(np.concatenate([u, [u[0] + size]]))
+    origin = u[(int(np.argmax(gaps)) + 1) % u.size]
+    return (c - origin) % size
+
+
+def profile_stats(r, step_mm, lobe_sigma_mm=6.0, lobe_prominence=0.06, end_frac=0.1, taper_reach=0.3):
+    """Outline numbers of one reach/width profile r(s) along a component's axis (bins of step_mm; any unit).
+    Ported from the concrete (M8) spall instruments: realism_v/v1_spall.py prof_stats (concrete_materials_tools/review/
+    agents/round3/realism_v/v1_spall.py:12-23; also review/round4/measure/slab_round3_plan.py:1553-1568):
+      blunt10 = mean of r at end_frac (10 %) of the length in from each end, over the peak (v1_spall.py:14-15);
+      lobes   = peaks of r smoothed by a gaussian of lobe_sigma_mm (mode nearest), zero-padded ends, prominence
+                lobe_prominence x the raw peak (v1_spall.py:17-20; 6 mm / 0.06 is M8's lobes6, 10 mm / 0.10 lobes10);
+      taper30 = mean number of bins from each end before r first reaches taper_reach (30 %) of the peak, as a share
+                of the length (v1_spall.py:21-23).
+    Returns (blunt10, lobes, taper30); NaN for a profile of under 3 bins or without a positive peak."""
+    r = np.asarray(r, dtype=np.float64)
+    n = len(r)
+    pk = r.max() if n else 0.0
+    if n < 3 or not pk > 0:
+        return float("nan"), float("nan"), float("nan")
+    i10 = min(max(1, int(round(end_frac * n))), n - 1)
+    blunt = 0.5 * (r[i10] + r[n - 1 - i10]) / pk
+    sm = ndi.gaussian_filter1d(r, lobe_sigma_mm / step_mm, mode="nearest")
+    lobes = len(find_peaks(np.concatenate([[0.0], sm, [0.0]]), prominence=lobe_prominence * pk)[0])
+    a, b = np.argmax(r >= taper_reach * pk), np.argmax(r[::-1] >= taper_reach * pk)
+    return float(blunt), float(lobes), float(0.5 * (a + b) / n)
+
+
+def component_outlines(ctx, lab, n, keep, want, reach=None, prof=None):
+    """Shape numbers of the kept components 1..n of a tile-wrapped label image. Per component the pixel coordinates are
+    unwrapped across the seam (unwrap_axis), converted to mm, and the principal axis is the first PCA axis (as
+    component_shapes). Profile r(s) along it, one bin per pixel (ctx.mm): the component's area per unit length (its
+    width) -- or, with `reach` (distance in px to a reference region), the largest reach in each bin, which is what the
+    concrete spall instruments measured from the joint. solidity = area / convex hull area, the hull taken over the
+    pixel squares (a rectangle is exactly 1). Returns a list of dicts (id, length_mm, solidity, blunt10, lobes,
+    taper30), only the keys in `want` and length_mm; None where the component has no profile."""
+    H, W = lab.shape
+    ys, xs = np.nonzero(lab)
+    ids = lab[ys, xs]
+    order = np.argsort(ids, kind="stable")
+    ys, xs, ids = ys[order], xs[order], ids[order]
+    off = np.concatenate([[0], np.cumsum(np.bincount(ids, minlength=n + 1))])
+    mmx, mmy, step = ctx.mmx, ctx.mmy, ctx.mm
+    prof = prof or {}
+    out = []
+    for k in np.flatnonzero(keep) + 1:
+        y0, x0 = ys[off[k]:off[k + 1]], xs[off[k]:off[k + 1]]
+        y, x = unwrap_axis(y0, H), unwrap_axis(x0, W)
+        X, Y = x * mmx, y * mmy
+        cnt = len(X)
+        mx, my = X.mean(), Y.mean()
+        sxx = ((X - mx) ** 2).mean() + mmx * mmx / 12.0
+        syy = ((Y - my) ** 2).mean() + mmy * mmy / 12.0
+        sxy = ((X - mx) * (Y - my)).mean()
+        ang = 0.5 * math.atan2(2 * sxy, sxx - syy)  # first principal axis
+        u = (X - mx) * math.cos(ang) + (Y - my) * math.sin(ang)
+        t = (u - u.min()) / step
+        if reach is not None:
+            ib = np.floor(t + 1e-9).astype(np.int64)
+            nb = int(ib.max()) + 1
+        else:
+            # cloud-in-cell: each pixel is shared linearly between the two nearest bin centres, so the width profile of
+            # a rotated shape is not aliased by hard 1 px bins (per-bin counts of a 45 deg rectangle alternate 29/15/14)
+            ib = np.floor(t + 1e-9).astype(np.int64)
+            fr = np.where(t - ib < 1e-9, 0.0, t - ib)
+            nb = int((ib + (fr > 0)).max()) + 1
+        row = {"id": int(k), "length_mm": nb * step,
+               "spans_tile": bool(np.unique(y0).size == H or np.unique(x0).size == W)}
+        if "solidity" in want:
+            o = np.argsort(y, kind="stable")
+            ysr, xsr = y[o], x[o]
+            st = np.flatnonzero(np.concatenate([[True], ysr[1:] != ysr[:-1]]))
+            ru = ysr[st]
+            lo, hi = np.minimum.reduceat(xsr, st), np.maximum.reduceat(xsr, st)
+            pts = np.concatenate([np.stack([(lo - .5) * mmx, (ru - .5) * mmy], 1), np.stack([(lo - .5) * mmx, (ru + .5) * mmy], 1),
+                                  np.stack([(hi + .5) * mmx, (ru - .5) * mmy], 1), np.stack([(hi + .5) * mmx, (ru + .5) * mmy], 1)])
+            row["solidity"] = min(1.0, cnt * mmx * mmy / ConvexHull(pts).volume)
+        if want & {"lobes", "blunt10", "taper30"}:
+            if reach is not None:
+                r = np.zeros(nb)
+                np.maximum.at(r, ib, reach[y0, x0] * step)
+            else:
+                r = (np.bincount(ib, 1.0 - fr, nb) + np.bincount(ib + 1, fr, nb + 1)[:nb]) * (mmx * mmy / step)
+            row["blunt10"], row["lobes"], row["taper30"] = profile_stats(r, step, **prof)
+        out.append(row)
+    return out
+
+
+SHAPE_ONLY_KEYS = ("min_size_mm", "reach_from", "reach_max_mm", "lobe_sigma_mm", "lobe_prominence", "end_frac", "taper_reach")
+SHAPE_NUMERIC = {"min_size_mm": (lambda v: v >= 0, ">= 0"), "reach_max_mm": (lambda v: v > 0, "> 0"),
+                 "lobe_sigma_mm": (lambda v: v > 0, "> 0"), "lobe_prominence": (lambda v: v >= 0, ">= 0"),
+                 "end_frac": (lambda v: 0 < v <= 0.5, "in (0, 0.5]"), "taper_reach": (lambda v: 0 < v <= 1, "in (0, 1]")}
+
+
+def validate_components(c, where="components"):
+    """ConfigError for a components check whose shape keys are out of range, not numbers, or given with a metric that
+    does not use them (they would be ignored without a word)."""
+    metric = c.get("metric", "count_per_m2")
+    present = [k for k in SHAPE_ONLY_KEYS if k in c]
+    if metric not in SHAPE_METRICS:
+        if present:
+            raise ConfigError("%s: %s only apply to the shape metrics (%s), not metric '%s'"
+                              % (where, ", ".join(present), ", ".join(SHAPE_METRICS), metric))
+        return
+    for k, (okf, rng) in SHAPE_NUMERIC.items():
+        if k in c and not (_number(c[k]) and okf(c[k])):
+            raise ConfigError("%s: %s must be a number %s, not %r" % (where, k, rng, c[k]))
+    if "reach_from" in c and not (isinstance(c["reach_from"], str) and c["reach_from"]):
+        raise ConfigError("%s: reach_from must be a region name, not %r" % (where, c["reach_from"]))
+    if "reach_max_mm" in c and "reach_from" not in c:
+        raise ConfigError("%s: reach_max_mm limits reach_from; there is no reach_from" % where)
+
+
 def ck_components(ctx, c):
+    """Connected parts of a region (tile-wrapped), one number per component, then `stat` (default median) over them.
+    metric: count, count_per_m2, eq_diameter_mm, largest_mm, small_island_count, small_island_frac; aspect (PCA
+    elongation, 1 = round), fill (area / bounding box); and the outline shape metrics, from each component's
+    principal-axis profile r(s) (its width per unit length along the first PCA axis, coordinates unwrapped across the
+    tile seam):
+      solidity  area / convex hull area (1 = convex; a lobed or ragged outline is lower);
+      lobes     peaks of r smoothed by lobe_sigma_mm (6) with prominence lobe_prominence (0.06) of the peak
+                (M8's lobes6; lobe_sigma_mm 10 + lobe_prominence 0.10 is its lobes10);
+      blunt10   mean of r at end_frac (0.1) of the length in from each end, over the peak (1 = a blunt, boxy end);
+      taper30   mean length from each end to the first r >= taper_reach (0.3) of the peak, as a share of the length
+                (0 = no taper; wedge/lens ends larger).
+    Filters: min_mm (equivalent diameter), border_px, and for the shape metrics min_size_mm (length along the axis,
+    M8's "spalls >= 250 mm"). reach_from: a region name; the profile is then the largest distance to that region in
+    each bin (reach_max_mm caps the distance, default 400 px), as the M8 spall instruments measured it from the joint;
+    an empty reach_from region measures nothing (n 0, vacuous, details.reach_from_empty).
+    The width profile (no reach_from) shares each pixel linearly between the two nearest 1 px bins, so a rotated shape
+    is not aliased (a rectangle's blunt10 stays within ~0.1 over all angles; a hard-binned profile gave 0.5 to 1.0).
+    solidity is taken over pixel squares, which biases it low for thin shapes that are not axis-aligned (an 81x9 px
+    rectangle reads 0.86 to 0.95 by angle, an 81x21 one 0.93 to 0.96); compare it with targets for shapes over ~20 px
+    wide, or allow the margin. A component that spans the whole tile on an axis has no meaningful length, axis or
+    outline; it is counted in details.spanning_tile (with a spanning_note).
+    Shape-only keys (min_size_mm, reach_from, reach_max_mm, lobe_sigma_mm > 0, lobe_prominence >= 0, end_frac in
+    (0, 0.5], taper_reach in (0, 1]) are validated up front (exit 2) and rejected on the other metrics.
+    aspect, fill and the shape metrics put `n` (components measured) and `samples` (their values) in the details; for
+    the shape metrics the check's n_key is the component count, so min_px is a minimum number of components and an
+    empty set is vacuous. For the shape metrics `components` is also the measured count (components_kept is the
+    count after min_mm / border_px, dropped_no_profile those without a profile)."""
+    validate_components(c, "components")
     R = ctx.region(c["region"])
     Wn = ctx.region(c["within"]) if c.get("within") else None
     if Wn is not None:
@@ -743,7 +898,40 @@ def ck_components(ctx, c):
         aspect, fill = component_shapes(lab, n) if n else (np.array([]), np.array([]))
         aspect, fill = aspect[keep], fill[keep]
         det.update(aspect=summary(aspect), fill=summary(fill))
-        val = stat_of(aspect if metric == "aspect" else fill, c.get("stat", "median"))
+        vals = aspect if metric == "aspect" else fill
+        det.update(n=int(vals.size), samples=[round(float(v), 6) for v in vals])
+        val = stat_of(vals, c.get("stat", "median"))
+    elif metric in SHAPE_METRICS:
+        prof = {"lobe_sigma_mm": float(c.get("lobe_sigma_mm", 6.0)), "lobe_prominence": float(c.get("lobe_prominence", 0.06)),
+                "end_frac": float(c.get("end_frac", 0.1)), "taper_reach": float(c.get("taper_reach", 0.3))}
+        reach = None
+        empty_reach = False
+        if c.get("reach_from"):
+            rr = ctx.region(c["reach_from"])
+            if not rr.any():
+                empty_reach = True  # a distance to nothing is meaningless: no component is measured
+            else:
+                r_px = float(c.get("reach_max_mm", 400 * ctx.mm)) / ctx.mm
+                reach = np.minimum(wrap_edt(rr, r_px), r_px)  # wrap_edt is only valid up to r_px: reach_max_mm is a cap
+        rows = component_outlines(ctx, lab, n, keep, {metric}, reach, prof) if keep.any() and not empty_reach else []
+        min_size = float(c.get("min_size_mm", 0.0))
+        measured = [q for q in rows if q["length_mm"] >= min_size]
+        n_nan = sum(1 for q in measured if not np.isfinite(q[metric]))
+        rows = [q for q in measured if np.isfinite(q[metric])]
+        vals = np.array([q[metric] for q in rows], dtype=float)
+        det["components_kept"] = det["components"]
+        det["components"] = len(rows)  # what was measured, so a power gate on `components` is not overstated by the filters
+        det.update(n=len(rows), samples=[round(float(v), 6) for v in vals], length_mm=[round(q["length_mm"], 3) for q in rows],
+                   metric_summary=summary(vals), min_size_mm=min_size, n_key=len(rows), n_key_unit="components",
+                   dropped_no_profile=n_nan, spanning_tile=int(sum(1 for q in rows if q["spans_tile"])))
+        if empty_reach:
+            det["reach_from_empty"] = c["reach_from"]
+        if det["spanning_tile"]:
+            det["spanning_note"] = ("%d component(s) span the whole tile on an axis; the seam cut, axis and shape numbers of "
+                                    "those are arbitrary" % det["spanning_tile"])
+        if metric != "solidity":
+            det.update(prof, **({"reach_from": c["reach_from"]} if c.get("reach_from") else {}))
+        val = stat_of(vals, c.get("stat", "median"))
     else:
         raise ConfigError("components metric '%s' unknown" % metric)
     return val, det
@@ -1002,17 +1190,85 @@ def ck_lowfreq(ctx, c):
     return worst, out
 
 
-def seam_rowmedian_z(a, axis, floor):
+def harmonic_profile(prof, ks):
+    """(amplitude, variance) of DFT harmonics ks (k cycles per tile, k < n/2) of a 1-D profile: amplitude 2|F_k|/n in
+    the profile's units, variance amplitude^2 / 2. The mean drops out (k >= 1)."""
+    n = prof.size
+    amp = 2.0 * np.abs(np.fft.rfft(prof))[list(ks)] / n
+    return amp, amp ** 2 / 2.0
+
+
+def ck_tile_harmonic(ctx, c):
+    """Tile-period stripes: DFT harmonics k = 1.. (k cycles per tile) of the column-mean and row-mean profiles of a map,
+    as the M8 round 3 lenses measured them (fixcheck_verify/v1b_harm.py): amplitude 2|F_k|/n of the axis-mean profile,
+    in % of the map's mean (the region's mean with a region). One U-only stripe cycle per tile repeats with every
+    tile, so col_k1 is the tell. details: col_k<k> / row_k<k> (that amplitude, %), max_amp (largest over the chosen
+    axes and ks), share_col_k<k> / share_row_k<k> (the variance the harmonic carries, amplitude^2 / 2, over the
+    variance of the map in the region), max_share. `stat` picks the value: max_amp (default) or any of those keys;
+    the share needs no non-zero mean (signed maps, height). Columns (rows) with no region pixel count at the region
+    mean. A map that does not tile gives a large k 1: a linear ramp across U has share 6 / pi^2 = 0.61 at k 1."""
+    v = ctx.map_values(c.get("map", "basecolor"), c.get("space", "linear"), c.get("channel", "luma"))
+    R = ctx.region(c["region"]) if c.get("region") else None
+    axis = c.get("axis", "both")
+    if axis not in ("col", "row", "both"):
+        raise ConfigError("tile_harmonic axis must be col, row or both")
+    ks = [int(k) for k in listify(c.get("ks", [1, 2, 3]))]
+    if not ks or any(k < 1 or 2 * k >= min(v.shape) for k in ks):
+        raise ConfigError("tile_harmonic ks must be whole numbers from 1 to below half the map size")
+    sel = R if R is not None else np.ones(v.shape, bool)
+    out = {"n_key": int(sel.sum())}
+    if not out["n_key"]:
+        return float("nan"), out
+    x = v.astype(np.float64)
+    m, var = float(x[sel].mean()), float(x[sel].var())
+    amps, shares = {}, {}
+    for key, ax in (("col", 0), ("row", 1)):                       # col: mean over rows, one value per column
+        if axis in (key, "both"):
+            cnt = sel.sum(axis=ax)
+            prof = np.where(cnt > 0, (x * sel).sum(axis=ax) / np.maximum(cnt, 1), m)
+            if not cnt.all():
+                out[key + "_empty"] = int((cnt == 0).sum())
+            amp, hv = harmonic_profile(prof, ks)
+            for k, a, w in zip(ks, amp, hv):
+                amps["%s_k%d" % (key, k)] = float(a / abs(m) * 100.0) if m else float("nan")
+                shares["share_%s_k%d" % (key, k)] = float(w / var) if var > 1e-18 else (0.0 if w < 1e-18 else float("nan"))
+    out.update(mean=round(m, 6), var=round(var, 8), max_amp=max(amps.values(), key=lambda t: -1 if t != t else t),
+               max_share=max(shares.values(), key=lambda t: -1 if t != t else t))
+    out.update(amps)
+    out.update(shares)
+    stat = str(c.get("stat", "max_amp"))
+    if stat not in out or stat in ("n_key", "mean", "var") or stat.endswith("_empty"):
+        raise ConfigError("tile_harmonic stat '%s' unknown (use max_amp, max_share, col_k<k>, row_k<k>, share_col_k<k> "
+                          "or share_row_k<k>, for a chosen axis and k)" % stat)
+    val = float(out[stat])
+    return val, {k: (round(t, 6) if isinstance(t, float) else t) for k, t in out.items()}
+
+
+def seam_block_px(n, want):
+    """Largest block size <= want (px) that divides n, so the last block still ends at the wrapped border."""
+    b = max(1, min(int(want), n // 4))
+    while n % b:
+        b -= 1
+    return b
+
+
+def seam_rowmedian_z(a, axis, floor, block=1):
     """Row-median seam statistic of one map (HxWxC) along one axis: for every adjacent pair i, the median over the rows
     (columns) of the signed second difference e = d_i - (d_(i-1) + d_(i+1)) / 2, with d_i = x_(i+1) - x_i. A step at
     the border adds the same amount to e in every row, so the border pair's median moves with it; sparse features
     (a crack or a hole that reaches the border) touch few rows and barely move a median. z = (m_border - median(m_inner))
-    / max(1.4826 MAD(m_inner), floor), worst channel, signed."""
+    / max(1.4826 MAD(m_inner), floor), worst channel, signed.
+    block > 1 first averages `block` adjacent columns (rows) along the tested axis, so the pairs are block | block and
+    the border pair is last block | first block: relief that runs along the border at a fine pitch (broom striations)
+    gives every single row a coherent median and inflates the inner tail, while a step keeps its full size in the block
+    means (concrete detail, 2026-10-07)."""
     best = 0.0
     for ch in range(a.shape[2]):
         x = a[..., ch].astype(np.float64)
         if axis == 0:
             x = x.T                      # the top|bottom pairs become columns
+        if block > 1:
+            x = x.reshape(x.shape[0], x.shape[1] // block, block).mean(axis=2)
         d = np.roll(x, -1, axis=1) - x   # d[:, i] = x[:, i+1] - x[:, i]; i = W-1 is the wrapped border pair
         e = d - 0.5 * (np.roll(d, 1, axis=1) + np.roll(d, -1, axis=1))
         m = np.median(e, axis=0)
@@ -1031,7 +1287,8 @@ def ck_seam(ctx, c):
     method rowmedian (opt-in) scores the border pair's row-median signed second difference instead (seam_rowmedian_z):
     it keeps its power on busy maps, where a crack or a hole crossing the border inflates the mean statistic's spread.
     Its scale has an absolute floor in map units: `floor_mm` for the height (default 0.005 mm), `floor` for the other
-    maps (default 0.5/255)."""
+    maps (default 0.5/255). `block_mm` (rowmedian only) averages blocks of that width along the tested axis first
+    (seam_rowmedian_z); use it for relief that runs parallel to the tested border at a fine pitch."""
     two_sided = c.get("two_sided", True)
     axes = {"both": ((1, "x"), (0, "y")), "x": ((1, "x"),), "y": ((0, "y"),)}
     if c.get("axis", "both") not in axes:
@@ -1039,6 +1296,8 @@ def ck_seam(ctx, c):
     method = c.get("method", "mean_abs")
     if method not in ("mean_abs", "rowmedian"):
         raise ConfigError("seam method must be mean_abs or rowmedian")
+    if c.get("block_mm") and method != "rowmedian":
+        raise ConfigError("seam block_mm needs method rowmedian")
     zs, det = [], {}
     for name in listify(c.get("maps", ["height", "basecolor"])):
         a = ctx.main.map(name)
@@ -1048,7 +1307,11 @@ def ck_seam(ctx, c):
             if method == "rowmedian":
                 floor = (float(c.get("floor_mm", 0.005)) / ctx.depth_mm if name == "height"
                          else float(c.get("floor", 0.5 / 255.0)))
-                z = seam_rowmedian_z(a, axis, floor)
+                block = 1
+                if c.get("block_mm"):
+                    block = seam_block_px(a.shape[axis], float(c["block_mm"]) / (ctx.mmx if axis == 1 else ctx.mmy))
+                    det["block_px_" + key] = block
+                z = seam_rowmedian_z(a, axis, floor, block)
                 d[key + "_z"] = round(float(z), 3)
             else:
                 diff = np.abs(np.roll(a, -1, axis=axis) - a)  # pair (i, i+1); the last pair is the wrapped border
@@ -1438,8 +1701,8 @@ CHECKS = {
     "run_length": ck_run_length, "components": ck_components, "coverage": ck_coverage,
     "concentration": ck_concentration, "height_diff": ck_height_diff, "order": ck_order,
     "mask_invariance": ck_mask_invariance, "envelope": ck_envelope, "per_element": ck_per_element,
-    "slope": ck_slope, "lowfreq": ck_lowfreq, "seam": ck_seam, "value_range": ck_value_range,
-    "value_order": ck_value_order, "orientation": ck_orientation, "spacing": ck_spacing,
+    "slope": ck_slope, "lowfreq": ck_lowfreq, "tile_harmonic": ck_tile_harmonic, "seam": ck_seam,
+    "value_range": ck_value_range, "value_order": ck_value_order, "orientation": ck_orientation, "spacing": ck_spacing,
     "ridge": ck_ridge, "normal_valid": ck_normal_valid, "height_usage": ck_height_usage,
     "edge_profile": ck_edge_profile, "boundary_profile": ck_boundary_profile, "dispersion": ck_dispersion,
     "step": ck_step,
@@ -1587,7 +1850,8 @@ def run_check(ctx, c):
 
 
 SPACES = ("raw", "linear", "srgb255", "mm")
-AXES = {"run_length": ("x", "y", "both"), "seam": ("x", "y", "both"), "step": ("x", "y", "both"), "spacing": ("x", "y")}
+AXES = {"run_length": ("x", "y", "both"), "seam": ("x", "y", "both"), "step": ("x", "y", "both"), "spacing": ("x", "y"),
+        "tile_harmonic": ("col", "row", "both")}
 NORMAL_FORMATS = ("directx", "opengl")
 
 
@@ -1649,6 +1913,8 @@ def validate_config(cfg, only=None):
         if severity == "hard" and (t is None or (t[0] is None and t[1] is None)):
             raise ConfigError("%s: a hard check needs a target (target, target_mm, target_deg or %s), or it can never "
                               "fail" % (where, ", ".join(sorted(TARGET_KEYS))))
+        if c["type"] == "components":
+            validate_components(c, where)
         axes = AXES.get(c["type"])
         if axes and "axis" in c and c["axis"] not in axes:
             raise ConfigError("%s: axis must be %s or %s, not %r" % (where, ", ".join(axes[:-1]), axes[-1], c["axis"]))

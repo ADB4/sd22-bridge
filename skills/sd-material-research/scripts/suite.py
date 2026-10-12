@@ -65,6 +65,16 @@ of the suite leaves its jobs running: the next run into that --out refuses until
 R6, in runs with the wrong builds: a config with a non-skipped hard check that the cases never name is red, its ids
 under uncovered; with no "cases", every such config is; a config with hard checks that the cases name but "configs"
 misses is red (never measured).
+uncovered_layout_mask, in full runs that include matcheck: a layout mask is one wear never changes, so its export is
+byte-identical (sha1) to the same mask in the variant's compare.nowear render. For each config with a compare.nowear
+(dir, prefix), the variant's and the nowear's files are paired by the same file name after the prefix (the nowear's own
+ext and map names are not followed), and a variant is worn when any of its maps differs in bytes from the nowear's. A
+mask_*.png is red, under "R6 coverage", when a worn variant exports it, it is byte-identical to nowear in every worn
+variant that exports it, it is not constant (Pillow or OpenCV in the child python decides, one subprocess, 60 s) and no
+config's mask_invariance check reads it (its mask, or a mask behind its region). A failed subprocess counts every
+candidate as not constant, a file it cannot read only that file, and the reason says so. A config whose shape cannot be
+read (a dir that is no string, say) is skipped there; its own matcheck job reports it. Recorded as
+uncovered_layout_masks {mask: [variants]} next to uncovered.
 
 Refused, exit 2, no job run and no report: an unreadable SUITE.json; an unknown key, kind or placeholder; a value of
 the wrong type; a file named literally that does not exist, or a glob that matches nothing; previews args other than
@@ -107,11 +117,12 @@ runs) and lock.json while it runs.
 Progress: one line per finished job, "[k/n] ok|RED <kind> <name> <s> s: <first reason>", then every red entry with
 its reasons and the report paths.
 suite.json: green (true only with rc 0), rc, full (no --configs or --kinds), out, suite (SUITE.json), started and ended
-(local time, as a manifest's exported_at), wall_s, workers, workers_rule, threads, cpus, ram_gb, per_job_gb, load
-[1-min load before, after], times_from (the times.json that ordered the jobs, or null), filter (null, or {configs,
-kinds}), jobs [{name, kind, config, phase, argv, rc, seconds, timeout_s, outputs, log, red [reasons], warnings}], red
-[{job, reasons}] (job "suite" for an interrupt, "R6 coverage" for R6), uncovered {config: [hard check ids]},
-warnings, skipped [{path, why}].
+(UTC with a Z, YYYY-MM-DDTHH:MM:SSZ; suites from before wrote local time with no zone), wall_s, workers, workers_rule,
+threads, cpus, ram_gb, per_job_gb, load [1-min load before, after], times_from (the times.json that ordered the jobs,
+or null), filter (null, or {configs, kinds}), jobs [{name, kind, config, phase, argv, rc, seconds, timeout_s, outputs,
+log, red [reasons], warnings}], red [{job, reasons}] (job "suite" for an interrupt, "R6 coverage" for R6 and
+uncovered_layout_mask), uncovered {config: [hard check ids]}, uncovered_layout_masks {mask: [variants]}, warnings,
+skipped [{path, why}].
 Exit code: 0 green; 1 red, an interrupt included; 2 refused (above).
 """
 import argparse
@@ -508,6 +519,202 @@ def load_times(out):
     return (load_dict(best[1]), best[1]) if best else ({}, None)
 
 
+LAYOUT_PIXELS = """
+import json, sys
+import numpy as np
+try:
+    from PIL import Image
+    def load(p):
+        return np.asarray(Image.open(p))
+except ImportError:
+    import cv2
+    def load(p):
+        return cv2.imread(p, cv2.IMREAD_UNCHANGED)
+out = {}
+for p in sys.argv[1:]:
+    try:
+        a = load(p)
+        flat = a.reshape(a.shape[0] * a.shape[1], -1)
+        out[p] = bool((flat != flat[0]).any())
+    except Exception:
+        out[p] = None  # unreadable: the parent treats this file, and only this one, as not constant
+print(json.dumps(out))
+"""
+LAYOUT_PIXELS_TIMEOUT = 60.0
+SHAPE_ERRORS = (TypeError, ValueError, AttributeError, KeyError, OSError)  # what a malformed config shape raises
+
+
+def dict_at(d, key):
+    """d[key] when it is a dict, else {} (a malformed shape is the config's own matcheck job to report)."""
+    return d[key] if isinstance(d.get(key), dict) else {}
+
+
+def render_file(maps_cfg, cfg, base_dir, name):
+    """The file of logical map `name` in a render (matcheck's Render.path), None when it is not a file name."""
+    d = maps_cfg.get("dir", ".")
+    d = d if os.path.isabs(d) else os.path.normpath(os.path.join(base_dir, d))
+    names = dict(cfg["maps"])
+    names.update({k: v for k, v in maps_cfg.items() if k not in ("dir", "prefix", "ext", "masks")})
+    masks = dict(dict_at(cfg["maps"], "masks"))
+    masks.update(dict_at(maps_cfg, "masks"))
+    stem = names.get(name, masks.get(name, name))
+    if not isinstance(stem, str):
+        return None
+    p = stem if os.path.isabs(stem) else os.path.join(d, str(maps_cfg.get("prefix") or "") + stem)
+    return p if os.path.splitext(p)[1] else p + str(maps_cfg.get("ext") or ".png")
+
+
+def region_masks(cfg, name, seen=None):
+    """Logical mask names a region reads (and, or, not, boundary, height_split and ref regions followed); a name that is
+    no region is a mask."""
+    seen = set() if seen is None else seen
+    regs = cfg.get("regions") if isinstance(cfg.get("regions"), dict) else {}
+    if name in seen:
+        return set()
+    seen.add(name)
+    if name not in regs or not isinstance(regs[name], dict):
+        return {name}
+    spec, found, refs = regs[name], set(), []
+    if isinstance(spec.get("mask"), str):
+        found.add(spec["mask"])
+    for k in ("and", "or", "not", "boundary"):
+        v = spec.get(k)
+        refs += [v] if isinstance(v, str) else [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+    hs = spec.get("height_split")
+    if isinstance(hs, dict):
+        refs += [hs[k] for k in ("low", "high") if isinstance(hs.get(k), str)]
+    for k in ("below_local", "rel_below", "sweep"):
+        if isinstance(spec.get(k), dict) and isinstance(spec[k].get("ref"), str):
+            refs.append(spec[k]["ref"])
+    for r in refs:
+        found |= region_masks(cfg, r, seen)
+    return found
+
+
+def file_digest(path):
+    """(size, sha1 hex) of a file's bytes, None when it cannot be read."""
+    try:
+        h = hashlib.sha1()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return os.path.getsize(path), h.hexdigest()
+    except OSError:
+        return None
+
+
+def cover_masks(cfg, base, covered):
+    """Add to `covered` the file names (no prefix, no extension) of the masks the config's mask_invariance checks read:
+    their `mask`, or the masks behind their `region`."""
+    prefix = str(cfg["maps"].get("prefix") or "")
+    for ck in cfg.get("checks") if isinstance(cfg.get("checks"), list) else []:
+        if isinstance(ck, dict) and ck.get("type") == "mask_invariance" and not ck.get("skip"):
+            logical = {ck["mask"]} if isinstance(ck.get("mask"), str) else \
+                region_masks(cfg, ck["region"]) if isinstance(ck.get("region"), str) else set()
+            for n in logical:
+                f = render_file(cfg["maps"], cfg, base, n)
+                if f:  # the name wear exports are listed by: the file name without prefix and extension
+                    b = os.path.splitext(os.path.basename(f))[0]
+                    covered.add(b[len(prefix):] if prefix and b.startswith(prefix) else b)
+
+
+def nowear_pairs(cfg, base):
+    """{file name after the prefix: (variant file, nowear file)} of a config with a compare.nowear (dir, prefix), else
+    {}: the maps and masks the config names, and every mask_*<ext> the variant exports. A pair is the same file name
+    after each render's prefix, so a nowear render that names or extends its files differently is not paired."""
+    now = dict_at(cfg, "compare").get("nowear")
+    if not isinstance(now, dict):
+        return {}
+    maps = cfg["maps"]
+    d = maps.get("dir", ".")
+    d = d if os.path.isabs(d) else os.path.normpath(os.path.join(base, d))
+    nd = now.get("dir", maps.get("dir", "."))
+    nd = nd if os.path.isabs(nd) else os.path.normpath(os.path.join(base, nd))
+    prefix, ext, nprefix = str(maps.get("prefix") or ""), str(maps.get("ext") or ".png"), str(now.get("prefix") or "")
+    pairs = {}
+    names = [v for k, v in maps.items() if k not in ("dir", "prefix", "ext", "masks") and isinstance(v, str)]
+    names += [v for v in dict_at(maps, "masks").values() if isinstance(v, str)]
+    for stem in names:
+        if not os.path.isabs(stem):
+            rest = stem if os.path.splitext(stem)[1] else stem + ext
+            pairs[rest] = (os.path.join(d, prefix + rest), os.path.join(nd, nprefix + rest))
+    for f in sorted(glob.glob(os.path.join(glob.escape(d), glob.escape(prefix) + "mask_*" + glob.escape(ext)))):
+        rest = os.path.basename(f)[len(prefix):]
+        pairs.setdefault(rest, (f, os.path.join(nd, nprefix + rest)))
+    return pairs
+
+
+def layout_mask_lint(configs, py, env):
+    """(uncovered_layout_masks {mask: [variants]}, reasons, timing): masks wear never changes that no mask_invariance
+    check reads. A config whose shape cannot be read (a dir that is no string, say) is skipped: its own matcheck job
+    reports it. See the module docstring."""
+    t0, cache = time.time(), {}
+
+    def digest(p):
+        if p not in cache:
+            cache[p] = file_digest(p)
+        return cache[p]
+
+    covered, per_mask = set(), {}  # per_mask: mask -> {variant: (identical to nowear, file)}
+    worn_variants = []
+    for c in configs:
+        cfg, _ = read_config(c["path"])
+        if not (isinstance(cfg, dict) and isinstance(cfg.get("maps"), dict)):
+            continue
+        base = os.path.dirname(c["path"])
+        try:
+            cover_masks(cfg, base, covered)
+            pairs = nowear_pairs(cfg, base)
+        except SHAPE_ERRORS:
+            continue
+        same = {}
+        for rest, (f, nf) in pairs.items():
+            a, b = digest(f) if os.path.isfile(f) else None, digest(nf) if os.path.isfile(nf) else None
+            if a is not None and b is not None:
+                same[rest] = a == b
+        if all(same.values()):  # nothing differs from nowear (or nothing to compare): not worn
+            continue
+        worn_variants.append(c["variant"])
+        for rest, (f, nf) in pairs.items():
+            if rest.startswith("mask_") and rest in same:
+                per_mask.setdefault(os.path.splitext(rest)[0], {})[c["variant"]] = (same[rest], f)
+    cand = {}
+    for m, v in per_mask.items():
+        if v and all(x[0] for x in v.values()) and m not in covered:
+            cand[m] = v
+    hash_s = time.time() - t0
+    const, unread, why = {}, set(), ""
+    t1 = time.time()
+    if cand:
+        files = sorted({x[1] for v in cand.values() for x in v.values()})
+        try:
+            r = subprocess.run([py, "-c", LAYOUT_PIXELS] + files, env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=LAYOUT_PIXELS_TIMEOUT, universal_newlines=True)
+            if r.returncode != 0:
+                why = "pixel check exited %d: %s" % (r.returncode, (r.stderr.strip().splitlines() or ["no output"])[-1])
+            else:
+                got = json.loads(r.stdout)
+                const = {p: not v for p, v in got.items() if v is not None}
+                unread = {p for p, v in got.items() if v is None}
+        except subprocess.TimeoutExpired:
+            why = "pixel check timed out after %d s" % LAYOUT_PIXELS_TIMEOUT
+        except (OSError, ValueError, AttributeError) as e:
+            why = "pixel check failed: %s" % e
+    found, reasons = {}, []
+    for m in sorted(cand):
+        files = [x[1] for x in cand[m].values()]
+        if not why and all(const.get(f) for f in files):
+            continue  # constant everywhere: nothing to keep fixed
+        lost = sorted(os.path.basename(f) for f in files if f in unread)
+        note = why or ("pixel check could not read %s" % ", ".join(lost) if lost else "")
+        found[m] = sorted(cand[m])
+        reasons.append("uncovered_layout_mask: %s is byte-identical to nowear in every worn variant (%s) and not "
+                       "constant%s, but no mask_invariance check reads it (references/checks.md, Two families)"
+                       % (m, ", ".join(found[m]), " (%s; treated as not constant)" % note if note else ""))
+    return found, reasons, {"hash_s": round(hash_s, 2), "pixels_s": round(time.time() - t1, 2),
+                            "worn_variants": worn_variants}
+
+
 def plan(st, a, out, env):
     """(jobs, info): every job of this run, phase 1 then phase 2, plus the R6 coverage and the selection."""
     py, tools = st["python"], st["tools"]
@@ -669,9 +876,14 @@ def plan(st, a, out, env):
                    "uncovered)" % (k, len(v)) for k, v in uncovered.items()]
         r6 += ["%s: the cases name this config but SUITE.json configs miss it, so its hard checks are never measured"
                % k for k in unlisted]
+    layout, lint = {}, {}
+    if names is None and "matcheck" in kinds:
+        layout, reasons, lint = layout_mask_lint(configs, py, env)
+        r6 += reasons
     px = max([c["px"] for c in configs + pconfigs] or [1.0])
     return jobs, {"full": full, "kinds": kinds, "names": names, "uncovered": uncovered, "r6": r6, "listed": listed,
-                  "px": px, "times": times, "times_from": times_from}
+                  "px": px, "times": times, "times_from": times_from, "uncovered_layout_masks": layout,
+                  "layout_lint": lint}
 
 
 # ----------------------------------------------------------------------------- running
@@ -962,7 +1174,7 @@ def gate(job):
 
 
 def stamp(t):
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
 
 def load1():
@@ -1443,7 +1655,8 @@ def main(argv=None):
     if a.plan:
         doc = dict({"full": info["full"]}, **machine)
         doc.update(jobs=[dict(job_dict(j), expect_s=round(j.expect, 2)) for j in phase1 + phase2],
-                   uncovered=info["uncovered"], r6=info["r6"], skipped=st["skipped"], warnings=st["warnings"])
+                   uncovered=info["uncovered"], uncovered_layout_masks=info["uncovered_layout_masks"],
+                   r6=info["r6"], skipped=st["skipped"], warnings=st["warnings"])
         print(json.dumps(doc, indent=1))
         return 0
     os.makedirs(work, exist_ok=True)
@@ -1597,7 +1810,8 @@ def run_suite(a, st, info, jobs, phase1, phase2, machine, env, out, work, lock, 
     doc.update({"load": [load0, load1()],
                 "filter": None if info["full"] else {"configs": info["names"], "kinds": info["kinds"]},
                 "jobs": [job_dict(j) for j in phase1 + phase2], "red": red, "uncovered": uncovered,
-                "warnings": st["warnings"], "skipped": st["skipped"]})
+                "uncovered_layout_masks": info["uncovered_layout_masks"], "warnings": st["warnings"],
+                "skipped": st["skipped"]})
     paths = write_reports(out, doc)
     drop_lock(lock)
     for sig, h in old.items():

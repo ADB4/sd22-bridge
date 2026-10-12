@@ -16,14 +16,16 @@ material. Material-specific build notes live in each sheet's section 10. This fi
   - Never retry a mutation that timed out: it would run twice.
   - Wait instead: poll `designer_status` (an idle Designer answers in about 20 ms, `mac-loaded`; a busy one fails it
     after 15 s), or sample the process: `sample <pid> 1 | grep -q SDSBSCompGraph_compute` in a background
-    until-loop. The pid is in `~/.sd_claude_bridge/session.json`.
+    until-loop. The pid is in `~/.sd_claude_bridge/session.json`. A watch is one background Bash until-loop per
+    landing event, relaunched after each landing; a Monitor expires at 30 min whatever its script does.
   - Keep each run_python under ~45 s.
 - **Longer jobs** (several 2048 exports, nowear batches) go through `scripts/sdcall.py job.py`: the same run_python
   with a 15 min socket timeout. Run it in the foreground with the Bash timeout at 600000 ms when the job should take
   under ~8 min, which covers every rebuild and a full 2K export (§6); use a background shell for a job that may pass
   ~8 min (the foreground Bash cap is 10 min; pass `--timeout` above 900 past 15 min) or when other work can run
-  meanwhile. A rebuild runs the changed stage and every later one, plus the 1K exports, as one job: no per-stage
-  jobs and no partial-rebuild tricks.
+  meanwhile; it writes `<job>.done` with its rc (`sdcall.py job.py; echo $? > job.done`), and you never grep piped
+  output for a sentinel. A rebuild runs the changed stage and every later one, plus the 1K exports, as one job: no
+  per-stage jobs and no partial-rebuild tricks.
 - **On macOS a hidden Designer naps** at scheduler priority 4. The bridge holds an App Nap activity for each command,
   so `ps -o pri= -p <pid>` reads 46 while a command runs and 4 again about 0.2 s after the reply. Without it the same
   job ran about 4.5× slower (26 s vs 5.8 s). If a job runs several times slower than §6 and the priority reads 4
@@ -73,6 +75,7 @@ sk.nowear("concrete_materials.sbs::concrete_weathered", ["scaling", "spalling", 
 - Recipes: `blend`, `levels`, `hscan`, `blur`, `nblur`, `gconst`, `flood_random`, `fractal`, `level_for`.
 - Inputs and functions: `expose`, `list_inputs`, `drive`, `undrive`.
 - Variants and export: `probe`, `export_outputs` (+ manifest), `make_variant`, `render_variant`, `nowear`.
+- Clamp gate: `clamp_candidates(key, output="height")`, `clamp_probe(key, exempt={name: reason})` (§5, 16-bit clamp).
 - Hygiene: `prune_dead` (a dry run by default; `prune_dead(False)` deletes only dead nodes sdkit named, never graph
   inputs, and lists the others), `layout`, `lint`, `status`, `snapshot`, `save_registry`.
 
@@ -264,6 +267,7 @@ unpick after the colour stage is built on top of it.
 | Histogram Scan | centre = 1 − Position (higher Position = more white). Contrast 0.9-1 ≈ a step. Ports `Input_1` → `Output`. |
 | Blend | divide = destination / source. Add Sub = dst + 2·(src − 0.5). "subtract" is spelled `substract`. Copy = lerp(dst, src, opacity × opacitymult). A colour Blend skips a grayscale source; a grayscale Blend reads a colour source as black. |
 | Levels | float4 params `levelinlow/levelinhigh/levelinmid/leveloutlow/levelouthigh`; invert = out 1 → 0. |
+| 16-bit clamp | A 16-bit (fixed-point) Blend add, add sub or divide and a Levels clamp at 1: a sum of depths flattens where it saturates. Scale the terms so the sum stays below 1, or compose depths as products. Input ranges can't be read from the graph, so the gate is a probe: `sk.clamp_probe()` after the rebuild, then `clampcheck.py` (fails above 0.5 % of pixels at 1.0). |
 | Warp | 0.05 at 2048 ≈ 2.4 px std / 8 px max on a Perlin s20 gradient. Crystal gradients make contour rings: use smooth Perlin (0.02-0.08). Warp before per-unit mapping, never after. |
 | Distance | `distance` ≈ 8 px per unit at 2048. `combinedistance False` propagates the source value into gaps. |
 | Flood Fill | randoms are 0 in gaps. FF to Gradient spans ~0.15-0.85. |
