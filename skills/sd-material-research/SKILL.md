@@ -181,7 +181,8 @@ only for what §2 lacks):
 ### 6. Review
 Follow `references/review.md`:
 1. Preflight: the 2K export, then the suite in the background; meanwhile the fix ledger, `review/REFERENCE.md`
-   (round 1: `assets/reference_template.md`) and the lens table.
+   (round 1 only, from `assets/reference_template.md`; frozen after, apart from premise patches at each `lead.json`)
+   and the lens table.
 2. On a green suite only: from round 2, `scripts/fixcheck.py` (did each ledger fix land?); then
    `scripts/make_brief.py`, which writes the delta brief and the panel's args.
 3. Run the round's lenses (`references/review.md` §3: round 1 the families derived from the spec plus a check audit,
@@ -257,7 +258,7 @@ Standing decisions (spec.md §1 lists them too):
 - **SD-2** Look trades follow the no-pattern rule below.
 - **SD-3** Two full review rounds, then apply and stop.
 - **SD-4** After round 1, only highs are fixed.
-- **SD-5** REFERENCE and the spec are updated once, at the end.
+- **SD-5** REFERENCE (frozen after round 1, premise patches only) and the spec are updated once, at the end.
 - **SD-6** No commit or push during the run.
 
 **After the go answer**, until the stop point:
@@ -353,15 +354,17 @@ The mid-run look's SendUserFile is neither, and nothing waits on it.
 **Stop point.** Round 2's final gate is green, or the last green state is restored. Then, in this order:
 1. Stamp `report_start`. With `runstate.py set`, record `proposed_commits` (a JSON list of `{repo, files, message}`,
    one per commit the run would make; none is made, SD-6) and, when the run stopped early, `stop_reason`.
-2. Launch the final eye pass in the background (one agent, box 15 min, beside the docs): it reads the final gate's
-   `*_tiled3x3_albedo.png` of every preset and writes `review/eye_final.json` (`[{preset, sees, files}]`).
+2. Launch the docs pass and the final eye pass in the background, once the final gate is green. The docs pass (stamp
+   `docs_start`) brings REFERENCE.md and spec.md up to the final build once (`references/review.md` §2). The eye pass
+   (one agent, box 15 min) reads the final gate's `*_tiled3x3_albedo.png` of every preset and writes
+   `review/eye_final.json` (`[{preset, sees, files}]`).
 3. Run `$PY <skill>/scripts/morning_report.py --tools <tools>`. It writes `<tools>/REPORT.md`: the verdict (8 lines or
    fewer), the images to look at first, every decisions.json row with its "reverse <id>", what needs the user, the
    open defects by severity under the pre-apply severity caveat, the eye pass, incidents, the proposed commits and the
    path clock, in 500 prose words or fewer, then a numbered answer batch. Exit 1 means the prose is still over the
    cap: say so in the final message. When `eye_final.json` lands, run it again (it replaces the file whole).
 4. Send the report's "Look first" images (SendUserFile), then the "ready" notification. `runstate.py set mode=done`,
-   stamp `report_end`, run the docs once in the background, and when they end, `preflight_night.py caffeinate stop
+   stamp `report_end`, and when the docs pass ends, stamp `docs_end` and run `preflight_night.py caffeinate stop
    --tools <tools>`. A routine run cannot switch the routines off while nobody has it open (`update_scheduled_task`
    is refused), and they keep firing idle every 10 min; the session that takes the user's first reply disables
    leg-a, leg-b and run-watchdog (with the user there, the call's card shows once).

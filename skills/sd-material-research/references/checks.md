@@ -186,7 +186,9 @@ interior is reproduced by 3.6 mm at 0.88 mm/px; 3.5 mm keeps the pixels exactly 
      off value. Keep what was built or placed on purpose: the layout, the as-built finish and markings, and
      maintenance features at the moment they were placed (patches, repointing, sealant footprints). `sk.nowear`
      zeroes only the parameters you list, so list the aging ones, not the maintenance ones.
-   - Check `mask_invariance` on every layout mask against it.
+   - Check `mask_invariance` on every layout mask against it. A full suite run is red on a non-constant mask that
+     is byte-identical to `nowear` in every worn variant and that no `mask_invariance` check reads
+     (`uncovered_layout_mask`).
 2. **Envelope and ordering.** Removal processes only lower the surface, and they reveal what lies *beneath* the
    removed material in the same component.
    - `envelope` against `nowear`, with the deposit masks in `except`, covers "only goes down". When a deposit mask
@@ -397,7 +399,8 @@ $PY <skill>/scripts/suite.py <tools>/SUITE.json --out <tools>/review/round<N> \
 nonzero exit, a missing or stale output, a hard check that failed, errored or was vacuous (no waiver: `nowear` stays a
 `compare` render inside the variant configs), a wrong build that misbehaves or measured nothing, a failed command
 `gate` or a timeout. **R6:** a config whose hard check has no case is red (ids under `uncovered`), and every config
-with a hard check is when SUITE.json has no `cases`. Exit code 0 green, 1 red, 2 refused (no job run, no report).
+with a hard check is when SUITE.json has no `cases`. On a full run, the same job is red for every
+`uncovered_layout_mask` (Two families, 1; names under `uncovered_layout_masks`). Exit code 0 green, 1 red, 2 refused (no job run, no report).
 
 **Workers.** Default CPUs − 2, capped by RAM (1.5 GB a 2K job) and the job count: 6 on an 8-CPU Mac. Beside a
 Designer build (stage 7's targeted sets) pass `--beside-designer`: about half the cores. Beside a review panel, no
@@ -435,5 +438,6 @@ beside the ledger when it is fresh (the current export, newer than it and the co
 
 An item landed when it has rows and every row holds or drifted. Flags: `done_not_landed` (status `done`, not landed),
 `claim_contradicted` (the ledger's `after` meets the target, the re-measure misses), `measure_failed` (matcheck could
-not re-measure a variant). Exit code 0: no flag; 1: a flag; 2: a usage, checks-dir or ledger error (nothing written).
+not re-measure a variant), `promotion_missing` (a row with `promote_hard` true whose check is still soft in the
+config). Exit code 0: no flag; 1: a flag; 2: a usage, checks-dir or ledger error (nothing written).
 About 0.07 s on fresh scorecards; a re-run about 1.6 s per variant at 2K (`mac-loaded`).

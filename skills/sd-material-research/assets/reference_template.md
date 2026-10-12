@@ -1,13 +1,17 @@
 # <Material>: review reference
 
 Valid for: <variant> <exported_at>, ... (from each variant's `<prefix>manifest.json`); spec version <n>.
+Frozen at round 1; current parameters are in build/ and the ledger.
 Changed in the last update: created
 
-Written in round 1, before the first delta brief. At the end of each apply, rewrite the sections the apply changed and
-any section one of the last lead's `premises_corrected` entries contradicts (a corrected node-semantics premise also
-goes into R5 and into the hand-off notes for the skill's `sd_craft.md` §5), then `Changed in the last update:` (the
-section ids, or `none`). Set `Valid for:` in each preflight, after its export (`references/review.md` §1 step 5). Keep
-every heading `## R<k> <title>` and use `###` inside a section: `scripts/make_brief.py` cuts sections by those
+Written in round 1, before the first delta brief, and frozen there (`references/review.md` §2). After round 1 the
+only edit is a premise patch: each `premises_corrected` entry of a lead that contradicts a line here gets a one-line
+patch of that line, ending `(premise patch r<N>)` (a corrected node-semantics premise also goes into R5 and into the
+hand-off notes for the skill's `sd_craft.md` §5). R4 goes stale after round 1: the delta brief lists the build
+scripts changed since, under Changed since REFERENCE. The docs pass after the last final gate rewrites this file once
+to the final build, sets `Valid for:` to the final gate's exports, the Frozen line to `Frozen at round <N+1>` and
+`Changed in the last update:` (the section ids, or `none`). Set `Valid for:` in round 1's preflight, after its export
+(`references/review.md` §1 step 5). Keep every heading `## R<k> <title>` and use `###` inside a section: `scripts/make_brief.py` cuts sections by those
 headings. `make_brief.py` copies R1, R5 and R9 into every delta brief (`review/round<N>/BRIEF.md`). Each lens also
 reads the sections its row in `review/round<N>/lenses.json` names (all of this file when it names none); verifiers,
 the re-verify agent and the lead read all of it.

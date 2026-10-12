@@ -45,8 +45,9 @@ Sections, in this order, under "## <n>. <title>" headings (the answer batch clos
     4. Needs you          decisions of kind not_made_needs_user; lead design calls over the cap (deferred entries that
                           start "design call"); steer messages after the last apply ended (requested changes).
     5. Open defects by severity   rows tagged "panel R<k>" (a confirmed finding of the last panel that is not fixed, or a
-                          residual of any panel) or "not reviewed by a panel (R<k> apply)" (non-exempt regressed and
-                          guard_broken rows, exempt ones marked, reverted fixes, eye tells and still-visible findings);
+                          residual of any panel) or "not reviewed by a panel (R<k> apply)" (non-exempt regressed,
+                          guard_broken and promotion_missing rows, exempt ones marked, reverted fixes, eye tells and
+                          still-visible findings);
                           sorted high, medium, low, unrated. The severity caveat ("as rated by the R<k> panel before
                           the R<k> apply; in M8 the next panel rated 2 such mediums high", k the last panel) and the
                           status of the requirements judged by eye alone (RUN.json eye_requirements, else REFERENCE.md,
@@ -80,15 +81,16 @@ results, the decisions row id. Addenda are not counted against the cap. For --ki
 report yet, the file is created first ("# <material> report", a line saying no morning report was written for this
 material and that the file holds its edit addenda; material = RUN.json `material`, else the tools folder's name without
 a trailing _tools) and the line "created <path>" is printed; any other kind still needs the report.
---edit K (an integer of 1 or more; only with --addendum --kind user_edit; <tools>/review/edit<K> must be a folder) builds
-the rows from that edit's folder instead of a hand-written --rows: the Decisions row line (the last decisions.json row of
-kind user_edit whose items hold U<K>, else "none logged"), the Targeted suite line (edit<K>/suite.json, else
-suite_partial.json: green with its rc, or red with each red job and its first reason) and a table of rows row, before,
-after, target, flag: first a fixcheck summary (regressed, guard broken, outside target, of n rows, exit rc, from
-edit<K>/fixcheck/fixcheck.json), then each fixcheck row that is regressed, guard_broken or misses its target, with the
-exempt reason when it has one, then one row per entry of edit<K>/eye.json (new defect or no new defect, with what the eye
-agent saw). A file that is absent or unreadable becomes a "missing:" or "unreadable:" cell, never an error. --rows given
-as well is rendered after the --edit block.
+--edit K (an integer of 1 or more; only with --addendum --kind user_edit; <tools>/review/edit<K> must be a folder)
+builds the rows from that edit's folder instead of a hand-written --rows: the Decisions row line (the last
+decisions.json row of kind user_edit whose items hold U<K>, else "none logged"), the Targeted suite line
+(edit<K>/suite.json, else suite_partial.json: green with its rc, or red with each red job and its first reason) and a
+table of rows row, before, after, target, flag: first a fixcheck summary (regressed, guard broken, outside target,
+promotion missing (only when fixcheck.json carries promotion_missing, i.e. a row has promote_hard), of n rows, exit rc,
+from edit<K>/fixcheck/fixcheck.json), then each fixcheck row that is regressed, guard_broken, promotion_missing or
+misses its target, with the exempt reason when it has one, then one row per entry of edit<K>/eye.json (new defect or no
+new defect, with what the eye agent saw). A file that is absent or unreadable becomes a "missing:" or "unreadable:"
+cell, never an error. --rows given as well is rendered after the --edit block.
 
 Standard library only, Python 3.9 or newer; os.path and UTF-8 throughout, so it runs on Windows. pathclock.py and
 decisions.py are imported from this script's folder.
@@ -945,7 +947,7 @@ def defect_rows(ctx, A):
     for it in list_of((A["fixcheck"] or {}).get("items")):
         if not isinstance(it, dict):
             continue
-        for flag in ("regressed", "guard_broken"):
+        for flag in ("regressed", "guard_broken", "promotion_missing"):
             for rid in list_of(it.get(flag)):
                 rows.append({"sev": "unrated", "tag": tag_np, "id": "%s %s" % (it.get("id"), rid),
                              "defect": "%s row: %s" % (flag, rid),
@@ -1374,11 +1376,16 @@ def edit_guard_rows(ctx, k, ed):
                 for r in list_of(it.get("rows")) if isinstance(r, dict)]
         rcn = obj.get("regression_counts") if isinstance(obj.get("regression_counts"), dict) else {}
         misses = sum(1 for r in rows if r.get("status") == "misses")
-        out.append(row("fixcheck", "-", "-", "-", "%s regressed, %s guard broken, %d outside target, of %d rows (exit %s)"
-                       % (rcn.get("regressed", "?"), rcn.get("guard_broken", "?"), misses, len(rows), obj.get("rc"))))
+        pm = sum(1 for r in rows if r.get("promotion_missing"))
+        # fixcheck writes promotion_missing only when a row has promote_hard: other reports read as before
+        promo = ", %d promotion missing" % pm if pm or "promotion_missing" in obj else ""
+        out.append(row("fixcheck", "-", "-", "-", "%s regressed, %s guard broken, %d outside target%s, of %d rows "
+                       "(exit %s)" % (rcn.get("regressed", "?"), rcn.get("guard_broken", "?"), misses, promo, len(rows),
+                                      obj.get("rc"))))
         for r in rows:
             words = [w for w, on in (("regressed", r.get("regressed")), ("guard broken", r.get("guard_broken")),
-                                     ("outside target", r.get("status") == "misses")) if on]
+                                     ("outside target", r.get("status") == "misses"),
+                                     ("promotion missing", r.get("promotion_missing"))) if on]
             if not words:
                 continue
             flag = ", ".join(words)

@@ -71,8 +71,17 @@ scorecards, out, rerun, python, started, seconds. Standard library only, Python 
 subprocess under --python, which needs numpy (the analysis venv).
 fixcheck.md shows a short Regressions table (every regressed, guard_broken or exempt row) before the item tables. An
 item's flags also name regressed and guard_broken when it has a non-exempt row.
-Exit code: 0 no flag; 1 a done_not_landed, claim_contradicted or measure_failed item, or a non-exempt regressed or
-guard_broken row; 2 a usage, checks-dir or ledger error (nothing written).
+Promotions: an acceptance row may carry "promote_hard": true, the fix's promise to make that check a hard one (a bool
+when present; anything else is a ledger error naming the item and row). fixcheck reads the check's `severity` in the
+variant's config (the one it re-measures with); when it is not `hard` (missing = soft) the row is flagged
+promotion_missing: the fix did not do what it promised, so the item has not landed (a done item is also
+done_not_landed) and the exit code is 1, whatever the item's status. A check id the config lacks keeps its no_check
+status and no promotion flag. The row then has promote_hard, severity and promotion_missing, the item a
+promotion_missing list [row ids], and fixcheck.json a top-level promotion_missing [{item, check, variant}], all only
+when the ledger has a promote_hard row anywhere (a ledger without one writes the same files as before); fixcheck.md and
+the printed summary add a Promotions line then.
+Exit code: 0 no flag; 1 a done_not_landed, claim_contradicted, measure_failed or promotion_missing item, or a
+non-exempt regressed or guard_broken row; 2 a usage, checks-dir or ledger error (nothing written).
 """
 import argparse
 import datetime
@@ -272,6 +281,9 @@ def read_ledger(path):
                 errs.append("%s: a guard row needs a bound (or a target)" % where)
             if tol is not None and not (number(tol) and tol >= 0):
                 errs.append("%s: tolerance must be a number of 0 or more, not %s" % (where, json.dumps(plain(tol))))
+            if "promote_hard" in a and not isinstance(a["promote_hard"], bool):
+                errs.append("%s: promote_hard must be true or false, not %s"
+                            % (where, json.dumps(plain(a["promote_hard"]))))
         for key in ("intended_lowfreq", "trades"):
             v = it.get(key)
             if v is not None and not (isinstance(v, list) and all(isinstance(x, str) for x in v)):
@@ -523,6 +535,18 @@ def regression(a, it, check, decs, apply_start, value=None):
     return out
 
 
+def promotion(a, check, where):
+    """The promote_hard fields of one acceptance row that carries promote_hard (else {}): check is its config entry or
+    None (a missing or skipped check keeps its no_check status and gets no flag)."""
+    if not a.get("promote_hard"):
+        return {}
+    sev = (check or {}).get("severity", "soft")
+    miss = check is not None and not check.get("skip") and sev != "hard"
+    return {"promote_hard": True, "severity": sev if check is not None else None, "promotion_missing": miss,
+            "_note": "promote_hard: the check is %s in %s; the fix promised severity hard" % (
+                "soft" if sev in ("soft", None) else fmt(sev), where) if miss else ""}
+
+
 # ----------------------------------------------------------------------------- report
 
 
@@ -537,7 +561,11 @@ def write_md(path, rep, tools):
                 or "none", ", ".join(x["variant"] for x in rep["measure_failed"]) or "none", rep["rc"]),
              "Rows: %s." % ", ".join("%s %d" % (s, c[s]) for s in STATUSES),
              "Regressions: %d regressed, %d guard broken, %d exempt." % (
-                 rc_["regressed"], rc_["guard_broken"], rc_["exempt"]), ""]
+                 rc_["regressed"], rc_["guard_broken"], rc_["exempt"])]
+    if "promotion_missing" in rep:
+        lines.append("Promotion missing: %s." % (", ".join("%s %s (%s)" % (x["item"], x["check"], x["variant"])
+                                                          for x in rep["promotion_missing"]) or "none"))
+    lines.append("")
     for v, m in sorted(rep["measured"].items()):
         if m["source"] == "scorecard":
             lines.append("- %s: %s" % (v, rel(m["scorecard"], tools)))
@@ -671,17 +699,23 @@ def main(argv=None):
             cid = x.get("check")
             cfgc = vinfo[v][1].get(cid) if isinstance(v, str) and v in vinfo and isinstance(cid, str) else None
             r.update(regression(x, it, cfgc, decs, apply_start, r.get("value")))
+            pr = promotion(x, cfgc, vinfo[v][0] if cfgc is not None and v in vinfo else None)
+            if pr:
+                r["note"] = "; ".join(n for n in (r["note"], pr.pop("_note")) if n)
+                r.update(pr)
             counts[r["status"]] += 1
             out_rows.append(r)
         aims = [r for r in out_rows if r["role"] != "guard" or r["target"]]   # a bound-only guard row aims at nothing
-        landed = bool(aims) and all(r["status"] in ("holds", "drifted") for r in aims)
+        pm = [r for r in out_rows if r.get("promotion_missing")]
+        landed = bool(aims) and all(r["status"] in ("holds", "drifted") for r in aims) and not pm
         flags = (["done_not_landed"] if it["status"] == "done" and not landed else []) + \
                 (["claim_contradicted"] if any(r["claim_contradicted"] for r in out_rows) else []) + \
                 (["measure_failed"] if any((measured.get(r["variant"]) or {}).get("error") for r in out_rows
                                            if isinstance(r["variant"], str)) else [])
         reg = [r for r in out_rows if r["regressed"] and not r["exempt"]]
         gb = [r for r in out_rows if r["guard_broken"] and not r["exempt"]]
-        flags += (["regressed"] if reg else []) + (["guard_broken"] if gb else [])
+        flags += (["regressed"] if reg else []) + (["guard_broken"] if gb else []) + \
+                 (["promotion_missing"] if pm else [])
         items.append({"id": it["id"], "title": plain(it.get("title", "")), "status": it["status"],
                       "verdict": "landed" if landed else "not_landed", "flags": flags,
                       "note": "" if out_rows else "no acceptance rows: nothing re-measured",
@@ -690,6 +724,8 @@ def main(argv=None):
                       "exempt": [{"row": row_id(r["check"], r["variant"]), "flag": f, "reason": r["exempt"]}
                                  for r in out_rows if r["exempt"] for f in ("regressed", "guard_broken") if r[f]],
                       "rows": out_rows})
+        if any(r.get("promote_hard") for r in out_rows):
+            items[-1]["promotion_missing"] = [row_id(r["check"], r["variant"]) for r in pm]
     dnl = [i["id"] for i in items if "done_not_landed" in i["flags"]]
     cc = [{"item": i["id"], "check": r["check"], "variant": r["variant"]} for i in items for r in i["rows"]
           if r["claim_contradicted"]]
@@ -697,14 +733,18 @@ def main(argv=None):
     rcount = {"regressed": sum(len(i["regressed"]) for i in items),
               "guard_broken": sum(len(i["guard_broken"]) for i in items),
               "exempt": sum(1 for i in items for r in i["rows"] if r["exempt"])}
+    pmiss = [{"item": i["id"], "check": r["check"], "variant": r["variant"]} for i in items for r in i["rows"]
+             if r.get("promotion_missing")]
     # a re-measure that could not run never reads as exit 0
-    rc = 1 if dnl or cc or mf or rcount["regressed"] or rcount["guard_broken"] else 0
+    rc = 1 if dnl or cc or mf or pmiss or rcount["regressed"] or rcount["guard_broken"] else 0
     rep = {"ledger": ledger, "checks_dir": checks_dir, "scorecards": scdir, "out": fdir, "rerun": a.rerun,
            "python": a.python, "started": started, "seconds": None, "rc": rc, "counts": counts,
            "regression_counts": rcount, "landed": [i["id"] for i in items if i["verdict"] == "landed"],
            "not_landed": [i["id"] for i in items if i["verdict"] != "landed"],
            "done_not_landed": dnl, "claim_contradicted": cc, "measure_failed": mf, "measured": measured,
            "warnings": warns, "items": items}
+    if any(r.get("promote_hard") for i in items for r in i["rows"]):
+        rep["promotion_missing"] = pmiss
     os.makedirs(fdir, exist_ok=True)
     rep["seconds"] = round(time.time() - t0, 2)
     write_md(mdp, rep, tools)
@@ -719,6 +759,9 @@ def main(argv=None):
           % (rcount["regressed"], rcount["guard_broken"], rcount["exempt"],
              "".join("; %s: %s" % (i["id"], ", ".join(i["regressed"] + i["guard_broken"])) for i in items
                      if i["regressed"] or i["guard_broken"])))
+    if "promotion_missing" in rep:
+        print("promotion missing: %s" % (", ".join("%s %s (%s)" % (x["item"], x["check"], x["variant"])
+                                                   for x in pmiss) or "none"))
     for w in warns:
         print("warning: %s" % w)
     print("wrote %s/fixcheck.{json,md} in %.2f s, exit %d" % (fdir, rep["seconds"], rc))

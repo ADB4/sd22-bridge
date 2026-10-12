@@ -28,6 +28,21 @@ Reuse of the last final gate (references/review.md §1 step 1), decided here:
 - The suite (review/round<N>/suite.json) stands when it started after every checks config, checks/wrong_build_cases.py,
   gen_checks.py (<tools>/ or <tools>/checks/), SUITE.json and manifest exported_at. Otherwise the output says "rerun the
   suite only". A file within 1 s of the stamp counts as before it (stamps are whole seconds).
+A frozen REFERENCE (the header line `Frozen at round <k>; current parameters are in build/ and the ledger.`, written in
+round 1 and never rewritten, review.md §2) turns off the warnings that assumed REFERENCE follows every apply:
+"REFERENCE.md was last written before the apply ended", "N exports newer than every time in REFERENCE `Valid for:`" and
+"REFERENCE `Valid for:` names no export after the apply ended". The reuse decision above is then keyed on the exports:
+when the apply has ended and the newest manifest's exported_at is missing or older than it, export_decision runs, and
+the output either notes that the last final gate's export stands or warns that no export followed the apply and why this
+one does not stand. The brief's REFERENCE line says frozen and drops "Changed in the last update", the rules gain a
+bullet (read a listed build script, not R4), and a section `## Changed since REFERENCE` follows "Read by everyone":
+every <tools>/build/**/*.py modified after the latest `Valid for:` time (else REFERENCE.md's mtime), newest first, at
+most 20, each with the plan items that touched it, from review/patches/order.jsonl (decisions.py: {utc, round, item,
+files}; the item's title from review/round<round>/ledger.json, review/edit<K>/ledger.json for a U<K> item; a row whose
+round is missing or not an int reads "no ledger"), and for a file no row names, from the ledger items of review/round*/
+and review/edit*/ whose `change` text names the file's stem (a ledger whose apply ended before that time is skipped). A
+build script that cannot be stat'ed (a dangling symlink) is skipped here and in the reuse rule above. Without the frozen
+line the output is unchanged.
 Exit code: 0 written (warnings allowed); 1 an ownership error, a round 2+ without a ledger, or an invalid ledger;
 2 a usage or REFERENCE error (missing or unreadable file, R1/R5/R9 missing, R5 or R9 still the template's text, a lens
 naming a section REFERENCE lacks, a bad lens key or box, a bad --graph-digest). Nothing is written unless it exits 0.
@@ -133,6 +148,11 @@ def epoch(t):
     return t.replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
+def stamp_z(t):
+    """An epoch time as YYYY-MM-DDTHH:MM:SSZ (UTC)."""
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def measured(v):
     return v is not None and v != "" and v != []
 
@@ -181,7 +201,16 @@ def read_reference(path):
         raise Fail(2, ["%s: %s (the template's pointer text is not the content)" % (path, u) for u in unfilled])
     pick =lambda tag: next((ln[len(tag):].strip() for ln in header if ln.startswith(tag)), None)
     return {"path": path, "sections": sections, "order": order, "lines": len(lines),
-            "valid": pick("Valid for:"), "changed": pick("Changed in the last update:")}
+            "valid": pick("Valid for:"), "changed": pick("Changed in the last update:"), "frozen": frozen_round(header)}
+
+
+def frozen_round(header):
+    """The round of a header line `Frozen at round <k>` (REFERENCE is written in round 1 and then frozen), else None."""
+    for ln in header:
+        m = re.match(r"Frozen at round (\d+)\b", ln)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def drift_r5(ref, skill):
@@ -489,7 +518,7 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
         hu = names(card["hard_unmeasured"]) if "hard_unmeasured" in card else "n/a"
         rows.append((variant, names(hf), hu, str(len(card.get("soft_failed") or [])), names(card.get("vacuous")),
                      names(card.get("errors")), rel(sp, tools)))
-    if newer:
+    if newer and not ref.get("frozen"):  # a frozen REFERENCE does not follow the exports
         warns.append("%d export%s newer than every time in REFERENCE `Valid for:` (%s): after the preflight export, "
                      "set Valid for to each manifest's exported_at (review.md §1 step 5)"
                      % (len(newer), "s are" if len(newer) > 1 else " is", cut(", ".join(newer), 120)))
@@ -501,16 +530,25 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
 # ----------------------------------------------------------------------------- reuse of the last final gate
 
 
-def newest_build_file(tools):
-    """(mtime, path relative to tools) of the newest .py under <tools>/build/, or None."""
-    best = None
+def build_scripts(tools):
+    """[(mtime, path relative to tools)] of every .py under <tools>/build/ (no __pycache__ or dot names); a file that
+    cannot be stat'ed (a dangling symlink) is skipped."""
+    found = []
     for root, dirs, files in os.walk(os.path.join(tools, "build")):
         dirs[:] = [d for d in dirs if d != "__pycache__" and not d.startswith(".")]
         for f in files:
             if f.endswith(".py") and not f.startswith("."):
                 p = os.path.join(root, f)
-                best = max(best or (0, ""), (os.path.getmtime(p), rel(p, tools)))
-    return best
+                try:
+                    found.append((os.path.getmtime(p), rel(p, tools)))
+                except OSError:
+                    pass
+    return found
+
+
+def newest_build_file(tools):
+    """(mtime, path relative to tools) of the newest .py under <tools>/build/, or None."""
+    return max(build_scripts(tools), default=None)
 
 
 def export_decision(exports, digests, build):
@@ -573,6 +611,92 @@ def parse_digests(items):
     return out
 
 
+# ----------------------------------------------------------------------------- changed since a frozen REFERENCE
+
+MAX_CHANGED = 20
+
+
+def ledger_items(path):
+    """[(item id, item dict)] and the apply.ended time (epoch or None) of a ledger file; ([], None) when unreadable."""
+    try:
+        led = load_json(path)
+        items = [(it["id"], it) for it in led.get("items") or []
+                 if isinstance(it, dict) and isinstance(it.get("id"), str)]
+        end = times_in(str(((led.get("apply") or {}).get("ended")) or ""))
+        return items, epoch(end[0]) if end else None
+    except (OSError, ValueError, AttributeError, TypeError):
+        return [], None
+
+
+def changed_since(tools, review_dir, ref):
+    """The lines of the `## Changed since REFERENCE` section (frozen mode): the build scripts modified after the latest
+    `Valid for:` time (else REFERENCE.md's mtime), newest first, each with the plan items that touched it."""
+    valid = times_in(ref["valid"], local=True)
+    since = epoch(max(valid)) if valid else os.path.getmtime(ref["path"])
+    found = sorted(((t, p.replace(os.sep, "/")) for t, p in build_scripts(tools) if t > since + STAMP_SLACK),
+                   reverse=True)
+    out = ["REFERENCE is frozen at round %d: R4 and its parameters are from before these edits. Build scripts modified "
+           "after %s, newest first, with the plan items that touched them (review/patches/order.jsonl, else the "
+           "ledgers' change text):" % (ref["frozen"], stamp_z(since))]
+    if not found:
+        return out + ["None: no build script is newer than the REFERENCE export, so R4 matches the build."]
+    cache = {}
+
+    def ledger(name):
+        if name not in cache:
+            cache[name] = ledger_items(os.path.join(review_dir, name, "ledger.json"))
+        return cache[name]
+    rows = []  # order.jsonl rows after `since`, in application order
+    op = os.path.join(review_dir, "patches", "order.jsonl")
+    try:
+        for ln in read_text(op).split("\n"):
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            t = times_in(str(r.get("utc") or "")) if isinstance(r, dict) else []
+            if t and epoch(t[0]) > since and isinstance(r.get("files"), list) and isinstance(r.get("item"), str):
+                rows.append(r)
+    except (OSError, UnicodeDecodeError):
+        pass
+    led_names = sorted(os.path.basename(os.path.dirname(p)) for pat in ("round*", "edit*")
+                       for p in glob.glob(os.path.join(review_dir, pat, "ledger.json")))
+
+    def ledger_name(r):
+        """The ledger folder of a patch row's item (edit<K> for a U<K> item), None when the row has no int round."""
+        em, rnd = re.fullmatch(r"U(\d+)", r["item"]), r.get("round")
+        if em:
+            return "edit%s" % em.group(1)
+        return "round%d" % rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None
+
+    def tag(item, name, title):
+        return "%s (%s)" % (item, "no ledger" if name is None else
+                            "%s ledger%s" % (name, ", '%s'" % cut(title, 50) if title else ""))
+    for mtime, path in found:
+        base, hit = os.path.basename(path), []
+        for r in rows:
+            if any(str(f).replace("\\", "/") == path or os.path.basename(str(f)) == base for f in r["files"]):
+                name = ledger_name(r)
+                title = dict(ledger(name)[0]).get(r["item"], {}).get("title") if name else None
+                t = tag(r["item"], name, title)
+                hit += [t] if t not in hit else []
+        if not hit:  # no patch row names the file (no order.jsonl, or a round from before it): the ledgers' change text
+            stem = re.compile(r"(?<!\w)%s(?!\w)" % re.escape(os.path.splitext(base)[0]))
+            for name in led_names:
+                items, end = ledger(name)
+                if end is not None and end < since:
+                    continue  # that apply ended before the REFERENCE export
+                hit += [tag(i, name, it.get("title")) for i, it in items
+                        if stem.search(it["change"] if isinstance(it.get("change"), str)
+                                       else json.dumps(it.get("change")))]
+        out.append("- `%s` (modified %s): %s" % (path, stamp_z(mtime), ", ".join(hit) or "(no ledger item names it)"))
+        if len(out) - 1 == MAX_CHANGED:  # the intro line, then one line per file
+            break
+    if len(found) > MAX_CHANGED:
+        out.append("- and %d more (oldest first omitted)" % (len(found) - MAX_CHANGED))
+    return out
+
+
 # ----------------------------------------------------------------------------- the brief
 
 
@@ -596,8 +720,12 @@ def build(a, ref, lenses, ledger, prev, carried, owner, defaulted, sc_rows, n_cf
     prd = rel(os.path.join(DIR, pr), tools)
     head = ["# Round %d delta brief (%s)" % (R, now), "",
             "Made by `make_brief.py`. Tools folder: `%s`; paths below are relative to it." % tools,
-            "- REFERENCE: `%s`. Valid for: %s. Changed in the last update: %s." % (
-                rel(ref["path"], tools), (ref["valid"] or "?").rstrip("."), (ref["changed"] or "?").rstrip(".")),
+            ("- REFERENCE: `%s`, frozen at round %d; R4 may be stale, so read the build scripts listed under Changed "
+             "since REFERENCE. Valid for: %s." % (rel(ref["path"], tools), ref["frozen"],
+                                                   (ref["valid"] or "?").rstrip("."))
+             if ref["frozen"] else
+             "- REFERENCE: `%s`. Valid for: %s. Changed in the last update: %s." % (
+                 rel(ref["path"], tools), (ref["valid"] or "?").rstrip("."), (ref["changed"] or "?").rstrip("."))),
             "- Ledger: %s." % ("`%s` (%d items)" % (rel(a.ledger_path, tools), len(ledger.get("items", [])))
                                if ledger else "none (round 1)"),
             "- Last round: %s." % ("none (round 1)" if R < 2 else ", ".join(
@@ -618,12 +746,15 @@ def build(a, ref, lenses, ledger, prev, carried, owner, defaulted, sc_rows, n_cf
         % THREADS,
         "- Time boxes and the finding cap are in your prompt (review_round.js).",
         "- A REFERENCE section: `sed -n '/^## R4 /,/^## R5 /p' \"%s\"` prints R4 (up to the R5 heading)."
-        % ref["path"]]))
+        % ref["path"]] + (["- REFERENCE is frozen at round %d: for a node a listed build script touches, read the "
+                           "script, not R4." % ref["frozen"]] if ref["frozen"] else [])))
     body = ["## 2. Read by everyone: REFERENCE R1, R5 and R9", ""]
     for sid in EVERYONE:
         sec = ref["sections"][sid]
         body += ["#" + sec[0]] + sec[1:] + [""]
     S.append(("2. Read by everyone", body[:-1]))
+    if ref["frozen"]:
+        S.append(("Changed since REFERENCE", ["## Changed since REFERENCE", ""] + changed_since(tools, DIR, ref)))
     dec = ["## 3. Decisions at the last gate", ""]
     if R < 2 and not ledger:
         dec.append("None (round 1).")
@@ -765,7 +896,7 @@ def main(argv=None):
         a.ledger_path = os.path.join(a.round_dir, "ledger.json")
         ledger = read_ledger(a.ledger_path, a.round)
         end = times_in(str(((ledger or {}).get("apply") or {}).get("ended") or ""))
-        if end and os.path.getmtime(ref["path"]) < epoch(end[0]):
+        if end and not ref["frozen"] and os.path.getmtime(ref["path"]) < epoch(end[0]):
             warns.append("REFERENCE.md was last written before the apply ended (%s): bring the sections the apply "
                          "changed up to date, then set Valid for (review.md §1 step 5)" % ledger["apply"]["ended"])
         valid = times_in(ref["valid"], local=True)
@@ -796,7 +927,19 @@ def main(argv=None):
                 raise Fail(2, ["no checks config %s" % c])
         sc_rows, n_cfg, sc_warns, exports = scorecards(cfgs, tools, a.review_dir, a.round, ref)
         warns += sc_warns
-        if end and valid and max(valid) < end[0]:
+        latest = max((e["exported"] for e in exports if e["exported"] is not None), default=None)
+        if ref["frozen"]:  # REFERENCE does not follow the exports: decide on the exports themselves
+            if end and (latest is None or latest < epoch(end[0])):
+                stands, why = export_decision(exports, digests, newest_build_file(tools))
+                if stands:
+                    notes.append("the last final gate's export stands as this round's preflight (no build script newer "
+                                 "than the oldest export, %d graph digest%s match)" % (len(exports),
+                                                                                       "s" if len(exports) > 1 else ""))
+                else:
+                    warns.append("no export after the apply ended (%s; latest export %s) and the last final gate's "
+                                 "export does not stand (%s): export every variant (review.md §1 step 1)"
+                                 % (ledger["apply"]["ended"], "none" if latest is None else stamp_z(latest), why))
+        elif end and valid and max(valid) < end[0]:
             stands, why = export_decision(exports, digests, newest_build_file(tools))
             if stands:
                 notes.append("the last final gate's export stands as this round's preflight (no build script newer "
