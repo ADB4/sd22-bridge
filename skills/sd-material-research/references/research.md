@@ -95,7 +95,8 @@ Create one from `references/materials/_TEMPLATE.md`. It becomes a bundled sheet 
 **How to run it**
 - If the user has opted into workflows (ultracode is on, or they asked for a workflow or multi-agent run), run
   `assets/workflows/research_sheet.js` with the Workflow tool (`scriptPath`). Its args are documented at the top of
-  the file.
+  the file. Run `realpath` on the skill folder in Bash first and pass the literal result in `scriptPath`: the symlink
+  path is refused.
 - Otherwise, spawn the same roles with the Agent tool: the researchers in one message, then the auditors in one
   message, then the reviser. The prompts in the workflow file work as Agent prompts too.
 - If neither is available, do the three roles yourself in sequence, and do the audit as a separate, deliberately
