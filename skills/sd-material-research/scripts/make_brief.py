@@ -16,6 +16,17 @@ assets/workflows/review_round.js. Prints lines per section, lines to read per le
 (ledger ids, the last round's unverified and deferred items, open entries) needs exactly one owner; a lens keyed
 `fixcheck` owns every ledger id no other lens names. A lens may set `box: {min, calls}` (positive integers), its own
 time box, copied into its panel_args row. Documented in references/review.md §1-§3.
+Invariants table: when at least one scorecard was read, also writes review/round<N>/invariants.json (atomic), the
+mechanical half of the old lead's work: {utc, source: {spec, configs}, invariants: [{id, variant, pass, hard, hard_failed, checks:
+[{id, value, target, passed, severity}], value, mapped_by}]}. An INV's checks come from <tools>/spec.md section 6
+(each paragraph or list item that starts with INV-<k>, or whose first bold span holds it, gets every backticked token
+after "Check:", up to a "Severity:" or "Wrong build:" label, that is a check id in some config) and, as a union, from the configs' checks whose `why` starts with
+INV-<k> (INV-1, INV-2 too); mapped_by says which gave it (spec, why, spec+why). One row per variant whose scorecard holds
+any of the INV's checks: pass = every one of them passed (the scorecard's own verdict; a soft miss or an unmeasured
+check is not a pass), hard = any is severity hard, hard_failed = any hard check did not pass (findings.py's
+"hard failing" test: a row that fails only on soft checks has hard true and hard_failed false). An INV with no check in any scorecard gets one row with variant "*",
+pass null, checks [] and a warning. No spec.md or no section 6: the `why` rule only, source.spec null, a warning. The
+BRIEF's scorecard section gets one line naming the file and its pass count.
 Time zones: a stamp with no zone (a manifest's exported_at or the suite's stamps from before they carried a Z, and
 REFERENCE `Valid for:`) is this machine's local time. A stamp with Z or an offset (+HH:MM, -HHMM) is read as such.
 The ledger's and the lens files' stamps (`date -u`) with no zone stay UTC.
@@ -58,7 +69,9 @@ import sys
 import time
 
 EVERYONE = ("R1", "R5", "R9")  # requirements, node cheat sheet, rubric + verifier checklist: in every delta
-RESERVED = ("lead", "reverify", "ledger", "review_result", "lenses", "panel_args")  # <name>.json in round<N>/
+RESERVED = ("lead", "reverify", "ledger", "review_result", "lenses", "panel_args", "scorecard", "invariants", "suite",
+            "suite_partial", "wrong_builds")  # <name>.json in round<N>/; a key starting scorecard_ is reserved too
+RESERVED_PREFIX = "scorecard_"  # scorecard_<variant>.json in round<N>/
 KEY_RE = re.compile(r"[A-Za-z0-9_-]+")  # used with fullmatch: `$` would pass a trailing newline
 SID_RE = re.compile(r"R[1-9][0-9]*")
 PREV_KEYS = ("keep_as_is", "deferred", "premises_corrected")
@@ -242,10 +255,11 @@ def read_lenses(path, ref):
             continue
         k = l.get("key")
         kk = str(k or "").lower()
-        if not isinstance(k, str) or not KEY_RE.fullmatch(k) or kk in RESERVED or kk in seen \
-                or not isinstance(l.get("prompt"), str) or not l["prompt"].strip():
+        if not isinstance(k, str) or not KEY_RE.fullmatch(k) or kk in RESERVED or kk.startswith(RESERVED_PREFIX) \
+                or kk in seen or not isinstance(l.get("prompt"), str) or not l["prompt"].strip():
             errs.append("lens %s: needs a prompt and a key of letters, digits, _ or -, unique ignoring case, not %s "
-                        "in any case" % (json.dumps(k), ", ".join(RESERVED)))
+                        "or starting with %s (scorecard_<variant>.json files) in any case"
+                        % (json.dumps(k), ", ".join(RESERVED), RESERVED_PREFIX))
         seen.add(kk)
         secs = l.get("sections")
         if secs is not None:
@@ -381,7 +395,7 @@ def edited_before_gate(tools, review_dir, rnd, ledger):
     starts = []
     for p in glob.glob(os.path.join(review_dir, "round%d" % (rnd - 1), "*.json")):
         stem = os.path.basename(p)[:-5]
-        if stem.lower() in RESERVED or "." in stem:  # <lens>.verdicts.json, lead.json, ledger.json, ...
+        if stem.lower() in RESERVED or stem.lower().startswith(RESERVED_PREFIX) or "." in stem:  # <lens>.verdicts.json, lead.json, ledger.json, ...
             continue
         try:
             d = load_json(p)
@@ -452,9 +466,10 @@ def assign_owners(lenses, carried, ledger_ids):
     return {cid: who[0] for cid, who in owners.items() if who}, defaulted, errs
 
 
-def scorecards(cfgs, tools, review_dir, rnd, ref):
+def scorecards(cfgs, tools, review_dir, rnd, ref, cards=None):
     """One row per checks config, the stale and missing warnings (they also go into §4), and one dict per readable
-    manifest {variant, graph, exported (epoch or None), digest, path} for the reuse decision."""
+    manifest {variant, graph, exported (epoch or None), digest, path} for the reuse decision. A list passed as `cards`
+    gets one {variant, config, card, path} per readable scorecard, for the invariants table."""
     rows, read, warns, newer, exports = [], 0, [], [], []
     valid = times_in(ref["valid"], local=True)
     newest_export = None
@@ -506,6 +521,8 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
             warns.append("%s: unreadable scorecard (%s)" % (rel(sp, tools), e))
             rows.append((variant, "unreadable", "", "", "", "", rel(sp, tools)))
             continue
+        if cards is not None and isinstance(card, dict):
+            cards.append({"variant": variant, "config": cp, "card": card, "path": sp})
         stale = os.path.isfile(mp) and os.path.getmtime(sp) < os.path.getmtime(mp)
         was = ((card.get("manifest") or {}).get("exported_at")) if isinstance(card.get("manifest"), dict) else None
         if stale or (exported and was and was != exported):
@@ -525,6 +542,182 @@ def scorecards(cfgs, tools, review_dir, rnd, ref):
     if newest_export and not valid:
         warns.append("REFERENCE `Valid for:` names no export time: write the exported_at of each manifest there")
     return rows, read, warns, exports
+
+
+# ----------------------------------------------------------------------------- the invariants table
+
+
+INV_RE = re.compile(r"INV-([1-9][0-9]*)")
+INV_LEAD_RE = re.compile(r"\s*(INV-[1-9][0-9]*(?:\s*(?:,|/|\+|&|and)\s*INV-[1-9][0-9]*)*)(?![0-9A-Za-z])")
+ITEM_RE = re.compile(r"\s*(?:[-*+]|[0-9]+[.)])\s+")
+CHECK_RE = re.compile(r"Checks?:")
+STOP_RE = re.compile(r"(?:Severity|Wrong[ -]builds?)[*_]*\s*:", re.I)
+
+
+def spec_invariants(spec_path):
+    """{INV id: [check tokens]} from <tools>/spec.md section 6 (the "## 6." heading to the next "## "): each paragraph
+    or list item that starts with INV-<k>, or whose first bold span holds it, gets every backticked token after
+    "Check:" in it, up to the first "Severity" or "Wrong build" label (those clauses name other checks; a check id
+    written only there is not mapped). Returns (map or None when there is no readable spec or no section 6, why)."""
+    try:
+        text = read_text(spec_path)
+    except (OSError, ValueError) as e:
+        return None, "no readable spec (%s)" % e
+    lines, sec = text.splitlines(), None
+    for i, ln in enumerate(lines):
+        if re.match(r"##\s+6\.", ln):
+            sec = i + 1
+            break
+    if sec is None:
+        return None, "%s has no '## 6.' section" % os.path.basename(spec_path)
+    body = []
+    for ln in lines[sec:]:
+        if ln.startswith("## "):
+            break
+        body.append(ln)
+    items, cur, cur_item, cur_ind = [], [], False, 0
+    for ln in body:
+        ind = len(ln) - len(ln.lstrip())
+        if not ln.strip():
+            if cur:
+                items.append(" ".join(cur))
+            cur, cur_item = [], False
+            continue
+        m = ITEM_RE.match(ln)
+        # A list marker starts a new item after a blank line, after a list item when this line is not indented
+        # deeper than that item, or when the text after the marker opens with an INV id (also inside a bold span).
+        # Otherwise it is a wrapped line of the paragraph above ("... see\n- 3 for ...") and continues it.
+        new = bool(m) and (not cur or (cur_item and ind <= cur_ind)
+                           or re.match(r"(?:\*\*)?\s*INV-[1-9]", ln[m.end():]) is not None)
+        if new:
+            if cur:
+                items.append(" ".join(cur))
+            cur, cur_item, cur_ind = [ln.strip()], True, ind
+        elif not cur:
+            cur, cur_item, cur_ind = [ln.strip()], False, ind
+        else:
+            cur.append(ln.strip())
+    if cur:
+        items.append(" ".join(cur))
+    out = {}
+    for it in items:
+        lead = ITEM_RE.match(it)
+        t = it[lead.end():] if lead else it
+        ids = []
+        m = re.match(r"\*\*(.+?)\*\*", t)
+        head = m.group(1) if m else t
+        m = INV_LEAD_RE.match(head)
+        if m:
+            ids = INV_RE.findall(m.group(1))
+        if not ids:
+            continue
+        c = CHECK_RE.search(t)
+        tail = t[c.end():] if c else ""
+        stop = STOP_RE.search(tail)  # the Wrong build and Severity clauses name other checks, not this INV's
+        toks = re.findall(r"`([^`]+)`", tail[:stop.start()] if stop else tail) if c else []
+        for k in ids:
+            out.setdefault("INV-" + k, [])
+            out["INV-" + k] += [x for x in dict.fromkeys(toks) if x not in out["INV-" + k]]
+    return out, None
+
+
+def why_invariants(cfg_checks):
+    """{check id: [INV ids]} from the `why` of each config check that starts with INV-<k> (INV-1, INV-2: ... too)."""
+    out = {}
+    for c in cfg_checks:
+        if not isinstance(c, dict) or not isinstance(c.get("id"), str):
+            continue
+        m = INV_LEAD_RE.match(str(c.get("why") or ""))
+        if m:
+            for k in INV_RE.findall(m.group(1)):
+                out.setdefault(c["id"], [])
+                if "INV-" + k not in out[c["id"]]:
+                    out[c["id"]].append("INV-" + k)
+    return out
+
+
+def inv_value(c):
+    def short(v, n):
+        if v is None:
+            return "?"
+        if isinstance(v, float):
+            return "%g" % round(v, 5)
+        if isinstance(v, (list, dict)):
+            return cut(json.dumps(v, separators=(",", ":")), n)
+        return cut(str(v), n)
+    t = c["target"]
+    tt = "" if t is None else " [%s]" % short(t, 30)
+    return "%s %s%s %s" % (c["id"], short(c["value"], 30), tt, "ok" if c["passed"] else "miss")
+
+
+def invariants_table(cfgs, cards, spec_path, tools):
+    """(document, warnings). One row per (INV, variant) with checks in that variant's scorecard; an INV with no check
+    in any scorecard gets one row with variant "*", pass null, checks []. See references/review.md section 6."""
+    warns = []
+    spec, why = spec_invariants(spec_path)
+    if spec is None:
+        warns.append("invariants table: %s: INV -> check ids from the checks' `why` only" % why)
+    cfg_ids, whys = set(), {}
+    for cp in cfgs:
+        try:
+            cfg = load_json(cp)
+        except (OSError, ValueError):
+            continue
+        if isinstance(cfg, dict) and isinstance(cfg.get("checks"), list):
+            cfg_ids |= {c["id"] for c in cfg["checks"] if isinstance(c, dict) and isinstance(c.get("id"), str)}
+            for cid, invs in why_invariants(cfg["checks"]).items():
+                whys.setdefault(cid, [])
+                whys[cid] += [i for i in invs if i not in whys[cid]]
+    by_spec = {}  # INV -> check ids from the spec that are check ids in some config
+    for inv, toks in (spec or {}).items():
+        by_spec[inv] = [t for t in toks if t in cfg_ids]
+    by_why = {}
+    for cid, invs in whys.items():
+        for inv in invs:
+            by_why.setdefault(inv, []).append(cid)
+    invs = sorted(set(by_spec) | set(by_why), key=lambda x: int(x[4:]))
+    rows = []
+    for inv in invs:
+        ids = list(dict.fromkeys(by_spec.get(inv, []) + by_why.get(inv, [])))
+        via = "+".join(n for n, d in (("spec", by_spec), ("why", by_why)) if d.get(inv))
+        found = False
+        for cd in cards:
+            res = {r["id"]: r for r in cd["card"].get("results") or [] if isinstance(r, dict) and "id" in r}
+            checks = []
+            for cid in ids:
+                r = res.get(cid)
+                if r is not None:
+                    checks.append({"id": cid, "value": r.get("value"), "target": r.get("target"),
+                                   "passed": r.get("passed") is True, "severity": r.get("severity")})
+            if not checks:
+                continue
+            found = True
+            rows.append({"id": inv, "variant": cd["variant"], "pass": all(c["passed"] for c in checks),
+                         "hard": any(c["severity"] == "hard" for c in checks),
+                         "hard_failed": any(c["severity"] == "hard" and not c["passed"] for c in checks),
+                         "checks": checks,
+                         "value": cut("; ".join(inv_value(c) for c in checks), 400), "mapped_by": via or "none"})
+        if not found:
+            rows.append({"id": inv, "variant": "*", "pass": None, "hard": False, "hard_failed": False, "checks": [],
+                         "value": "no check in any scorecard" + ("" if ids else " (no check id maps to it)"),
+                         "mapped_by": via or "none"})
+    gaps = [r["id"] for r in rows if r["variant"] == "*"]
+    if gaps:
+        warns.append("invariants table: no check in any scorecard for %s (a gap: add a check or drop the INV)"
+                     % ", ".join(gaps))
+    doc = {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "source": {"spec": rel(spec_path, tools) if spec is not None else None,
+                      "configs": [rel(cp, tools) for cp in cfgs]},
+           "invariants": rows}
+    return doc, warns
+
+
+def write_json_atomic(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(obj, fh, indent=1)
+        fh.write("\n")
+    os.replace(tmp, path)
 
 
 # ----------------------------------------------------------------------------- reuse of the last final gate
@@ -770,6 +963,8 @@ def build(a, ref, lenses, ledger, prev, carried, owner, defaulted, sc_rows, n_cf
         sc += ["| variant | hard failed | hard unmeasured | soft misses | vacuous | errors | scorecard |",
                "|---|---|---|---|---|---|---|"]
         sc += ["| %s |" % " | ".join(r) for r in sc_rows]
+        if getattr(a, "inv_line", None):
+            sc.append(a.inv_line)
         if any(r[2] == "n/a" for r in sc_rows):
             sc.append("Hard unmeasured `n/a`: a scorecard from a matcheck without that field.")
     else:
@@ -925,8 +1120,16 @@ def main(argv=None):
         for c in cfgs:
             if not os.path.isfile(c):
                 raise Fail(2, ["no checks config %s" % c])
-        sc_rows, n_cfg, sc_warns, exports = scorecards(cfgs, tools, a.review_dir, a.round, ref)
+        cards = []
+        sc_rows, n_cfg, sc_warns, exports = scorecards(cfgs, tools, a.review_dir, a.round, ref, cards)
         warns += sc_warns
+        inv_doc, a.inv_line = None, None
+        if cards:  # nothing to tabulate without a readable scorecard
+            inv_doc, inv_warns = invariants_table(cfgs, cards, os.path.join(tools, "spec.md"), tools)
+            warns += inv_warns
+            rows = inv_doc["invariants"]
+            a.inv_line = "Invariants table: round%d/invariants.json (%d of %d rows pass)" % (
+                a.round, len([r for r in rows if r["pass"] is True]), len(rows))
         latest = max((e["exported"] for e in exports if e["exported"] is not None), default=None)
         if ref["frozen"]:  # REFERENCE does not follow the exports: decide on the exports themselves
             if end and (latest is None or latest < epoch(end[0])):
@@ -998,11 +1201,18 @@ def main(argv=None):
     with open(os.path.join(a.round_dir, "panel_args.json"), "w", encoding="utf-8", newline="\n") as fh:
         json.dump(args, fh, indent=1)
         fh.write("\n")
+    if inv_doc is not None:
+        write_json_atomic(os.path.join(a.round_dir, "invariants.json"), inv_doc)
     print("make_brief: round %d -> %s/BRIEF.md, panel_args.json" % (a.round, a.round_dir))
     print("  lines: %s; total %d (budget %d)" % (", ".join("%s %d" % s for s in sizes), total, a.max_lines))
     print("  lines to read: %s; verifiers, re-verify and lead %d + %d = %d" % (
         "; ".join("%s %d + %d = %d" % (k, d, e, d + e) for k, (d, e) in reads.items() if k != "*"),
         reads["*"][0], reads["*"][1], sum(reads["*"])))
+    if inv_doc is not None:
+        rows = inv_doc["invariants"]
+        print("  invariants: %s; %d rows, %d pass, %d fail, %d gap" % (
+            os.path.join("round%d" % a.round, "invariants.json"), len(rows), len([r for r in rows if r["pass"] is True]),
+            len([r for r in rows if r["pass"] is False]), len([r for r in rows if r["pass"] is None])))
     print("  carried items: %d (%s)" % (len(carried), ", ".join("%s %s" % (cid, owner[cid]) for cid in carried)
                                         or "none"))
     print("  %.2f s" % (time.time() - t0))

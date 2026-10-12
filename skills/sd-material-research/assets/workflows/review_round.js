@@ -1,12 +1,12 @@
 export const meta = {
   name: 'material-review-round',
-  description: 'Lens reviewers critique a procedural material from exported maps, adversarial verifiers re-measure every finding (highs first), one re-verify agent takes the high and medium findings a verifier left without a verdict, a lead writes the fix plan, design calls and scorecard',
+  description: 'Lens reviewers critique a procedural material from exported maps, adversarial verifiers re-measure every finding (highs first), one re-verify agent takes the high and medium findings a verifier left without a verdict, a plan lead writes the fix plan and design calls while a scorecard lead writes the requirements scorecard',
   whenToUse: 'sd-material-research stage 6: the default panel route (the Agent tool is the fallback)',
   phases: [
     { title: 'Review', detail: 'one reviewer per lens, time-boxed' },
     { title: 'Verify', detail: 'adversarial re-measurement of each lens\'s findings, highs, then mediums, then lows, time-boxed' },
     { title: 'Re-verify', detail: 'one agent for every high or medium finding left without a verdict' },
-    { title: 'Synthesize', detail: 'lead: plan, design calls, scorecard, ledger targets' },
+    { title: 'Synthesize', detail: 'plan lead and scorecard lead in parallel: plan, design calls, ledger targets; requirements scorecard' },
   ],
 }
 
@@ -27,7 +27,9 @@ export const meta = {
 //   skill_dir    optional, default ~/.claude/skills/sd-material-research
 // Every agent runs at xhigh (no effort tiers); concurrency is the runtime's cap, min(16, CPUs-2).
 // Each agent stamps `date -u` first and last and writes one file in round<N>/: <lens>.json (findings),
-// <lens>.verdicts.json, reverify.verdicts.json, lead.json. Main can read them while the panel runs.
+// <lens>.verdicts.json, reverify.verdicts.json, lead.json (the plan lead: no requirements scorecard, no invariants table),
+// scorecard.json (the scorecard lead, at the same time as lead.json). invariants.json is not an agent's file: make_brief.py
+// writes it from the scorecards before the panel. Main can read them while the panel runs.
 // Finding status: confirmed; rejected (a verdict says real=false or severity none; `artifact` alone never rejects);
 // unverified (no verdict: a high/medium that neither its verifier nor the re-verify agent checked, or a low its verifier
 // did not reach; lows are not re-verified).
@@ -49,13 +51,13 @@ const RANK = f => { const r = SEV.indexOf(f.severity); return r < 0 ? SEV.length
 if (!DIR) throw new Error('args.review_dir is required')
 const lenses = A.lenses || []
 if (!Array.isArray(lenses) || lenses.length === 0) throw new Error('args.lenses must be a non-empty array of {key, prompt}')
-const RESERVED = ['lead', 'reverify', 'ledger', 'review_result', 'lenses', 'panel_args']
+const RESERVED = ['lead', 'reverify', 'ledger', 'review_result', 'lenses', 'panel_args', 'scorecard', 'invariants', 'suite', 'suite_partial', 'wrong_builds']
 const seenKeys = new Set()
 for (const l of lenses) {
   const k = l && l.key
   const kk = String(k || '').toLowerCase()
-  if (!/^[A-Za-z0-9_-]+$/.test(k || '') || RESERVED.includes(kk) || seenKeys.has(kk) || !l.prompt)
-    throw new Error(`lens ${JSON.stringify(k)}: needs a prompt and a key of letters, digits, _ or -, unique ignoring case, not ${RESERVED.join(', ')} in any case`)
+  if (!/^[A-Za-z0-9_-]+$/.test(k || '') || RESERVED.includes(kk) || kk.startsWith('scorecard_') || seenKeys.has(kk) || !l.prompt)
+    throw new Error(`lens ${JSON.stringify(k)}: needs a prompt and a key of letters, digits, _ or -, unique ignoring case, not ${RESERVED.join(', ')} or starting with scorecard_ (scorecard_<variant>.json files) in any case`)
   seenKeys.add(kk)
   const sid = s => typeof s === 'string' && /^R[1-9][0-9]*$/.test(s)
   if (l.sections != null && (!Array.isArray(l.sections) || !l.sections.every(sid)))
@@ -162,12 +164,6 @@ const PLAN = {
       outcome: { type: 'string', enum: ['confirmed', 'downgraded', 'rejected', 'not_measured', 'landed', 'partial', 'not_landed'] },
       numbers: { type: 'string', description: 'your script and numbers' },
     }, required: ['id', 'lens', 'outcome', 'numbers'] } },
-    requirements_scorecard: { type: 'array', items: { type: 'object', properties: {
-      requirement: { type: 'string' }, variant: { type: 'string' }, verdict: { type: 'string', enum: ['met', 'mostly_met', 'not_met'] }, evidence: { type: 'string' },
-    }, required: ['requirement', 'variant', 'verdict', 'evidence'] } },
-    invariants: { type: 'array', items: { type: 'object', properties: {
-      id: { type: 'string' }, variant: { type: 'string' }, pass: { type: 'boolean' }, value: { type: 'string' },
-    }, required: ['id', 'variant', 'pass', 'value'] } },
     keep_as_is: { type: 'array', items: { type: 'string' } },
     deferred: { type: 'array', items: { type: 'string' }, description: 're-deferred carried items and design calls over the cap; never a numeric target' },
     residuals: { type: 'array', description: 'every confirmed or spot-checked finding not admitted to the plan; reported, never deferred with a numeric target', items: { type: 'object', properties: {
@@ -181,7 +177,22 @@ const PLAN = {
     premises_corrected: { type: 'array', items: { type: 'string' } },
     overall_assessment: { type: 'string' },
   },
-  required: ['started', 'ended', 'fixes', 'design_calls', 'spot_checks', 'requirements_scorecard', 'invariants', 'keep_as_is', 'deferred', 'residuals', 'conflicts_resolved', 'premises_corrected', 'overall_assessment'],
+  required: ['started', 'ended', 'fixes', 'design_calls', 'spot_checks', 'keep_as_is', 'deferred', 'residuals', 'conflicts_resolved', 'premises_corrected', 'overall_assessment'],
+}
+
+// The scorecard lead's file (R-17): the requirements scorecard only. The invariants table is make_brief.py's
+// round<N>/invariants.json.
+const SCORECARD = {
+  type: 'object',
+  properties: {
+    ...STAMPS,
+    requirements_scorecard: { type: 'array', items: { type: 'object', properties: {
+      requirement: { type: 'string', description: 'the bare requirement id, R<k> (R7, not "R7 (mortar)")' }, variant: { type: 'string', description: 'a variant name as in the round\'s scorecard_<variant>.json files, or * for every variant' }, verdict: { type: 'string', enum: ['met', 'mostly_met', 'not_met'] },
+      hard: { type: 'boolean', description: 'true when the requirement is a hard acceptance criterion (spec section 1, BRIEF R1); an eye criterion the user made soft is false' },
+      evidence: { type: 'string' },
+    }, required: ['requirement', 'variant', 'verdict', 'hard', 'evidence'] } },
+  },
+  required: ['started', 'ended', 'requirements_scorecard'],
 }
 
 // RV-05: every agent reads the round's delta brief (it carries REFERENCE R1, R5 and R9: requirements, node cheat sheet,
@@ -360,9 +371,10 @@ if (unverifiedHM.length) log(`SIGNAL (RV-03): ${unverifiedHM.length} high/medium
 const deadLenses = dead.filter(d => d.startsWith('review:')).map(d => d.slice(7))
 
 phase('Synthesize')
-const plan = await agent(`${COMMON}
+const PLAN_FILE = `${RD}/lead.json`
+const planPrompt = `${COMMON}
 ${ALL_REF}
-You are the lead material artist for round ${R}. Merge duplicates (keep source ids; agreement across lenses = confidence),
+You are the lead material artist (the plan lead) for round ${R}. Merge duplicates (keep source ids; agreement across lenses = confidence),
 re-measure any disputed number yourself, correct wrong premises (Histogram Scan centre = 1 - Position; Blend divide = dst/src),
 resolve conflicts with the user's requirements in writing, and order fixes by dependency (layout -> height/structure ->
 process masks -> colour -> micro-detail). Each fix gets acceptance checks and guard rails.
@@ -373,8 +385,11 @@ Its intended_lowfreq lists the checks (a check id or check@variant) of a tile-pe
   : 'Round ' + R + ' fixes highs only: plan verified highs, hard requirement or invariant breaks, and the check defects those fixes need, at most 5 fixes.'}
 Every confirmed or spot-checked finding you do not plan goes in residuals (one row each, why_open, next_lever): it is
 reported, and never deferred with a numeric target. Taste is low and gets no acceptance target. A target that a build
-showing the fix's own tell would meet better than the clean build is invalid. Fill the requirements scorecard (one row per requirement per variant) and the invariants table from the
-current scorecards in the round folder. List keep-as-is, deferred items, conflicts resolved, premises corrected.
+showing the fix's own tell would meet better than the clean build is invalid.
+A scorecard lead writes the requirements scorecard (${RD}/scorecard.json) at the same time, and make_brief.py wrote the
+invariants table (${RD}/invariants.json): read both when a fix or a conflict turns on a requirement or an invariant
+(scorecard.json may not have landed yet: then read the round's scorecard_<variant>.json files and the confirmed
+findings). List keep-as-is, deferred items, conflicts resolved, premises corrected.
 UNVERIFIED findings are lens claims that no verifier re-measured: re-measure every high or medium among them yourself
 before planning it (one spot_checks row each); a low enters the plan only as a check defect, on numbers you reproduced.
 REJECTED findings got a verdict of real=false or severity none (why = the verifier's reasoning). Leave them out of the
@@ -402,7 +417,7 @@ recommended one first, and what the answer changes. Nobody is asked: the standin
 - A fix may change a value the user gave verbatim only through a design call with changes_spec true, and never
   retargets, relaxes or demotes a check to turn it green.
 At most 4 design calls; put any further call in deferred, starting "design call:".
-${filing(`${RD}/lead.json`)}
+${filing(PLAN_FILE)}
 
 CONFIRMED FINDINGS (with verifier notes):
 ${JSON.stringify(confirmed, null, 1)}
@@ -425,8 +440,45 @@ OWNED ITEM REPORTS:
 ${JSON.stringify(owned, null, 1)}
 
 STRENGTHS:
-${JSON.stringify(strengths, null, 1)}`, { label: 'synthesize', phase: 'Synthesize', schema: PLAN, effort: EFFORT })
+${JSON.stringify(strengths, null, 1)}`
+
+// R-17: the scorecard lead judges the requirements from the lens evidence and the scorecards, not from the plan.
+const scPrompt = `${COMMON}
+${ALL_REF}
+You are the scorecard lead for round ${R}. A plan lead writes the fix plan (${RD}/lead.json) at the same time: you write
+no plan. Write one row per requirement (R-id) per variant, each with requirement (the bare id, R<k>: R7, not "R7 (mortar)"), variant (a variant name as in the round's scorecard_<variant>.json files, or * for every variant), verdict met, mostly_met or not_met, hard (true when
+the requirement is a hard acceptance criterion per the spec's requirements section, BRIEF R1; an eye criterion the user
+made soft is false) and evidence. Judge each row from the confirmed findings' evidence (their requirement_ids), from the
+unverified findings (say so in the row's evidence; re-measure a not_met verdict that rests only on an unverified
+finding), from the FIX STATUS reports, from the round's scorecard_<variant>.json files and from ${RD}/invariants.json
+(make_brief.py wrote it from those scorecards); judge eye criteria from the lenses' judge-map evidence; give numbers with
+their source.
+${filing(`${RD}/scorecard.json`)}
+
+CONFIRMED FINDINGS (with verifier notes):
+${JSON.stringify(confirmed, null, 1)}
+
+UNVERIFIED FINDINGS (reason in why_unverified):
+${JSON.stringify(unverified, null, 1)}
+${deadLenses.length ? `
+LENSES THAT RETURNED NOTHING (their areas are unreviewed this round; do not score them as reviewed): ${deadLenses.join(', ')}
+` : ''}${cut.length ? `
+LENSES CUT BY THE TIME BOX (not_reached areas are unreviewed this round; do not score them as reviewed):
+${JSON.stringify(cut, null, 1)}
+` : ''}
+FIX STATUS REPORTS:
+${JSON.stringify(fixStatus, null, 1)}`
+
+// Both leads start together; the plan lead keeps the label `synthesize` (pathclock and timing read it).
+const [plan, sc] = await parallel([
+  () => agent(planPrompt, { label: 'synthesize', phase: 'Synthesize', schema: PLAN, effort: EFFORT }),
+  () => agent(scPrompt, { label: 'scorecard', phase: 'Synthesize', schema: SCORECARD, effort: EFFORT }),
+])
 if (!plan) { dead.push('synthesize'); log(`lead returned nothing; the agents' files are in ${RD}`) }
+if (!sc) { dead.push('scorecard'); log(`scorecard lead returned nothing; the plan is returned without requirements_scorecard (${RD}/scorecard.json may still land)`) }
+// review_result.json, make_brief's read_previous and morning_report read plan.requirements_scorecard.
+if (plan) plan.requirements_scorecard = sc && Array.isArray(sc.requirements_scorecard) ? sc.requirements_scorecard : []
+
 // RV-05 signal: premises the lead had to correct; a rise round over round means a lens's REFERENCE sections were
 // cut too far.
 stats.premises_corrected = plan && Array.isArray(plan.premises_corrected) ? plan.premises_corrected.length : 0
@@ -447,6 +499,7 @@ lenses.forEach((l, i) => {
 })
 if (redo.length) row('reverify', reverify)
 row('synthesize', plan)
+row('scorecard', sc)
 const starts = timing.map(t => parse(t.started)).filter(t => t !== null)
 const ends = timing.map(t => parse(t.ended)).filter(t => t !== null)
 const panel_min = starts.length && ends.length ? Math.round((Math.max(...ends) - Math.min(...starts)) / 6000) / 10 : null

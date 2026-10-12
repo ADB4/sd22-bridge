@@ -106,8 +106,9 @@ only on material that already passes its numeric checks.
    `exported_at` from step 1's export. Later rounds leave it frozen (§2). Write the lens table
    `review/round<N>/lenses.json` (§3). On a green suite (step 3) and, from round 2, a fixcheck exit 0 (step 4), run
    `python3 <skill>/scripts/make_brief.py --review-dir <tools>/review --round <N> --python "$PY"`, with
-   `--graph-digest GID=DIGEST` per graph (step 1). In about a second it writes the delta brief `round<N>/BRIEF.md` and
-   the panel args `round<N>/panel_args.json`. Exit 1 names an ownership or ledger error, 2 a usage, REFERENCE or
+   `--graph-digest GID=DIGEST` per graph (step 1). In about a second it writes the delta brief `round<N>/BRIEF.md`,
+   the panel args `round<N>/panel_args.json` and the invariants table `round<N>/invariants.json` (each INV of spec §6
+   with its checks' pass or fail per variant, from the scorecards; an INV with no check anywhere is a `*` gap row). Exit 1 names an ownership or ledger error, 2 a usage, REFERENCE or
    lens-table error (the message says which). Read its warnings: a scorecard missing, failing or older than its export
    (re-run the suite before any lens starts); no export after the apply that does not stand as the preflight (step
    1); a suite that does not stand ("rerun the suite only"); an R5 that differs from `sd_craft.md` §5; `build/` files
@@ -227,7 +228,8 @@ the user asks for it the next day.
  "open": [{"id": "H1", "text": "..."}]}
 ```
 Keys: letters, digits, `_` or `-`, unique ignoring case, not `lead`, `reverify`, `ledger`, `review_result`, `lenses`,
-`panel_args`, `suite`, `suite_partial`, `wrong_builds` or `scorecard_*` (file names in `round<N>/`). `sections` names
+`panel_args`, `scorecard`, `invariants`, `suite`, `suite_partial`, `wrong_builds` or `scorecard_*` (file names in
+`round<N>/`). `sections` names
 the REFERENCE sections the lens needs besides R1, R5 and R9 (defaults per lens family in the template); `box`
 overrides the round's lens time box for that lens (§6); `open` holds builder hypotheses and user questions.
 
@@ -325,9 +327,10 @@ calibration from the verifier, not a high rejection rate.
 - `review/round<N>/review_result.json`
 - `review/round<N>/findings.md`, in this format:
   - OVERALL: 2-6 paragraphs
-  - `SC: met|mostly_met|not_met | R-id requirement (variant) | evidence`
-  - `INV: pass|fail | INV-id | values`
+  - `SC: met|mostly_met|not_met | R-id requirement (variant) | evidence` (from `scorecard.json`)
+  - `INV: pass|fail | INV-id | values` (from `invariants.json`)
   - `=== P<n> title [variants]`, each with WHY / CHANGE / ACCEPT
+  - COVERAGE: flagged fixes, uncovered hard ids (exit 3), and which entry covers each hard id (§6 item 4)
   - FIXSTATUS, UNVERIFIED, REJECTED, DEFERRED, RESIDUALS, PREMISES (the lead's `premises_corrected`, in full), TIMING (the
     per-agent table, `panel_min`, and `round<N>/ledger.json`'s `apply`, §6)
 - **Auto gate** (unattended, the default): check each call's `settled` against SD-1 and SD-2, measure a named
@@ -372,13 +375,17 @@ verified after the last change, and which fixes landed, and that round 2's apply
   the script's lens and verifier prompts (a one-lens Workflow would overwrite `lead.json`); its verified findings join
   the plan at the gate by the lead's rules. If it dies again, its area is unreviewed: the plan and the report say so.
 - **Files and stamps:** each agent runs `date -u` first and last and writes its result, stamps first, to
-  `review/round<N>/`: `<lens>.json`, `<lens>.verdicts.json`, `reverify.verdicts.json`, `lead.json`. The result's
+  `review/round<N>/`: `<lens>.json`, `<lens>.verdicts.json`, `reverify.verdicts.json`, `lead.json` (the plan lead) and
+  `scorecard.json` (the scorecard lead: the requirements scorecard, one row per R-id per variant with `hard`). The two
+  leads start together at the barrier, at full depth and with no box; the runner merges the scorecard rows into the
+  returned plan's `requirements_scorecard`. A dead scorecard lead leaves the plan with none (`dead` names
+  `scorecard`): rerun it once with the Agent tool from the script's prompt. The result's
   `timing` table and `panel_min` come from those stamps and stay in `review_result.json`; findings.md TIMING lists
   them with `round<N>/ledger.json`'s `apply` (§1), the apply this round reviewed. This round's split stamps show in
   the next round's TIMING.
 - **Agent tool** (fallback, only when Workflow is unavailable, and never below xhigh, `SKILL.md` Effort): the same prompts, schemas and files from the script. One message with one Agent per lens; one
   verifier per non-empty lens, given all its findings, highs first; one re-verify agent for every high or medium
-  without a verdict or in a `not_checked` list; then the lead.
+  without a verdict or in a `not_checked` list; then the plan lead and the scorecard lead in one message.
 - **While the panel runs,** work from its files, in this order. Run no suite or numpy jobs beside it (its agents
   measure too), never edit the maps it reads, and never call Designer from a subagent.
   1. As each `<lens>.json` lands: note which findings touch the same node or stage script (one draft per cluster).
@@ -389,14 +396,20 @@ verified after the last change, and which fixes landed, and that round 2's apply
      896k).
   3. Prepare the next ledger's rows in `review/round<N+1>/ledger.json` from the drafts, status `not_done` until
      applied (ids filled in when the plan lands, `apply.split` as the stamps come), and the hand-off notes.
-  4. When `lead.json` lands: run `$PY <skill>/scripts/findings.py --round-dir <tools>/review/round<N>`. It writes
-     findings.md (§5) from `lead.json` and the lens, verdict and re-verify files in seconds, so it needs no
-     `review_result.json` and findings.md never gates the apply for more than those seconds. It refuses to overwrite a
-     findings.md newer than `lead.json` unless `--force`. The drafts launch at `lead.json`, not after findings.md:
+  4. When `lead.json` lands, and again when `scorecard.json` lands: run `$PY <skill>/scripts/findings.py --round-dir
+     <tools>/review/round<N>`. It writes findings.md (§5) from `lead.json`, `scorecard.json`, `invariants.json` and the
+     lens, verdict and re-verify files in seconds, so it needs no `review_result.json` and findings.md never gates the
+     apply for more than those seconds. It refuses to overwrite a findings.md newer than both leads' files unless
+     `--force`. Its COVERAGE section cross-checks the two leads: it flags a planned fix whose requirement and invariant
+     ids are all met (listed, no exit change), and exit 3 lists each hard R-id not met or mostly met, and each hard INV
+     failing, that no fix, residual, deferred or keep-as-is entry names. For each one, add a residual row to
+     `lead.json` (`why_open`, `next_lever`), or a fix when it is a high the round must fix (the auto gate's rules), and
+     rerun with `--force` until exit 0; the report lists the residuals. The drafts launch at `lead.json`, not after findings.md:
      `assets/workflows/drafts.js` in the background (`SKILL.md` stage 7) writes one checked draft per plan item from
      the lead's `change`, the verifier's `better_fix` and `acceptance_fixed` and your drafts from items 1-2; drafts of
      rejected or deferred findings are dropped. Then the auto gate (§5) from `lead.json`,
-     and the next ledger's rows. Apply only once findings.md is newer than `lead.json`. The apply starts with the check
+     and the next ledger's rows. Apply only once findings.md is newer than `lead.json` and `scorecard.json` (or the
+     scorecard lead is dead and its rerun too) and findings.py exits 0. The apply starts with the check
      items and builds each item once its own checked draft lands.
 
   Drafts stay drafts until the plan gate: none runs in Designer and none is copied into `build/` before it.

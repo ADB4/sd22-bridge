@@ -193,7 +193,8 @@ Follow `references/review.md`:
 3. Run the round's lenses (`references/review.md` §3: round 1 the families derived from the spec plus a check audit,
    round 2 the same plus fixcheck and regressions); a verifier re-measures each lens's findings, highs first, and one
    re-verify agent takes any high or medium a verifier left without a verdict.
-4. A lead writes the plan and the scorecard.
+4. Two leads at once: the plan lead writes the plan, the scorecard lead the requirements scorecard; `make_brief.py`
+   wrote the invariants table, and `findings.py` cross-checks the scorecard and invariants against the plan.
 
 Run the panel as a Workflow (`assets/workflows/review_round.js`); use the Agent tool only when Workflow is unavailable.
 Run `realpath` on the skill folder in Bash first and pass the literal result in `scriptPath`: the symlink path is
