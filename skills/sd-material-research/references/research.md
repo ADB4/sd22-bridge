@@ -131,5 +131,9 @@ Create one from `references/materials/_TEMPLATE.md`. It becomes a bundled sheet 
 ## Done when
 
 - Every process in the planned spec has a card: acts on, removes/adds, reveals, never, where, scale, progression.
+- Every removal or deposit process card gives its shape in numbers (solidity, lobes, end shape, aspect, floor and wall
+  profile), each from a sourced real-world exemplar (a measured photo or figure with a scale) or an (est.) band derived
+  from the defect it must avoid (a D-shaped bite fails lobes and solidity, a cut-out look has blunt ends). Never from a
+  build's own measurements: a target taken from the build it judges always passes.
 - Every dimension and PBR value the spec will use has a source or an explicit estimate.
 - The decisions that belong to the user are listed for them.

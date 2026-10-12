@@ -64,7 +64,7 @@ new material, research them.
 | Reveals | What lies beneath in the *same* component? |
 | Never | What doesn't it do? These become invariants. |
 | Where | Its drivers: edges and corners, traffic paths, low points and water, sun and shade, splash zone, gravity, joints, grain. |
-| Shape and scale | Sizes and depths in mm; outline character; profile (step, slope, bowl); orientation; coverage and spacing statistics. |
+| Shape and scale | Sizes and depths in mm; outline character; profile (step, slope, bowl); orientation; coverage and spacing statistics. For a removal or deposit shape (spalls, scaled floors, exposed stones, pop-outs, chips, potholes, a wear envelope) also its numbers, each with a source or (est.): solidity, lobes, end shape (blunt10, taper30), aspect, and floor slope p50, wall angle, depth over diameter (d/D) and step heights. |
 | Progression | Stage 1 → 2 → 3, and which variant reaches which stage. |
 | Interactions | What causes it, and what it causes. |
 | Map signature | What it does to height, normal, albedo, roughness and AO. |

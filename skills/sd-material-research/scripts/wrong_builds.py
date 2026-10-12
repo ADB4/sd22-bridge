@@ -63,7 +63,7 @@ feature, read on a build without it) means "feature absent": no value, infinite 
 bound of +/-inf is an open end (None); a NaN bound or lo > hi is a bad measure; samples=[] with n None is n 0. Distance to target d(v) = 0 inside [lo, hi], else
 the distance to the nearest bound (NaN or no value = infinite). Tests: clean value v0, d0; null.ok = (expect pass:
 d(control) == 0; expect miss: d(control) > 0) and reachable (d0 == 0, or the reach build has d == 0); tell.ok =
-d(tell build) > d0; power: n >= 20 ok, else with samples and a stat and a two-sided target the bootstrap (2000
+d(tell build) > d0; power: n >= 20 ok, else with 8 or more samples (fewer: no evidence), a stat and a two-sided target the bootstrap (2000
 resamples, numpy default_rng(0)) 90 % interval of the stat must be narrower than hi - lo (n None with samples counts
 len(samples), so an empty list is 0 and fails), else n None and no samples is "n/a", anything else fails. Every test restores the maps first.
 --steer runs only the STEER cases (--only filters by config or check/name) and writes --steer-out (default
@@ -337,6 +337,7 @@ def merge(parts, out):
 # ----------------------------------------------------------------------------- STEER: may a measure steer a decision?
 
 STEER_MIN_N = 20
+STEER_MIN_BOOT = 8   # (est.) below this a bootstrap interval has almost no width whatever the spread: no evidence
 STEER_BOOT = 2000
 
 
@@ -590,6 +591,9 @@ def power_test(m):
     elif not two_sided:
         out.update(ok=False, reason="n = %s < %d units; a one-sided target has no band to bootstrap against"
                    % (n, STEER_MIN_N))
+    elif len(samples) < STEER_MIN_BOOT:
+        out.update(ok=False, reason="n = %s < %d units and %d samples < %d: too few to bootstrap" % (
+            n, STEER_MIN_N, len(samples), STEER_MIN_BOOT))
     else:
         try:
             lo, hi = bootstrap_interval(samples, stat)

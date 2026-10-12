@@ -46,7 +46,11 @@ Write one subsection per visually significant process, using this card:
 - **Where:** the spatial drivers, such as edges and corners, wheel or foot-traffic paths, low points and standing
   water, sun or shade, splash zone, gravity direction, joints, grain direction, fastener lines.
 - **Shape and scale:** sizes, depths, outline character (conchoidal, faceted, rounded, ragged), profile (step,
-  slope, bowl), orientation, and statistics (coverage %, spacing, count per m²).
+  slope, bowl), orientation, and statistics (coverage %, spacing, count per m²). For a removal or deposit shape, the
+  outline and profile in numbers, each with a source or (est.): solidity (area over its convex hull), lobes (bumps
+  along the outline), blunt10 and taper30 (blunt or tapering ends), aspect; floor slope p50, wall angle, d/D, step
+  heights. They become report-only soft `components` checks from round 1 (`references/checks.md`, "Soft checks that
+  steer").
 - **Progression:** stage 1 → 2 → 3, and which preset level maps to which stage.
 - **Interactions:** what it causes or is caused by (e.g. cracking → raveling → pothole).
 - **Signature per map:** height, normal, albedo, roughness, AO.

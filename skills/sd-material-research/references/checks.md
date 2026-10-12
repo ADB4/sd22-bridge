@@ -154,7 +154,7 @@ interior is reproduced by 3.6 mm at 0.88 mm/px; 3.5 mm keeps the pixels exactly 
 | type | value | key params | use for |
 |---|---|---|---|
 | `run_length` | stat of the widths of a region along scanlines (mm) | `region`, `axis` x/y/both, `min_mm` / `max_mm` filter, `step_px` | joint/gap width, plank width, brick height and length. Runs wrap across the tile border and count once; a scanline entirely inside the region gives no run (a band parallel to the scan axis is NaN); widths are whole pixels, so a median can flip by one pixel |
-| `components` | from connected parts of a region (tile-wrapped) | `region`, `within`, `metric` count / count_per_m2 / eq_diameter_mm / largest_mm / small_island_count / small_island_frac / aspect (PCA elongation, 1 = round) / fill (area ÷ bounding box), `min_mm`, `below_mm`, `stat`, `connectivity` 4/8, `border_px` (opt-in: only components that reach within N px of the tile border) | pits, chips, exposed aggregate, potholes, knots, floating islands; aspect for checks vs knots, fill for ragged vs blobby outlines; `small_island_count` + `border_px` for the specks a warped coordinate draws where it interpolates across the wrap |
+| `components` | from connected parts of a region (tile-wrapped) | `region`, `within`, `metric` count / count_per_m2 / eq_diameter_mm / largest_mm / small_island_count / small_island_frac / aspect (PCA elongation, 1 = round) / fill (area ÷ bounding box) / solidity (area ÷ the convex hull of its pixel squares: a disc 0.97; rotation-dependent under about 20 px wide) / lobes, blunt10, taper30 (the outline's width profile along its PCA axis, or its reach from a `reach_from` region: bumps, blunt ends, tapering ends; keys `lobe_sigma_mm`, `lobe_prominence`, `end_frac`, `taper_reach`, `min_size_mm`, `reach_max_mm`), `min_mm`, `below_mm`, `stat`, `connectivity` 4/8, `border_px` (opt-in: only components that reach within N px of the tile border) | pits, chips, exposed aggregate, potholes, knots, floating islands; aspect for checks vs knots, fill for ragged vs blobby outlines; solidity, lobes and the end metrics for removal shapes (spalls, scaled floors, pop-outs), with `n` and per-component `samples` for the power test; `small_island_count` + `border_px` for the specks a warped coordinate draws where it interpolates across the wrap |
 | `coverage` | \|region ∩ within\| ÷ \|within\|: the share of `within` that `region` covers (whole tile without `within`) | `region`, `within` | damage %, raveled %, moss %. To ask "what share of the deposits sit near cracks", the deposits are `within` and the crack band is `region`; swapping them asks the opposite question |
 | `concentration` | coverage inside a driver region ÷ coverage outside it (`inf` when the region never occurs outside; NaN when `within` has nothing outside the driver) | `region`, `driver`, `within` | "chips sit on arrises", "raveling is in the wheel paths" |
 | `height_diff` | stat(h in a) − stat(h in b), in mm | `a`, `b`, `stat` (or `stat_a` / `stat_b`), optional `local_mm` (compare block by block), `over_blocks` | joint recess, sub-layer depth, ridge height, aggregate protrusion |
@@ -290,12 +290,14 @@ records them in `checks/steer_tests.json` (with `steer.md` beside it):
   the target, than the clean build. Both inside the target means the check cannot see the tell, and fails. M8's
   `x_half` (target >= 120 mm) read 84-91 mm on the clean build and 144-148 mm on a surrogate with shared lanes, the
   very defect it was meant to prevent; its target was unreachable from the clean build as well.
-- **power**: n >= 20 measured units (components, elements, runs, blocks, profiles), or a bootstrap 90 % interval of
-  the stat narrower than the target band (a components shape metric or a custom measure with samples); a pixel
-  statistic is "n/a" and passes. M8's `spall_reach` p90 over 3 spalls had none.
+- **power**: n >= 20 measured units (components, elements, runs, blocks, profiles), or, with 8 or more per-unit
+  samples (a components shape metric or a custom measure), a bootstrap 90 % interval of the stat narrower than a
+  two-sided target band; a pixel statistic is "n/a" and passes. A one-sided target below 20 units fails power. M8's `spall_reach` p90 over 3 spalls had none.
 
 A reading that is not a measurement (an error, a vacuous check, a custom measure that raises) is never evidence: that
-build fails its test. A NaN value counts as infinitely far from the target.
+build fails its test. A NaN value counts as infinitely far from the target. A shape target from a research card (an
+exemplar or an est. band: `references/method.md`, the card's Shape and scale) starts as a report-only soft check in
+the round 1 configs and steers only once its steer tests pass on the material's own builds.
 
 ```python
 STEER = [
