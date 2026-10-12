@@ -287,7 +287,9 @@ asphalt round 2, four issue clusters were each found by 2-4 lenses and verified 
    itself: a finding that is entirely an artifact is `real=false`.
 4. **Review the fix.** Would it create a singular feature or lattice, add a bevel, break an invariant or registration,
    rescale other layers, or conflict with another requirement (e.g. "subtle")? Give a better fix.
-5. **Check the acceptance target** on current data and on a baseline. Replace it if it's unreachable.
+5. **Check the acceptance target** on current data and on a baseline. Replace it if it's unreachable. A target that
+   a build showing the fix's tell meets as well as the clean build, or better, is invalid: the check cannot see the
+   defect (`references/checks.md`, "Soft checks that steer"; its steer tests in `checks/steer_tests.json`).
 
 Verifiers take every finding of their lens: highs, then mediums, then lows. They read all of REFERENCE.md, not only
 their lens's sections: in brick round 3, three premise errors rested on sections the lens had not read. Never guess a

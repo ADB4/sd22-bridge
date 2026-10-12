@@ -228,9 +228,8 @@ dry runs found the same failure modes in every material, so check each hard chec
 - **Every hard check names the wrong build it catches.** In the spec, write one line per hard check: the mistake it
   fails, and why the spec's own default passes it (soft edges, anti-aliasing, seeds, the estimated ranges of other
   parameters). A check that fails the spec's own default, or that no plausible mistake can fail, is not hard.
-- **A check steers only after its null test.** A check may pick a seed, a calibration or a design option only after
-  it passes on an unworn or no-op build. In M8 a seed was picked on `wear_lines`, which scored the broom's own
-  sidebands, and the picked seed printed lanes.
+- **A check steers only after its steer tests** (null, tell and power: "Soft checks that steer" below). In M8 a seed
+  was picked on `wear_lines`, which scored the broom's own sidebands, and the picked seed printed lanes.
 - **A cap gets a check on its other side.** A min or max cap added in an apply (a film cap, a depth clamp) gets a
   check that the capped feature still shows: M8's film cap took the groove fill from 17.0 to 0.00 mm with every hard
   check green.
@@ -276,6 +275,45 @@ $PY <skill>/scripts/wrong_builds.py --cases <tools>/checks/wrong_build_cases.py 
 - `--list` and `--merge` serve the suite: one `--only` job per config and group, merged into what one serial run
   writes (the script's docstring).
 - A case takes about 0.5 s at 2048 (a `normal_valid` case about 1 s), plus about 0.4 s per config to load its maps.
+
+## Soft checks that steer
+A check, or a custom measure (a ladder stat, a seed-screen stat), may pick a seed, set a calibration, decide a design
+option or gate an acceptance (a fix's acceptance row, a seed screen, a design call's measured stat) only after it
+passes three tests on the current maps. `wrong_builds.py --steer` runs them from the cases module's `STEER` list and
+records them in `checks/steer_tests.json` (with `steer.md` beside it):
+- **null**: on a control build that lacks the feature (the nowear compare render, an unworn preset, a no-op or pre-fix
+  build) the check reads "feature absent" (a defect check passes, a check that asks for the feature misses), and the
+  target is reachable: the clean build meets it, or a `reach_edit` surrogate does. In M8 the first `wear_lines` read
+  5.6 at k 669 on the unworn broom height against a cap of 4.9: it found wear lines in a build with no wear, and it
+  rejected seed 316. Its whitened replacement (k < 495) passes null.
+- **tell**: a surrogate of the clean build with the fix's tell painted in (`tell_edit`) scores worse, further from
+  the target, than the clean build. Both inside the target means the check cannot see the tell, and fails. M8's
+  `x_half` (target >= 120 mm) read 84-91 mm on the clean build and 144-148 mm on a surrogate with shared lanes, the
+  very defect it was meant to prevent; its target was unreachable from the clean build as well.
+- **power**: n >= 20 measured units (components, elements, runs, blocks, profiles), or a bootstrap 90 % interval of
+  the stat narrower than the target band (a components shape metric or a custom measure with samples); a pixel
+  statistic is "n/a" and passes. M8's `spall_reach` p90 over 3 spalls had none.
+
+A reading that is not a measurement (an error, a vacuous check, a custom measure that raises) is never evidence: that
+build fails its test. A NaN value counts as infinitely far from the target.
+
+```python
+STEER = [
+    {"config": "detail_weathered_path", "check": "wear_lines",
+     "tell": "lines along the broom with no wear under them",
+     "tell_edit": lambda ctx: [("", "height", paint_lines(ctx.main.height, cycles=40))],
+     "control": {"render": "nowear"}, "expect_control": "pass"},
+    {"config": "slab_distressed", "name": "spall_lobes",
+     "measure": lambda ctx: lobes_stat(ctx),   # {"value", "target": [2, None], "n", "samples", "stat": "median"}
+     "tell": "D-shaped bites", "tell_edit": lambda ctx: hull_each_spall(ctx),
+     "control": {"edit": lambda ctx: d_shaped_spalls(ctx)}, "expect_control": "miss"},
+]
+```
+Edits have the wrong-build shape: a list of (render, map, array), "" for the main render. Write a case when a check
+first steers anything (stage 4 for the configs' steering checks, the apply for a fix's acceptance rows and seed
+screens) and rerun `--steer` after its config or the build changes. A check that fails a test still reports, in the
+scorecard and the ledger, but steers nothing: its acceptance rows are report-only, a seed or calibration it would have
+picked is not picked on it, and a design call does not count it as measured (SD-2).
 
 ## Tips
 

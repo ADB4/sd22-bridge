@@ -311,7 +311,8 @@ Standing decisions (spec.md §1 lists them too):
 A call with a yes among its options is a look trade, and SD-2 overrides SD-1 there: unknown counts as yes, and the run
 takes the first option, in the lead's order, that is no. If none is no, it takes the smallest measured increase and
 flags it in the report. A call with no yes follows SD-1. Seeds and calibrations chosen against a look-related target are
-look trades too: only a check that passed its null test on an unworn or no-op build may steer them.
+look trades too: only a check that passed its steer tests (null, tell, power: `references/checks.md`, "Soft checks
+that steer") may steer them.
 
 **What the run never does on its own:** change a value the user gave verbatim (requirements, interview answers)
 outside a lead design call, or retarget, relax or demote a check to turn it green. Such a change is reverted and logged
@@ -525,7 +526,8 @@ a 62-min diagnosis wrote nothing until the user asked. While you own Designer, d
   - `sdkit.py`: Designer-side helpers (run_python)
   - `sdcall.py`: long jobs without the 60 s limit
   - `matcheck.py`: checks → scorecard
-  - `wrong_builds.py`: each hard check against its named wrong build
+  - `wrong_builds.py`: each hard check against its named wrong build; `--steer`: the steer tests of a check that
+    steers (null, tell, power)
   - `previews.py`: lit views and sheets
   - `suite.py`: the three above in parallel, gated (stdlib)
   - `fixcheck.py`: re-measures the fix ledger, flags regressed rows and broken guards (stdlib)
