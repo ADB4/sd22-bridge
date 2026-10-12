@@ -31,7 +31,7 @@ into a method that works for any material.
 
 Target and Expect are minutes of wall time on the run's path. Expect comes from the concrete (M8) stamps; `est` marks a
 value with no M8 stamp behind it. Steps between stages, target / expect: readiness and probes 5 / 8 est (beside stage
-3), each auto gate 2 / 2 est, round boundary 3 / 4, each final gate 6 / 6, report 5 / 5 est, each leg hand-off 6 / 6
+3), each auto gate 2 / 2 est, round boundary 3 / 4, each final gate 6 / 6, report 5 / 5 est, each leg hand-off 6 / 10
 est, docs at the end 55 / 55 (in the background, off the path). `scripts/pathclock.py` holds the same numbers.
 
 Effort is xhigh for every stage (ML-01 verdict). Read your effort from $CLAUDE_EFFORT (get_session self as fallback),
@@ -133,19 +133,19 @@ that every approval card and power problem shows while the user can still settle
   detached caffeinate to the deadline plus 3 h, its pid in RUN.json.
 - `$PY <skill>/scripts/designer_relaunch.py check --tools <tools>`: `relaunch_safe` false means the last Designer launch
   waited for a click on a Steam dialog, so a relaunch at night would stop there; its `advice` goes into the go question.
-- First material only: create the routines leg-a, leg-b and run-watchdog (`assets/routines.md`); a later material
-  only rewrites the pointer file. Then run the probe chain (`assets/routines.md`, Probe); it sets RUN.json
-  `continuation`.
+- First material only: create the routines leg-a, leg-b and run-watchdog, disabled (`assets/routines.md`), and give
+  the user the allowlist command there to run (a touch row, kind approval); a later material only rewrites the pointer
+  file. Then run the probe (`assets/routines.md`, Probe); it sets RUN.json `continuation`.
 - From here on RUN.json changes only through `runstate.py set` and `incident`, so the go answer keeps what readiness
   wrote. This session may call request_keep_awake (it holds only this session); legs never do.
 
 **Gate:** the go question ("Unattended run"): a short summary (scale, layer model, the 3-6 key invariants in plain
 words, the variant ladder, what's estimated), the standing decisions SD-1 to SD-6 and the deadline, then one
-AskUserQuestion. Ask it once `review/preflight.json` and both probe files are written, or a probe leg is held by an
-approval card. Its text also gives the readiness result: the continuation route, any part-2 problem, the relaunch advice, and any card that
-would appear at night, which the user settles there (approve it for the routine, or choose auto mode for the project;
-the skill never changes that setting). It is the last question before the report; the reply to the go answer ends
-with the nothing-needed line ("Unattended run", Messages).
+AskUserQuestion. Ask it once `review/preflight.json`, both probe files and `probe_watchdog` are written. Its text also
+gives the readiness result: the continuation route, any part-2 problem, the relaunch advice, and any call a probe found
+refused or held, with the allowlist rule that settles it (`assets/routines.md`, Permissions; the user adds it, the skill
+never changes permissions). It is the last question before the report; the reply to the go answer ends with the
+nothing-needed line ("Unattended run", Messages).
 
 ### 4. Build
 Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2; grep `sdkit.py`
@@ -248,7 +248,9 @@ wrote it first): `mode` "unattended", `go_utc`, `deadline_local` (local ISO), `s
 `next_leg`, `estimate`; `continuation`, `caffeinate_pid` and `incidents` stay as readiness left them. `owner` is the
 session id ($CLAUDE_CODE_SESSION_ID) that may call Designer, `next_leg` the routine that takes over next, and
 `continuation` the route a later leg comes up by (`none` until the probe sets it); the owner's heartbeat is
-`review/heartbeat` (Legs).
+`review/heartbeat` (Legs). With `continuation` routine, also enable leg-a, leg-b and run-watchdog
+(`update_scheduled_task` enabled true); the session that takes the user's first reply after the stop point disables
+them.
 
 Standing decisions (spec.md §1 lists them too):
 - **SD-1** Design calls take the recommended option.
@@ -287,36 +289,40 @@ its named wrong build; log the correction.
 **Deadline.** Never start a step that cannot end green by the deadline minus 1 h, estimated from the stage table's
 Expect and this run's stamps (`pathclock.py`). Stop green and report instead.
 
-**Legs.** The run continues across sessions (legs) started by the routines in `assets/routines.md`. The leg RUN.json
+**Legs.** The run continues across sessions (legs) of the cron routines in `assets/routines.md`. The leg RUN.json
 names as `owner` is the only Designer caller. While you own the run:
 - Stamp with `$PY <skill>/scripts/runstate.py stamp --tools <tools> --stage <S> --event <e>` (it adds your session and
-  effort to your first stamp and refreshes `review/heartbeat`), keep `runstate.py heartbeat --loop 900` running in a
-  background shell, and change RUN.json only through `runstate.py set` and `incident`. At every stage end, rewrite the
-  run block at the top of `CONTEXT_PROMPT.md` (`assets/context_prompt_template.md`).
+  effort to your first stamp and refreshes `review/heartbeat`), keep `runstate.py heartbeat --loop 300` running in a
+  background shell, and change RUN.json only through `runstate.py set` and `incident`. The loop writes only while your
+  session writes (its transcript, subagents and Workflow agents count): before you end a turn to wait on a background
+  shell (a suite, an sdcall job), run `runstate.py lease --min <its Expect + 15> --why <job>`. At every stage end,
+  rewrite the run block at the top of `CONTEXT_PROMPT.md` (`assets/context_prompt_template.md`).
 - At every stamp run `context_size.py`. At 400k hand off at the next clean point: a green targeted set, a final gate,
   `lead.json` with its runner result saved, or a stage end. At 500k hand off at the next point where every job you
   launched has written complete files. A Workflow you launched may keep running, its files are the interface; stop
   background agents, shells and Monitors (TaskStop) or let them finish.
-- Hand-off: stamp `handoff`, write the run block, `runstate.py set owner=pending`, note T (`date -u +%FT%TZ`), check
-  list_task_runs and call `run_scheduled_task` on RUN.json `next_leg` (it has no run in progress). `runstate.py
-  wait-up --tools <tools> --since T` (3 min; on a timeout, one retry and an incident) prints the new leg's `up` row:
-  set `owner` to its session and `next_leg` to the other leg routine. Then make no Designer call and write no file.
-- A new leg stamps `up`, waits until `runstate.py owner-check` passes (3 min), runs `preflight_night.py caffeinate
-  check --tools <tools>` (it restarts a dead caffeinate and logs an incident), and goes on from the run block's next
-  step. Legs never call request_keep_awake. Every edit the run block prescribes is rebuilt behind the targeted suite plus wrong builds and
-  its guard rows before anything else: a hand-off once carried a defect that zeroed the groove fill with every hard
-  check green.
+- Hand-off: stamp `handoff`, write the run block, `runstate.py set owner=pending`, then make no Designer call, write no
+  file and end your turn. RUN.json `next_leg` names the leg that takes over: its next cron firing (within about 10
+  min) claims the run (`assets/routines.md`). A routine run may not call `run_scheduled_task`; only sitting 1, a
+  regular session, may (`runstate.py wait-up --since T` shows the claim there).
+- A new leg comes up through `runstate.py claim` (it makes the leg the owner, sets `next_leg` to the other leg and
+  stamps `up`), runs `preflight_night.py caffeinate check --tools <tools>` (it restarts a dead caffeinate and logs an
+  incident), and goes on from the run block's next step. A leg turn that starts on a background notification runs
+  `runstate.py owner-check` first. Legs never call request_keep_awake. Every edit the run block prescribes is rebuilt
+  behind the targeted suite plus wrong builds and its guard rows before anything else: a hand-off once carried a defect
+  that zeroed the groove fill with every hard check green.
 - A session woken while it is not the owner (`owner-check` exit 3) only logs a user message to `review/steer.jsonl`
   and ends its turn.
 - A leg that dies: the run-watchdog routine (`assets/routines.md`) runs every 30 min. When the heartbeat is over 45 min
-  old and no leg run shows `running`, it starts `next_leg` and hands it the run as above; a leg that still shows
-  `running` gets only the "blocked" notification. It never calls Designer and acts at most twice a run, so keep the
-  heartbeat loop running whenever you own the run.
+  old and no leg run shows `running` (a stopped turn, a failed one and one idle on a background job all show
+  `succeeded`), it sets `owner` to pending, and `next_leg` claims the run as above; a leg that still shows `running`
+  gets only the "blocked" notification. It never calls Designer and acts at most twice a run, so keep the heartbeat
+  loop running, and a lease set while you wait on a background shell, whenever you own the run.
 - RUN.json `continuation` is the route the sitting-1 probe chose. `routine` is the above. `compaction` (route B): one
   session with `autoCompactWindow` about 440000 in the repo's `.claude/settings.local.json`, the run block current at
-  every stage end and re-read after a compaction. `fireAt` (route C): the next leg from `create_scheduled_task` with
-  fireAt now + 2 min, only when the probe showed no approval card for it. If routes A and B both fail the probe, say at
-  the go question that the run will likely stop after round 1's apply, with a report. Hand-offs assume this machine.
+  every stage end and re-read after a compaction; the watchdog only notifies then. A routine run may not call
+  `run_scheduled_task`, so no route has a leg start another. If both fail the probe, say at the go question that the run
+  will likely stop after round 1's apply, with a report. Hand-offs assume this machine.
 
 **Mid-run look.** When stage 5's suite is green, send the tiled and compare sheets (SendUserFile, status proactive)
 with one line: "Look if you like; reply to steer, otherwise I continue." Never wait for a reply. Any session that gets
@@ -334,8 +340,8 @@ Each gets a decisions.json row (`user_steer`).
 - After the go answer: "Nothing needed from you until the report, est ready <HH:MM>-<HH:MM> local. Keep the app open,
   the Mac on power with the lid open, and Designer running. Notifications reach <where>."
 The time comes from `date +%H:%M`; the range sums the stage table's Target, then its Expect, over the steps left.
-`<where>` is "this Mac's desktop only", or "this Mac and your phone" when get_settings shows
-`connect_new_sessions_to_remote_control` on. While the user is present, repeat the line when the estimate moves by more
+`<where>` is "this Mac's desktop only": legs are routine runs, which are not on Remote Control, so their
+notifications never reach the phone. While the user is present, repeat the line when the estimate moves by more
 than 30 min. Unattended, when a leg runs more than 50 % past Expect, write the new range into RUN.json `estimate` so
 the report shows the miss.
 
@@ -356,7 +362,9 @@ The mid-run look's SendUserFile is neither, and nothing waits on it.
    cap: say so in the final message. When `eye_final.json` lands, run it again (it replaces the file whole).
 4. Send the report's "Look first" images (SendUserFile), then the "ready" notification. `runstate.py set mode=done`,
    stamp `report_end`, run the docs once in the background, and when they end, `preflight_night.py caffeinate stop
-   --tools <tools>`.
+   --tools <tools>`. A routine run cannot switch the routines off while nobody has it open (`update_scheduled_task`
+   is refused), and they keep firing idle every 10 min; the session that takes the user's first reply disables
+   leg-a, leg-b and run-watchdog (with the user there, the call's card shows once).
 The last leg's final message is the verdict and the answer batch as the script prints them, so a typed reply works
 ("1 none, 2 yes", "reverse D2-3"). It asks nothing else.
 

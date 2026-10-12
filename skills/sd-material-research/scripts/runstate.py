@@ -10,10 +10,12 @@ Usage:
     python runstate.py set       --tools T KEY=VALUE [KEY=VALUE ...]
     python runstate.py incident  --tools T --text TEXT [--by WHO]
     python runstate.py stamp     --tools T --stage S --event E [--note N] [--extra JSON]
-    python runstate.py heartbeat --tools T [--loop SECONDS]
+    python runstate.py heartbeat --tools T [--loop SECONDS [--live-min 20]]
+    python runstate.py lease     --tools T --min MINUTES --why TEXT
     python runstate.py heartbeat-age --tools T
     python runstate.py owner-check   --tools T
     python runstate.py watchdog  [--tools T] [--pointer P] [--now UTC]
+    python runstate.py claim     --leg leg-a|leg-b [--tools T] [--pointer P]
     python runstate.py wait-up   --tools T --since UTC [--timeout SECONDS] [--poll SECONDS]
 All subcommands take --session ID (default $CLAUDE_CODE_SESSION_ID); only its first 8 characters are used to match.
 
@@ -31,7 +33,16 @@ Subcommands:
                    touches the heartbeat.
     heartbeat      write "<utc> <session8>" to review/heartbeat. With --loop, repeat every SECONDS while RUN.json mode
                    is unattended or probe and its owner is this session; otherwise print why and exit 0. For a
-                   background shell.
+                   background shell. A background shell outlives the turn that started it (a turn that ended on an API
+                   error, or was stopped, leaves the loop running), so the loop writes only while the session is live:
+                   its newest write (the transcript $CLAUDE_PROJECTS_DIR or ~/.claude/projects, */<id>.jsonl, and every
+                   file under */<id>/: subagent and Workflow agent transcripts) is at most --live-min minutes old, or
+                   RUN.json lease_until is still ahead. Otherwise it skips the write and keeps looping, so the heartbeat
+                   goes stale and the watchdog sees the dead leg. No transcript found: it writes (activity not
+                   checked). It prints a line whenever its state changes (touching, held).
+    lease          set RUN.json lease_until (UTC, now + MINUTES) and lease_why: the owner is about to end its turn and
+                   wait on a background shell (a suite, an sdcall job) that writes nothing in the session's folder.
+                   Workflows and subagents need no lease: their transcripts count as the session's writes.
     heartbeat-age  minutes since the heartbeat file's mtime, one decimal; "none" and exit 1 when there is no file.
     owner-check    exit 0 when RUN.json owner is this session (owner may be a full id or its first 8 characters);
                    3 when it is not (prints the owner) or is "pending"; 2 when RUN.json is missing.
@@ -43,6 +54,8 @@ Subcommands:
                    heartbeat_age_min (minutes, one decimal, null with no file), over_90 (age null or over 90), next_leg,
                    watchdog_actions (incidents whose by is "watchdog"), second (watchdog_actions is 1). Every key is
                    always there; keys it can read are filled even when idle (null when unknown). action, first match:
+                     probe       mode is "probe" and RUN.json has no probe_watchdog key: the routine runs its probe
+                                 calls (assets/routines.md) and records probe_watchdog
                      idle        no readable pointer, no tools key, or no tools folder; no RUN.json or mode not
                                  "unattended"; no window (go_utc "YYYY-MM-DDTHH:MM:SSZ" or deadline_local, an ISO time
                                  where naive means this machine's local time, missing or unparseable), or now before
@@ -52,6 +65,15 @@ Subcommands:
                      notify      stale (older than 45, or no file) and continuation is not "routine": the routine sends
                                  the blocked notification and never starts a leg
                      check_runs  stale and continuation is "routine"
+    claim          a leg routine's first call at every cron firing (a routine run may not start another routine, so
+                   legs take the run instead of being started). One locked update of RUN.json; prints one JSON object
+                   {tools, leg, action, reason, next_leg}, exit 0 (2 for a bad --leg). --tools as for watchdog (else
+                   the pointer). action:
+                     probe  mode is "probe" and review/probe_<leg>.json does not exist yet
+                     take   mode "unattended", now inside go_utc..deadline_local, owner "pending" and next_leg is this
+                            leg: owner becomes this session, next_leg the other leg, claimed_utc now, and an "up" row
+                            is stamped (with session and effort; the row goes to stderr)
+                     idle   anything else (the reason says why): end the turn
     wait-up        poll stages.jsonl every --poll seconds (default 5) for up to --timeout seconds (default 180) until a
                    row has event "up", a non-empty session and utc >= --since (a utc like 2026-10-09T03:00:00Z);
                    unparseable lines are skipped and a missing file is no row yet. Prints the first such row, exit 0;
@@ -59,7 +81,7 @@ Subcommands:
 Files under T: RUN.json, RUN.json.lock and RUN.json.tmp (update), stages.jsonl and stages.jsonl.lock, review/heartbeat.
 A lock is a file created with O_CREAT|O_EXCL; one older than 60 s is stale and taken over; a writer waits 15 s for it.
 Module API for other scripts (sys.path.insert(0, scripts dir)): load(tools) -> dict, update(tools, mutate) -> dict,
-touch_heartbeat(tools, session), utc().
+touch_heartbeat(tools, session), session_activity(session, root=None) -> epoch seconds or None, utc().
 Standard library only, Python 3.9 or newer; os.path and UTF-8 throughout, so it runs on Windows.
 Exit code: 0 ok; 1 no heartbeat file, or wait-up timed out; 2 usage error, bad JSON or lock timeout; 3 not the owner.
 """
@@ -67,6 +89,7 @@ import argparse
 import calendar
 import contextlib
 import datetime
+import glob
 import json
 import os
 import sys
@@ -81,6 +104,7 @@ WAIT_S = 15
 UTC_FMT = "%Y-%m-%dT%H:%M:%SZ"
 HEARTBEAT_STALE_MIN = 45
 HEARTBEAT_LONG_MIN = 90
+LIVE_MIN = 20
 
 
 def utc():
@@ -273,20 +297,78 @@ def _stop_reason(tools, session):
     return None
 
 
+def _projects_root():
+    return os.environ.get("CLAUDE_PROJECTS_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "projects")
+
+
+def session_activity(session, root=None):
+    """Epoch seconds of the session's newest write: its transcript <root>/*/<id>.jsonl and every file under the folder
+    <root>/*/<id>/ (subagent and Workflow agent transcripts, workflow state). None when no transcript is found."""
+    if not session:
+        return None
+    root = root or _projects_root()
+    pattern = glob.escape(session) + ("" if len(session) > 8 else "*") + ".jsonl"
+    newest = None
+    for t in glob.glob(os.path.join(glob.escape(root), "*", pattern)):
+        try:
+            newest = max(newest or 0, os.path.getmtime(t))
+        except OSError:
+            continue
+        folder = t[:-len(".jsonl")]
+        for dirpath, _dirs, files in os.walk(folder):
+            for name in files:
+                try:
+                    newest = max(newest, os.path.getmtime(os.path.join(dirpath, name)))
+                except OSError:
+                    pass
+    return newest
+
+
+def _lease_left_min(d, now):
+    end = _parse_utc(d.get("lease_until"))
+    return None if end is None or end <= now else (end - now) / 60.0
+
+
 def cmd_heartbeat(a, session):
     if a.loop is not None and a.loop <= 0:
         sys.stderr.write("--loop wants a positive number of seconds\n")
         return 2
+    if a.live_min <= 0:
+        sys.stderr.write("--live-min wants a positive number of minutes\n")
+        return 2
     if a.loop is None:
         touch_heartbeat(a.tools, session)
         return 0
+    said = None
     while True:
         why = _stop_reason(a.tools, session)
         if why:
             print("heartbeat stopped: " + why, flush=True)
             return 0
-        touch_heartbeat(a.tools, session)
+        now = time.time()
+        last = session_activity(session)
+        idle = None if last is None else max(now - last, 0.0) / 60.0
+        lease = _lease_left_min(load(a.tools), now)
+        if idle is None or idle <= a.live_min or lease is not None:
+            touch_heartbeat(a.tools, session)
+            state = "touching" if idle is not None else "touching (no transcript found, activity not checked)"
+        else:
+            state = "held: the session wrote nothing for %.0f min and no lease" % idle
+        if state != said:
+            print("heartbeat %s" % state, flush=True)
+            said = state
         time.sleep(a.loop)
+
+
+def cmd_lease(a, session):
+    if a.min <= 0:
+        sys.stderr.write("--min wants a positive number of minutes\n")
+        return 2
+    until = time.strftime(UTC_FMT, time.gmtime(time.time() + a.min * 60))
+    row = {"lease_until": until, "lease_why": a.why}
+    update(a.tools, lambda d: d.update(row))
+    _show(row)
+    return 0
 
 
 def _heartbeat_age(tools, now=None):
@@ -384,6 +466,8 @@ def _watchdog(tools, pointer, now):
     incidents = run.get("incidents") if isinstance(run.get("incidents"), list) else []
     out["watchdog_actions"] = sum(1 for i in incidents if isinstance(i, dict) and i.get("by") == "watchdog")
     out["second"] = out["watchdog_actions"] == 1
+    if run.get("mode") == "probe" and "probe_watchdog" not in run:
+        return done("probe", "mode is probe and RUN.json has no probe_watchdog yet")
     if run.get("mode") != "unattended":
         return done("idle", "mode is %s, not unattended" % (run.get("mode") or "not set"))
     go, deadline = _parse_utc(run.get("go_utc")), _parse_local(run.get("deadline_local"))
@@ -412,6 +496,72 @@ def cmd_watchdog(a, session):
             sys.stderr.write("--now wants a UTC time like 2026-10-09T03:00:00Z, got %r\n" % a.now)
             return 2
     _show(_watchdog(a.tools, a.pointer or _default_pointer(), now))
+    return 0
+
+
+LEGS = ("leg-a", "leg-b")
+
+
+def _claim(tools, leg, session, now):
+    """The claim decision and, for take, the owner change; RUN.json is read and written under its lock."""
+    out = {"tools": tools, "leg": leg, "action": "idle", "reason": None, "next_leg": None}
+    if not os.path.isdir(tools):
+        out["reason"] = "tools folder %s does not exist" % tools
+        return out
+    if not session:
+        out["reason"] = "no session id ($CLAUDE_CODE_SESSION_ID unset)"
+        return out
+    if not os.path.exists(_path(tools, "RUN.json")):
+        out["reason"] = "no RUN.json"
+        return out
+
+    def mutate(d):
+        mode = d.get("mode")
+        if mode == "probe":
+            done = os.path.exists(_path(tools, "review", "probe_%s.json" % leg))
+            out["action"], out["reason"] = ("idle", "probe file already written") if done else ("probe", "mode probe")
+            return
+        if mode != "unattended":
+            out["reason"] = "mode is %s, not unattended" % (mode or "not set")
+            return
+        go, deadline = _parse_utc(d.get("go_utc")), _parse_local(d.get("deadline_local"))
+        if go is None or deadline is None or now < go or now > deadline:
+            out["reason"] = "outside the run's window (go_utc to deadline_local)"
+            return
+        if str(d.get("owner") or "") != "pending":
+            out["reason"] = "owner is %s, not pending" % (d.get("owner") or "not set")
+            return
+        if d.get("next_leg") != leg:
+            out["reason"] = "next_leg is %s, not %s" % (d.get("next_leg"), leg)
+            return
+        other = [x for x in LEGS if x != leg]
+        d["owner"] = session
+        d["next_leg"] = other[0] if other else leg
+        d["claimed_utc"] = time.strftime(UTC_FMT, time.gmtime(now))
+        out["action"], out["reason"], out["next_leg"] = "take", "owner was pending and next_leg was %s" % leg, d["next_leg"]
+
+    update(tools, mutate)
+    return out
+
+
+def cmd_claim(a, session):
+    if a.leg not in LEGS:
+        sys.stderr.write("--leg wants one of %s\n" % ", ".join(LEGS))
+        return 2
+    tools = a.tools
+    if tools is None:
+        ptr = _read_obj(a.pointer or _default_pointer())
+        tools = ptr.get("tools") if ptr else None
+        if not isinstance(tools, str) or not tools:
+            _show({"tools": None, "leg": a.leg, "action": "idle", "reason": "no readable pointer with a tools key",
+                   "next_leg": None})
+            return 0
+    out = _claim(tools, a.leg, session, time.time())
+    if out["action"] == "take":
+        a.tools, a.stage, a.event, a.note, a.extra = tools, "-", "up", "claimed by %s" % a.leg, None
+        with contextlib.redirect_stdout(sys.stderr):
+            cmd_stamp(a, session)
+    _show(out)
     return 0
 
 
@@ -475,12 +625,20 @@ def main(argv=None):
     p.add_argument("--event", required=True)
     p.add_argument("--note")
     p.add_argument("--extra")
-    add("heartbeat", cmd_heartbeat).add_argument("--loop", type=float)
+    p = add("heartbeat", cmd_heartbeat)
+    p.add_argument("--loop", type=float)
+    p.add_argument("--live-min", type=float, default=LIVE_MIN)
+    p = add("lease", cmd_lease)
+    p.add_argument("--min", type=float, required=True)
+    p.add_argument("--why", required=True)
     add("heartbeat-age", cmd_heartbeat_age)
     add("owner-check", cmd_owner_check)
     p = add("watchdog", cmd_watchdog, tools_required=False)
     p.add_argument("--pointer")
     p.add_argument("--now")
+    p = add("claim", cmd_claim, tools_required=False)
+    p.add_argument("--leg", required=True)
+    p.add_argument("--pointer")
     p = add("wait-up", cmd_wait_up)
     p.add_argument("--since", required=True)
     p.add_argument("--timeout", type=float, default=180)

@@ -73,7 +73,7 @@ TARGETS = {
     "readiness": (5, 8, True), "S4": (45, 55, False), "S5": (3, 2, False),
     "panel R1": (42, 47, False), "panel R2": (42, 50, True), "gate": (2, 2, True),
     "apply R1": (85, 115, True), "apply R2": (70, 130, True), "boundary": (3, 4, False),
-    "final gate": (6, 6, False), "report": (5, 5, True), "hand-off": (6, 6, True), "docs": (55, 55, False),
+    "final gate": (6, 6, False), "report": (5, 5, True), "hand-off": (6, 10, True), "docs": (55, 55, False),
 }
 STAGES = ("S0", "S1", "S2", "S3", "S4", "S5")
 PAUSE_EVENTS = ("handoff", "pause", "overnight_end")
