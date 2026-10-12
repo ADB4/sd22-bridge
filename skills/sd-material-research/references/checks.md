@@ -472,6 +472,11 @@ the normal mode after it):
 $PY <skill>/scripts/fixcheck.py --ledger <ledger> --fill before --item <id> --scorecards <the last scorecards dir>
 $PY <skill>/scripts/fixcheck.py --ledger <ledger> --fill after [--item <id> ...]
 ```
+Merge mode puts the verified row files of `ledger.js` into the ledger (change, note, status, misses, script_misses; no
+language model; it keeps `ledger.json.premerge`; exit 1 when a row is skipped), then run the normal mode:
+```bash
+$PY <skill>/scripts/fixcheck.py --ledger <ledger> --merge-rows <tools>/review/round<N>/ledger_rows [--item <id> ...]
+```
 `before` comes from the scorecards measured just before the item's batch and is never overwritten (`--force` does);
 `after` from the scorecards beside the ledger, re-measured when stale, and the item's `status` from its target rows
 (a "reverted:" item and a `user_edit` item keep theirs). A row with no target takes the config's (`target_from`), and

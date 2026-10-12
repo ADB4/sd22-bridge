@@ -245,14 +245,16 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
 
 | Workflow | Launch with | Writes | Meanwhile you |
 |---|---|---|---|
-| `drafts.js` | at `lead.json`: `round` N, `items` the plan's ids | `review/drafts/round<N>/<id>.md`, then `<id>.checked` | settle the auto gate, write the ledger's rows; build each item once its `.checked` lands |
-| `edits.js` | per graph batch, once its drafts are checked: `round` N+1, `items` `[{id, draft, files}]` in apply order | `review/round<N+1>/apply/edits/<id>/<files>`, `<id>.done`, `<id>.review.json`, `cross.review.json` | per item on its `.done`, in apply order: snap, copy its files into `build/`, patch; then rebuild and run the targeted set while the reviewers read |
-| `ledger.js` | after the last batch's `--fill after`: `round` N+1, `items` | `review/round<N+1>/ledger_rows/<id>.json`, merged into the ledger | the final gate's export; it ends before the final fixcheck |
-| `docs.js` | at the stop point, the final gate green: `round` N+1 | `review/docs/*.json`, then REFERENCE.md and spec.md spliced | the report |
+| `drafts.js` | at `lead.json`: `round` N, `items` the plan's ids `P<priority>`, or `{id, depends_on: [ids]}` for an item built on another's draft (its drafter starts once those are checked) | `review/drafts/round<N>/<id>.md`, then `<id>.checked` | settle the auto gate, write the ledger's rows; build each item once its `.checked` lands |
+| `edits.js` | per graph batch, once its drafts are checked: `round` N+1, `items` `[{id, draft, files, json?, new?, notes?}]` in apply order (`files` the stage scripts, `json` `[{file, set: {key: value}}]` for keys of `build/*.json`, `new` scripts that do not exist yet, `notes` apply-order rows; all under `build/`) | `review/round<N+1>/apply/edits/<id>/<files>`, `<id>.done`, `<id>.review.json` (verdict `go`, `fix` or `blocker`), `cross.review.json` | per item on its `.done`, in apply order: snap, copy its files into `build/`, patch; then rebuild and run the targeted set while the reviewers read |
+| `ledger.js` | after the last batch's `--fill after`: `round` N+1, `items` | `review/round<N+1>/ledger_rows/<id>.json` and a `merge_command`; you run it (`fixcheck.py --ledger L --merge-rows DIR --item ...`, exit 1 names the rows it skipped), then `fixcheck.py --ledger L --scorecards <the folder of the rows' fill.after>` | the final gate's export; it ends before the final fixcheck |
+| `docs.js` | at the stop point, the final gate green: `round` N+1; `keys` (optional, e.g. `["r4"]`) reruns only those default keys | `review/docs/*.json`, then REFERENCE.md and spec.md spliced; a key that hit its box is held, not spliced (`held`) | the report |
 
   Args always include `tools`, `skill` and `python`. An item of a few changed lines you may edit yourself instead of
-  `edits.js`. A `blocker` in an edit review is repaired before the final gate (its own snap and patch, item
-  `<id>r`), and the final gate and fixcheck wait for every review file of the apply.
+  `edits.js`. A `fix` verdict (a major issue) is read and repaired before the item's rebuild; a `blocker` in an edit
+  review is repaired before the final gate (its own snap and patch, item `<id>r`), and the final gate and fixcheck
+  wait for every review file of the apply. `ledger.js` never touches the ledger: the main session merges its row
+  files with `fixcheck.py --merge-rows`, then runs fixcheck.
 - Give each plan item its own ledger row with measured before and after values, never one row per batch. Stamp the
   apply: `date -u` when the plan gate is settled and after the last batch's targeted checks, into the ledger's
   `apply` (`references/review.md` §1). Two full rounds; round 2 applies highs only (SD-3, SD-4; the stop rule is in

@@ -43,7 +43,8 @@ only on material that already passes its numeric checks.
    and why. One row per plan item, even when one batch applied several; a row without a measured after value counts
    as `not_landed`. The numbers come from `fixcheck.py --fill` (before per item, just before its edit; after per
    targeted set; `references/checks.md`, Fixcheck), and after the last batch `assets/workflows/ledger.js` writes each
-   row's change, note and misses and verifies every number (`SKILL.md` stage 7). The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
+   row's change, note and misses and verifies every number into one row file per item, which you merge into the ledger with
+   `fixcheck.py --merge-rows` and then check with fixcheck (`SKILL.md` stage 7). The ledger replaces "the reviewers rediscover that half the fixes didn't land": in the brick
    build, 2 of 10 and 1 of 8 fixes had fully landed when the next round started. Stamp the apply with
    `date -u +%Y-%m-%dT%H:%M:%SZ` when the plan gate is settled and after the last batch's targeted checks, and put
    `apply: {started, ended, stall_min}` first in the ledger (`stall_min`: minutes lost waiting on the user, on a

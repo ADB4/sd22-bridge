@@ -8,6 +8,7 @@ Usage:
     python fixcheck.py --ledger L --fill before --item ID [--item ID ...] --scorecards DIR [--force] [--checks-dir DIR]
     python fixcheck.py --ledger L --fill after [--item ID ...] [--scorecards DIR] [--checks-dir DIR] [--out DIR]
                        [--rerun] [--python PY]
+    python fixcheck.py --ledger L --merge-rows DIR [--item ID ...]
 
 Options:
     --ledger      the fix ledger (review.md §1 step 4): items[].id, status (done, partial, not_done; user_edit in a
@@ -22,6 +23,7 @@ Options:
     --fill        write the ledger's numbers instead of judging them: before or after (Fill mode, below)
     --item        with --fill: an item id (repeatable, or several after one --item); after without it: every item
     --force       with --fill before: overwrite a before that is set
+    --merge-rows  put the rows in DIR/<id>.json into the ledger's items (Merge mode, below); --item limits it to those ids
 The configs are <checks-dir>/*.json with a `checks` list, each named by its `variant` (else its file stem); two
 configs with a variant the ledger names are an error. For each variant a ledger row names, the values come from
 <scorecards>/scorecard_<variant>.json when it is fresh: its manifest `exported_at` equals the config's current export
@@ -120,6 +122,29 @@ It never judges and never flags (exit 0, or 2 on a usage or ledger error, nothin
     that could not be measured) becomes not_done and is listed, because the normal mode rejects an item with none.
     The configs are read from --checks-dir (default <tools>/checks; --fill after needs it, --fill before only for the
     targets). A summary lists what was filled and every row left unfilled with the reason.
+
+Merge mode (the apply's ledger workflow, SKILL.md stage 7): --merge-rows DIR [--item ID ...] puts the verified rows of
+ledger.js into the ledger without a language model. DIR holds <id>.json, one row per item (a JSON object whose `id` is the
+file's stem; ledger.js writes them into <tools>/review/round<N>/ledger_rows/); without --item every <id>.json in DIR is
+merged, with it only those ids (an id with no file is skipped). An empty DIR argument is a usage error. Only the ledger is
+read besides DIR: --scorecards, --rerun, --out, --decisions, --checks-dir, --fill, --force and a --python other than the
+default belong to the other modes (exit 2); run the normal mode afterwards,
+with --scorecards for the folder the last --fill after read.
+    From a row it sets, on the ledger item with that id, only `change` and `note` (strings), `status` (one of done, partial,
+    not_done, user_edit) and `misses` and `script_misses` (lists of strings), and each only when the row has the key. A
+    ledger item whose status is user_edit keeps it (its line then ends `status kept (user_edit)` when the row names another). Every other key of the item, every acceptance row, `apply`, `decisions`,
+    every other item, the number text and the layout stay as read_ledger and write_ledger keep them (the row's other keys,
+    such as verified_at, corrections, additions and target_mismatches, are for the main session and are never merged).
+    An item is skipped, with the reason on its line, when its row file is missing, is not a JSON object, has an `id` other
+    than its file name, names an id the ledger lacks (an item is never added), has a status outside the set above or a note
+    or change that is not a string, or has a misses or script_misses that is not a list of strings. Nothing is written when
+    every item is skipped or when no field differs (so a second run with the same rows changes nothing, writes nothing and
+    leaves no copy). Otherwise the ledger is first copied to <ledger>.premerge (an existing copy is kept: .premerge.2,
+    .premerge.3, ...) and then written through a temporary file and an atomic replace, as in Fill mode (old file also
+    kept as ledger.json.bak).
+    Stdout: one line per item, `<id>: merged (<fields changed>)`, `<id>: merged (no change)` (either with `; status kept (user_edit)` appended when that applied) or `<id>: skipped: <reason>`,
+    then a summary line with the counts and whether the ledger was written. Exit 0 every item merged, 1 any skipped, 2 a
+    usage, DIR or ledger error (nothing written).
 """
 import argparse
 import datetime
@@ -916,6 +941,112 @@ def cmd_fill(a):
     return 0
 
 
+MERGE_KEYS = ("change", "note", "status", "misses", "script_misses")
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def merge_problem(row, iid):
+    """Why a row file cannot be merged for item iid, or None."""
+    if not isinstance(row, dict):
+        return "the row file is not a JSON object"
+    if row.get("id") != iid:
+        return "the row's id is %s, not %s" % (json.dumps(row.get("id")), iid)
+    for k in ("change", "note"):
+        if k in row and not isinstance(row[k], str):
+            return "%s is not a string" % k
+    if "status" in row and (not isinstance(row["status"], str) or row["status"] not in ITEM_STATUSES):
+        return "status %s is not one of %s" % (json.dumps(row["status"]), ", ".join(ITEM_STATUSES))
+    for k in ("misses", "script_misses"):
+        if k in row and not (isinstance(row[k], list) and all(isinstance(x, str) for x in row[k])):
+            return "%s is not a list of strings" % k
+    return None
+
+
+def free_copy(path, raw, suffix):
+    """raw written to path+suffix, or path+suffix.2, .3, ... for the first name that is free (never overwrites)."""
+    n = 1
+    while True:
+        name = path + suffix + ("" if n == 1 else ".%d" % n)
+        try:
+            with open(name, "xb") as fh:
+                fh.write(raw)
+            return name
+        except FileExistsError:
+            n += 1
+        except OSError as e:
+            raise Fail("%s: cannot write: %s" % (name, e.strerror or e))
+
+
+def cmd_merge(a):
+    """--merge-rows DIR: see the docstring. Returns the exit code; Fail is the caller's exit 2."""
+    for flag, val in (("--scorecards", a.scorecards), ("--checks-dir", a.checks_dir), ("--out", a.out),
+                      ("--decisions", a.decisions), ("--rerun", a.rerun), ("--force", a.force), ("--fill", a.fill),
+                      ("--python", a.python != sys.executable)):
+        if val:
+            raise Fail("%s does not belong to --merge-rows (it reads only the ledger and DIR)" % flag)
+    if not a.merge_rows:
+        raise Fail("--merge-rows needs the folder of the row files")
+    rows_dir = os.path.abspath(a.merge_rows)
+    if not os.path.isdir(rows_dir):
+        raise Fail("--merge-rows: %s is not a folder" % rows_dir)
+    ids = list(dict.fromkeys(x for group in (a.item or []) for x in group))
+    for i in ids:
+        if not ID_RE.match(i):
+            raise Fail("--item %s: an item id is letters, digits, _ or -" % i)
+    if not ids:
+        ids = sorted(f[:-5] for f in os.listdir(rows_dir) if f.endswith(".json") and ID_RE.match(f[:-5]))
+        if not ids:
+            raise Fail("no <id>.json row file in %s" % rows_dir)
+    ledger = os.path.abspath(a.ledger)
+    tools = os.path.normpath(os.path.join(os.path.dirname(ledger), "..", ".."))
+    led, lay, raw = read_ledger(ledger, fill=True)
+    by_id = {it["id"]: it for it in led["items"]}
+    lines, merged, skipped, changed = [], 0, 0, False
+    for iid in ids:
+        path = os.path.join(rows_dir, iid + ".json")
+        why, row = None, None
+        try:
+            with open(path, "rb") as fh:
+                row = json.loads(fh.read().decode("utf-8-sig"))
+        except FileNotFoundError:
+            why = "no row file %s" % path
+        except (OSError, ValueError) as e:
+            why = "cannot read %s: %s" % (path, getattr(e, "strerror", None) or e)
+        if why is None:
+            why = merge_problem(row, iid)
+        if why is None and iid not in by_id:
+            why = "the ledger has no item %s (an item is never added)" % iid
+        if why:
+            skipped += 1
+            lines.append("%s: skipped: %s" % (iid, why))
+            continue
+        it, did, kept = by_id[iid], [], False
+        for k in MERGE_KEYS:
+            if k not in row:
+                continue
+            if k == "status" and it.get("status") == "user_edit":
+                kept = row[k] != "user_edit"
+                continue
+            if k not in it or it[k] != row[k]:
+                it[k] = row[k]
+                did.append(k)
+        merged += 1
+        changed = changed or bool(did)
+        lines.append("%s: merged (%s%s)" % (iid, ", ".join(did) if did else "no change",
+                                           "; status kept (user_edit)" if kept else ""))
+    written = None
+    if merged and changed:
+        written = free_copy(os.path.realpath(ledger), raw, ".premerge")
+        write_ledger(ledger, led, lay, raw)
+    for line in lines:
+        print(line)
+    print("merge-rows %s: %d merged, %d skipped; ledger %s" % (
+        rel(ledger, tools), merged, skipped,
+        "written (copy: %s, old file: %s.bak)" % (os.path.basename(written), rel(ledger, tools)) if written
+        else "not written: %s" % ("every item skipped" if not merged else "nothing differs")))
+    return 1 if skipped else 0
+
+
 # ----------------------------------------------------------------------------- report
 
 
@@ -992,7 +1123,14 @@ def main(argv=None):
     ap.add_argument("--fill", choices=("before", "after"), help="write the ledger's before or after numbers")
     ap.add_argument("--item", action="append", nargs="+", metavar="ID", help="with --fill: an item id (repeatable)")
     ap.add_argument("--force", action="store_true", help="with --fill before: overwrite a before that is set")
+    ap.add_argument("--merge-rows", metavar="DIR", help="merge the verified rows DIR/<id>.json into the ledger")
     a = ap.parse_args(argv)
+    if a.merge_rows is not None:
+        try:
+            return cmd_merge(a)
+        except Fail as e:
+            print("fixcheck: %s" % e, file=sys.stderr)
+            return 2
     if a.fill:
         try:
             return cmd_fill(a)
@@ -1000,7 +1138,7 @@ def main(argv=None):
             print("fixcheck: %s" % e, file=sys.stderr)
             return 2
     if a.item or a.force:
-        print("fixcheck: --item and --force belong to --fill", file=sys.stderr)
+        print("fixcheck: --item and --force belong to --fill (--item also to --merge-rows)", file=sys.stderr)
         return 2
     t0 = time.time()
     started = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
