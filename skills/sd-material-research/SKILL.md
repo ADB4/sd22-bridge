@@ -175,8 +175,8 @@ only for what §2 lacks):
   has no case (`references/checks.md`, "Suite").
 - Look at the previews yourself with Read, but treat your own verdict as provisional. In the brick build it was
   optimistic three times.
-- Fix every **red** job before any review. Unattended, follow "When something breaks unattended" (Designer rules):
-  the run never ends red.
+- Fix every **red** job before any review, diagnosing it yourself or with a boxed background agent ("Delegating while
+  you own Designer"). Unattended, follow "When something breaks unattended" (Designer rules): the run never ends red.
 
 ### 6. Review
 Follow `references/review.md`:
@@ -453,6 +453,29 @@ the write-back: `decisions.py revert --round N --item U<K>`, then a rebuild.
   unattended: `decisions.py revert-plan --id`, then per graph one batch (revert the row's items, latest first, and
   build its `revert.alternative`, drafting it first when it says "draft at reversal"), the final gate, a `user_steer`
   row, and `morning_report.py --addendum --kind reversal` with the suite and guard results. No new panel unless asked.
+
+## Delegating while you own Designer (stages 4-7)
+In M8 the main session spent 44 % of its path waiting on its own agents: two foreground Agents held it for 80 min, and
+a 62-min diagnosis wrote nothing until the user asked. While you own Designer, delegated work runs beside yours:
+- **Background only.** Every Agent call in stages 4-7 sets `run_in_background` true; never launch a Workflow or an
+  Agent and then only wait on it. Do work under about 10 min yourself when there is nothing to overlap it with. A
+  probe agent's question goes into the post-export diff and the targeted suite instead.
+- **Name the overlap task** before each launch (the other graph's batch, the next check items, ledger numbers, the
+  report draft) and record it in the ledger's `apply.overlap` list, `{label, launched, overlap_task}`, with `launched`
+  a `date -u` stamp (`references/review.md` §1 step 4).
+- **Snapshot inputs.** Copy the exports, scorecards and sheets the agent reads into
+  `review/round<N+1>/apply/<label>/inputs/` and name only that folder in its prompt, so you may re-export meanwhile.
+  An M8 agent measured a stale red export while a rebuild waited for it.
+- **Boxes:** diagnosis 20 min and 40 tool calls, drafter 25 min, edit reviewer 15, eye agent 10 (the final eye pass
+  15). Every delegated prompt says: "Run `date -u` first. After every script run, append a `date -u` line and what it
+  showed to `<label>.progress.md` (beside your inputs folder). Once one cause is isolated, add the line `FIRST CAUSE:
+  <cause>`. At the box, stop and write what is left there." Time each box with one background Bash until-loop that
+  ends when the agent's output lands or the box runs out (`until [ -s <out> ] || [ $SECONDS -ge <box s> ]; do sleep
+  15; done`).
+- **When a box runs out,** read the progress file, then act on it or extend once with a narrower brief (a new agent
+  given the progress file and the same inputs). Add the minutes past the box to `apply.stall_min`. A diagnosis still
+  open after that goes to per-fix attribution ("When something breaks unattended", first row).
+- While the user is present, give one status line at each launch and each box end, in the Messages format.
 
 ## Bundled files
 - `references/method.md`: the physical reasoning (layout, layers, envelope, process cards, invariants, scale).
