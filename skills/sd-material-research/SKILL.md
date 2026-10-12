@@ -125,6 +125,14 @@ too (`references/checks.md`, "Suite"), then `$PY <skill>/scripts/guards.py confi
 standard guard checks (soft, never demoted) that the apply's regression gate reads. In the dry runs, every spec's
 weakest hard checks proved only the mask wiring.
 
+Last before the gate, `$PY <skill>/scripts/speccheck.py --tools <tools>` reads the spec values block (§9 of the
+template) and the configs. It flags colour keys outside their own box, per-unit randoms on a small 2-D lattice (2 or
+fewer units on one tile axis and 8 or fewer on the other: M8's per-panel paste keys printed a 1.524 m checker on a 2 x 2
+tile; a per-track stripe set is fine), fixed per-unit tables (they repeat every tile), percentages without a base or
+without exactly one check (M8's `spall_cover_pct` had two readings 2-3x apart), and configs that contradict the spec.
+Fix every finding marked `choice` false (a transcription error) and rerun; the `choice` true findings are design choices
+and go to the gate.
+
 **Readiness**, beside the spec writing once research has landed (stamps `readiness_start` and `readiness_end`), so
 that every approval card and power problem shows while the user can still settle it:
 - `$PY <skill>/scripts/preflight_night.py part2 --tools <tools> --keep-awake-setting <true|false|unknown>`: AC power,
@@ -140,12 +148,14 @@ that every approval card and power problem shows while the user can still settle
   wrote. This session may call request_keep_awake (it holds only this session); legs never do.
 
 **Gate:** the go question ("Unattended run"): a short summary (scale, layer model, the 3-6 key invariants in plain
-words, the variant ladder, what's estimated), the standing decisions SD-1 to SD-6 and the deadline, then one
-AskUserQuestion. Ask it once `review/preflight.json`, both probe files and `probe_watchdog` are written. Its text also
-gives the readiness result: the continuation route, any part-2 problem, the relaunch advice, and any call a probe found
-refused or held, with the allowlist rule that settles it (`assets/routines.md`, Permissions; the user adds it, the skill
-never changes permissions). It is the last question before the report; the reply to the go answer ends with the
-nothing-needed line ("Unattended run", Messages).
+words, the variant ladder, what's estimated), speccheck's summary (5 lines or fewer, each flag with its default), the
+standing decisions SD-1 to SD-6 and the deadline, then one AskUserQuestion. A speccheck flag the user may want to decide
+is one more question in that same AskUserQuestion (3 at most, the default first); the others take their defaults, and so
+does a question left unanswered. Ask it once `review/preflight.json`, both probe files and `probe_watchdog` are written.
+Its text also gives the readiness result: the continuation route, any part-2 problem, the relaunch advice, and any call
+a probe found refused or held, with the allowlist rule that settles it (`assets/routines.md`, Permissions; the user adds
+it, the skill never changes permissions). It is the last question before the report; the reply to the go answer ends
+with the nothing-needed line ("Unattended run", Messages).
 
 ### 4. Build
 Follow the skeleton in `references/sd_craft.md` §3, using `scripts/sdkit.py` (quick reference in §2; grep `sdkit.py`
@@ -532,6 +542,7 @@ a 62-min diagnosis wrote nothing until the user asked. While you own Designer, d
   - `morning_report.py`: the run's REPORT.md and answer batch; `--addendum` after a reversal or a user edit (stdlib)
   - `designer_relaunch.py`: Designer's state, Steam's launch dialogs, and the run's one relaunch (stdlib)
   - `docsplice.py`: applies the docs pass's verified section replacements and edits, all or nothing (stdlib)
+  - `speccheck.py`: the spec values block against itself and the configs, before the gate (stdlib)
   - `clampcheck.py`: the share of pixels at 1.0 in `sk.clamp_probe()`'s textures, after a height rebuild
   - `setup_env.sh`
 - `assets/`:
