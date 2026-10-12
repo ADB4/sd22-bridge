@@ -75,6 +75,7 @@ sk.nowear("concrete_materials.sbs::concrete_weathered", ["scaling", "spalling", 
 - Recipes: `blend`, `levels`, `hscan`, `blur`, `nblur`, `gconst`, `flood_random`, `fractal`, `level_for`.
 - Inputs and functions: `expose`, `list_inputs`, `drive`, `undrive`.
 - Variants and export: `probe`, `export_outputs` (+ manifest), `make_variant`, `render_variant`, `nowear`.
+- Clamp gate: `clamp_candidates(key, output="height")`, `clamp_probe(key, exempt={name: reason})` (§5, 16-bit clamp).
 - Hygiene: `prune_dead` (a dry run by default; `prune_dead(False)` deletes only dead nodes sdkit named, never graph
   inputs, and lists the others), `layout`, `lint`, `status`, `snapshot`, `save_registry`.
 
@@ -266,6 +267,7 @@ unpick after the colour stage is built on top of it.
 | Histogram Scan | centre = 1 − Position (higher Position = more white). Contrast 0.9-1 ≈ a step. Ports `Input_1` → `Output`. |
 | Blend | divide = destination / source. Add Sub = dst + 2·(src − 0.5). "subtract" is spelled `substract`. Copy = lerp(dst, src, opacity × opacitymult). A colour Blend skips a grayscale source; a grayscale Blend reads a colour source as black. |
 | Levels | float4 params `levelinlow/levelinhigh/levelinmid/leveloutlow/levelouthigh`; invert = out 1 → 0. |
+| 16-bit clamp | A 16-bit (fixed-point) Blend add, add sub or divide and a Levels clamp at 1: a sum of depths flattens where it saturates. Scale the terms so the sum stays below 1, or compose depths as products. Input ranges can't be read from the graph, so the gate is a probe: `sk.clamp_probe()` after the rebuild, then `clampcheck.py` (fails above 0.5 % of pixels at 1.0). |
 | Warp | 0.05 at 2048 ≈ 2.4 px std / 8 px max on a Perlin s20 gradient. Crystal gradients make contour rings: use smooth Perlin (0.02-0.08). Warp before per-unit mapping, never after. |
 | Distance | `distance` ≈ 8 px per unit at 2048. `combinedistance False` propagates the source value into gaps. |
 | Flood Fill | randoms are 0 in gaps. FF to Gradient spans ~0.15-0.85. |

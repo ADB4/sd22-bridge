@@ -156,6 +156,11 @@ only for what §2 lacks):
   later one, plus the 1K exports, as one job: it takes seconds.
 - Make the graph 16-bit at creation. Use only cheap noises (`sk.lib` refuses the FX-map noises that stall the engine).
   Save right after creating the package and after each stage.
+- **Clamp probe** after every build or rebuild of a height stage, in the same job: `sk.clamp_probe()` probes each
+  Blend add, add sub or divide and each Levels node upstream of the height output (`sk.lint()` lists them), then
+  `$PY <skill>/scripts/clampcheck.py <dump>/clamp_probe` fails a node with more than 0.5 % of its pixels at 1.0 (est.).
+  Fix it before exporting (`references/sd_craft.md` §5); a node meant to saturate goes in `exempt` with its reason.
+  The 16-bit add clamp came back in M8's round 2 and flattened round 3's spall floors.
 - **Render `nowear` from the first height stage on** (`sk.nowear`), and run `mask_invariance` and `envelope` after
   every change. The brick build never had this controlled render.
 - After each stage, export at 1024 and run that stage's checks before moving on. Calibrate every Histogram Scan from
@@ -208,7 +213,8 @@ session that launched the panel drafts, settles the plan at the auto gate and ap
   scorecards>` and `fixcheck.py --ledger <ledger> --fill before --item <id> --scorecards <the same>`; after it,
   `decisions.py patch`: the per-fix revert patch, the item's guard rows and its before values, `references/review.md`
   §1), run one rebuild from the earliest changed stage, re-calibrate once each Histogram Scan downstream of an edit
-  (upstream scan first; keep the new Position in its script), then export at 2048, with its `nowear`, every preset
+  (upstream scan first; keep the new Position in its script), run the clamp probe (stage 4) when a height stage was
+  rebuilt, then export at 2048, with its `nowear`, every preset
   that an edited node or preset parameter feeds (an edit to a shared node touches every preset). While the next graph
   builds, run the targeted set in the background: `suite.py` with `--configs` the touched configs and cross-case groups,
   `--kinds matcheck,wrong_builds,previews` and `--beside-designer`, into `review/round<N+1>` after you read the last
@@ -525,6 +531,7 @@ a 62-min diagnosis wrote nothing until the user asked. While you own Designer, d
   - `morning_report.py`: the run's REPORT.md and answer batch; `--addendum` after a reversal or a user edit (stdlib)
   - `designer_relaunch.py`: Designer's state, Steam's launch dialogs, and the run's one relaunch (stdlib)
   - `docsplice.py`: applies the docs pass's verified section replacements and edits, all or nothing (stdlib)
+  - `clampcheck.py`: the share of pixels at 1.0 in `sk.clamp_probe()`'s textures, after a height rebuild
   - `setup_env.sh`
 - `assets/`:
   - `spec_template.md`, `context_prompt_template.md` (with the run block), `reference_template.md` (review

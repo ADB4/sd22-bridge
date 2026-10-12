@@ -1422,6 +1422,176 @@ def prune_dead(dry_run=True, include_unregistered=False):
     return out
 
 
+# ----------------------------------------------------------------------------- clamp candidates and probe (R-19)
+
+BLEND_DEF = "sbs::compositing::blend"
+LEVELS_DEF = "sbs::compositing::levels"
+# Blend modes whose result can exceed 1: the option ids sdkit sets (BLEND_MODES: "add" = Add / Linear Dodge,
+# "addsub" = Add Sub, dst + 2*(src - 0.5), "divide" = dst / src, above 1 where src < dst) and the enum numbers behind
+# them (1, 4 and 8) in case a read gives a number. Not covered on purpose: substract (clamps at 0, not 1), switch,
+# overlay, screen and soft light (stay inside 0-1 for inputs inside 0-1).
+CLAMP_BLEND_MODES = {"add": "add", "lineardodge": "add", "addsub": "addsub", "divide": "divide",
+                     "1": "add", "4": "addsub", "8": "divide"}
+CLAMP_WHY = {"add": "Add / Linear Dodge", "addsub": "Add Sub (dst + 2*(src - 0.5))", "divide": "Divide (dst / src)"}
+
+
+def _blend_mode_name(v):
+    """A Blend's blendingmode value as a lower-case option id ("add", "addsub", "multiply", ...), or None."""
+    if v is None or isinstance(v, bool):
+        return None
+    raw = str(v).strip().lower()
+    key = re.sub(r"[^a-z0-9]", "", raw)
+    return CLAMP_BLEND_MODES.get(key, raw or None)
+
+
+def _usage_names(u):
+    """Usage names out of an Output node's "usages" value (a name, a {"usage": name, ...}, or a list of those)."""
+    if isinstance(u, str):
+        return [u]
+    if isinstance(u, dict):
+        return _usage_names(u.get("usage"))
+    if isinstance(u, (list, tuple)):
+        return [x for i in u for x in _usage_names(i)]
+    return []
+
+
+def _walk_up(starts, up):
+    """Pure. [(node id, distance)] for every node reachable upstream from starts, nearest first (ties by id).
+    up: {node id: iterable of the ids feeding it}. A start is distance 0; a cycle ends where it closes."""
+    dist, frontier, d = {}, sorted(set(starts)), 0
+    while frontier:
+        nxt = set()
+        for nid in frontier:
+            if nid not in dist:
+                dist[nid] = d
+                nxt.update(u for u in up.get(nid, ()) if u not in dist)
+        frontier, d = sorted(nxt), d + 1
+    return sorted(dist.items(), key=lambda t: (t[1], t[0]))
+
+
+def _clamp_scan(starts, up, defs, modes, names):
+    """Pure. Candidate rows for the nodes upstream of starts: Blend nodes whose mode can exceed 1 and every Levels
+    node, nearest first. defs: {id: definition id}; modes: {id: blendingmode value}; names: {id: registry name}."""
+    rows = []
+    for nid, dist in _walk_up(starts, up):
+        d = defs.get(nid)
+        name = names.get(nid, nid)
+        if d == BLEND_DEF:
+            mode = _blend_mode_name(modes.get(nid))
+            if mode in CLAMP_WHY:
+                why = "Blend %s: the result can exceed 1 and a 16-bit fixed-point Blend clamps it there" % CLAMP_WHY[mode]
+                rows.append({"name": name, "id": nid, "def": d, "mode": mode, "distance": dist, "why": why})
+        elif d == LEVELS_DEF:
+            rows.append({"name": name, "id": nid, "def": d, "mode": None, "distance": dist,
+                         "why": "Levels: a 16-bit fixed-point Levels clamps at 1 (output high, or an input past the in-high)"})
+    return rows
+
+
+def _output_nodes_named(g, output):
+    """Output nodes whose identifier is `output` or that carry a usage of that name."""
+    out = []
+    for o in C._items(g.getOutputNodes()):
+        ident = C._js(C._try(lambda o=o: o.getAnnotationPropertyValueFromId("identifier")))
+        if ident == output or output in _usage_names(_usage(o)):
+            out.append(o.getIdentifier())
+    return out
+
+
+def clamp_candidates(key=None, output="height"):
+    """Blend add / Levels nodes on the path to an output, nearest first. A static walk upstream (every input port,
+    opacity included, across the graph and not into referenced sub-graphs) from the Output node(s) whose identifier or
+    usage is `output`. Rows {name (registry name, else the node id), id, def, mode, distance, why}: Blend nodes in
+    Add / Linear Dodge ("add"), Add Sub ("addsub") or Divide ("divide"), and every Levels node. No compute. Input ranges cannot be read
+    statically, so this lists where a 16-bit clamp could happen; sk.clamp_probe() and clampcheck.py measure it."""
+    prev = S["graph"]
+    if key and key != prev:
+        use(key)  # resolves a spelling of the graph to the key its registry names are under
+    try:
+        g = graph()
+        nodes, up = _upstream(g)
+        inv = {v: k for k, v in S["reg"].get(S["graph"], {}).items()}
+        defs, modes = {}, {}
+        for nid, n in nodes.items():
+            defs[nid] = C._try(lambda n=n: n.getDefinition().getId())
+            if defs[nid] == BLEND_DEF:
+                p = C._try(lambda n=n: n.getPropertyFromId("blendingmode", SDPropertyCategory.Input))
+                modes[nid] = C._try(lambda n=n, p=p: C._param_value(n, p)) if p is not None else None
+        return _clamp_scan(_output_nodes_named(g, output), up, defs, modes, inv)
+    finally:
+        S["graph"] = prev
+
+
+def clamp_probe(key=None, output="height", names=None, out_dir=None, size=None, exempt=None):
+    """Save the textures of the clamp candidates (or of `names`) so clampcheck.py can count saturated pixels. One
+    compute through probe(); its temporary outputs are removed. Writes <out_dir>/<name>.png and
+    <out_dir>/clamp_probe.json {graph, output, utc, size, exempt, rows}; out_dir defaults to <dump>/clamp_probe, size
+    is a log2 like probe's (None: the graph's own). exempt: {name: reason} for a node meant to saturate: still probed,
+    its row is marked. A node that cannot be probed gets a row with `error` instead of `path`; nothing raises for one
+    node. A candidate without a registry name is probed under its node id. The JSON also has outputs_found, the number
+    of Output nodes whose identifier or usage is `output` (0: the name matches nothing, and clampcheck.py exits 2).
+    Returns the JSON as a dict."""
+    prev = S["graph"]
+    if key and key != prev:
+        use(key)
+    try:
+        g = graph()
+        cands = {c["name"]: c for c in clamp_candidates(None, output)}
+        names = list(cands) if names is None else ([names] if isinstance(names, str) else list(names))
+        names = list(dict.fromkeys(names))  # a name twice would make two temporary outputs with one identifier
+        if isinstance(exempt, (list, tuple, set)):
+            exempt = {n: "exempt" for n in exempt}
+        exempt = {str(k): str(v) or "exempt" for k, v in (exempt or {}).items()}  # an empty reason is still exempt
+        out_dir = os.path.abspath(os.path.expanduser(out_dir or os.path.join(S["dump"], "clamp_probe")))
+        os.makedirs(out_dir, exist_ok=True)
+        by_id = {n.getIdentifier(): n for n in C._items(g.getNodes())}
+        r, rows, todo, alias = reg(), {}, [], []
+        for nm in names:
+            c = cands.get(nm, {})
+            base = {"name": nm, "def": c.get("def"), "mode": c.get("mode")}
+            if nm not in r and nm in by_id:  # a node without a registry name: probe() finds it by name
+                r[nm] = nm
+                alias.append(nm)
+            if nm not in r:
+                rows[nm] = dict(base, error="no node %r in %s (not a registry name or a node id)" % (nm, S["graph"]))
+                continue
+            if base["def"] is None:
+                base["def"] = C._try(lambda nm=nm: node(nm).getDefinition().getId())
+            rows[nm] = base
+            todo.append(nm)
+        try:
+            got = {}
+            if todo:
+                try:
+                    got = {x["name"]: x for x in probe(todo, out_dir=out_dir, size=size)}
+                except C.ERRORS:  # one bad node must not cost the others: probe them one at a time
+                    for nm in todo:
+                        try:
+                            got.update({x["name"]: x for x in probe([nm], out_dir=out_dir, size=size)})
+                        except C.ERRORS as e:
+                            rows[nm]["error"] = "%s: %s" % (type(e).__name__, e)
+        finally:
+            for nm in alias:
+                r.pop(nm, None)
+        for nm in todo:
+            if nm in got:
+                rows[nm].update({k: got[nm][k] for k in ("path", "format", "size", "seconds", "warning") if k in got[nm]})
+            elif "error" not in rows[nm]:
+                rows[nm]["error"] = "probe returned no texture"
+        for nm, why in exempt.items():
+            if nm in rows:
+                rows[nm]["exempt"] = why
+        result = {"graph": C._gid(g), "output": output, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "size": size, "outputs_found": len(_output_nodes_named(g, output)), "exempt": exempt,
+                  "rows": [rows[nm] for nm in names]}
+        path = os.path.join(out_dir, "clamp_probe.json")
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(result, fh, indent=1, default=str)
+        os.replace(path + ".tmp", path)
+        return result
+    finally:
+        S["graph"] = prev
+
+
 def layout(dx=190.0, dy=125.0, pad=90.0, frame_tag="sdkit"):
     """Layered layout: x = longest path from sources, one horizontal band (and frame) per section().
     Only frames sdkit made (description == frame_tag) are replaced."""
@@ -1482,7 +1652,7 @@ def layout(dx=190.0, dy=125.0, pad=90.0, frame_tag="sdkit"):
 
 def lint():
     """Cheap static checks: heavy noises, 8-bit format, unnamed nodes, outputs without identifier, Blend kind mismatches
-    (needs a previous compute)."""
+    (needs a previous compute), Blend add / Levels nodes on the height path (clamp_candidates)."""
     g = graph()
     msgs = []
     for n in C._items(g.getNodes()):
@@ -1512,6 +1682,11 @@ def lint():
     notes = C._try(lambda: C._blend_notes(g))
     if notes:
         msgs.extend(notes if isinstance(notes, list) else [str(notes)])
+    cands = C._try(lambda: clamp_candidates(None, "height")) or []
+    if cands:
+        nm = [c["name"] for c in cands]
+        msgs.append("%d Blend add / Levels nodes on the height path (%s): run sk.clamp_probe() after the rebuild and "
+                    "clampcheck.py on its folder" % (len(nm), ", ".join(nm[:6]) + (", ..." if len(nm) > 6 else "")))
     return msgs
 
 
