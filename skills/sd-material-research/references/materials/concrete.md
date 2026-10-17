@@ -15,6 +15,9 @@
 > RD722, pop-out typical, [2] wording, No. 57 sizes, light sidewalk broom, [57] URL, LTPP/PCI by analogy, sidewalk
 > cracking (4.3), scaling drivers and bands (4.6), quiet vs busy walk wear (4.7), joint moss, tint B/R 0.55-0.81, grey
 > limestone rows, particle range and cut-plane share; sources 77-95 added.
+> revised 2026-10-14 (parking-lot gap research): No. 57 grading, visible albedo bands (est.), [85] covers parking lots,
+> joint seal damage (LTPP 5a, PAVER 26), patch 76 / 51 mm, spall zone 0.3 vs 0.5 m, Midwest dolomite row, high-carbon
+> fly ash, joint shadowing, sealant reservoir and recess, free-edge driver (4.3); sources 96-102 added.
 
 Every number carries a source tag `[n]` (see Sources) or `(est.)` with a one-line reason.
 Ranges are given; the variant or region is stated where it matters.
@@ -115,14 +118,14 @@ it is a layout parameter applied to the `nowear` render too.
 | Sidewalk tooled joint spacing | 1.524 m | 1.5-1.8 m | 5 ft nominal [41]; Salina caps contraction joints at 6 ft for a 4 in walk [40]; ODOT: the 5 ft lines are 6 mm V dummy joints, the deep contraction joint <= 4.57 m [41][77] | [40][41][77] |
 | Expansion / isolation joint | 13 mm filler | 13 mm | 1/2 in premolded filler, not above surface | [40] |
 | Joint depth | T/4 | T/4-T/3, >= 25 mm | 25-33 mm in a 100 mm slab; tooled sidewalk grooves 1 in (25 mm) min. [77][79][82]; ODOT 5 ft dummy joint only a 6 mm V [77]; model 8-12 mm (est.: invisible at 2-4 px, saves height range) | [4][6][42][77][79][82] |
-| Sawcut kerf width | 3 mm | 3-5 mm | one blade (est.: diamond blade kerf); sealant reservoirs widened to 6-10 mm (est.) | (est.) |
+| Sawcut kerf width | 3 mm | 3-5 mm | one blade (est.: diamond blade kerf); sealed joints: reservoir widened to 6-10 mm [98], sealant top 3-6 mm below the surface (ACI 330R §6.3 [97]) or struck off flush [96] | [96][97][98], (est.) |
 | Joint opening (panel separation) | 0-2 mm | 0-25 mm | working joints open with shrinkage and cooling (est. from 4.3); roots, heave, creep 5-25 mm (est.) | (est.) |
 | Tooled groove (bit) width | 3-6 mm | 3-9.5 mm | ODOT contraction joint 1/8-1/4 in [77]; 1/8 in [79]; up to 3/8 in [78]; groover bits 3/8-1/2 in (9.5-12.7 mm, catalogue) [81] | [77][78][79][81] |
 | Tooled groove shoulder radius | 6 mm | 3-6 mm | lip radius 1/8-1/4 in [79]; 1/4 in R [40][77][82] | [40][77][79][82] |
 | Tooled groove, visible width (arris to arris) | 9.5-22 mm (est.) | | bit + two shoulder radii (est.: radius fully rounded, not chipped) | (est.) |
 | Smooth tooled margin, each side of a tooled joint (optional) | 52 mm (est.: 4-1/2 in groover) | 21-71 mm | only where joints are tooled after brooming ("picture frame") [79]: Lowell's 2 in tooled band over a 3/8 in joint leaves 21 mm per side [80]; 4-1/2 and 6 in groover blades leave 52 and 71 mm (est.: blade centred on the bit) [81]; broomed over (no margin) where edging marks must be removed [82] | [79][80][81][82], (est.) |
 | Edge radius (edger, free walk edges) | 6 mm | 6-13 mm | 1/4 in [40]; outer walk edges 1/2 in (13 mm) [78][82][90]; edgers 1/4-3/8 in R, 70-102 mm wide blades leave a smooth band if run after brooming (est.: band = blade width) [81] | [40][78][81][82][90] |
-| Coarse aggregate size (ASTM C33 size number) | No. 57: 4.75-37.5 mm | top size 25-50 mm | No. 57 passes 37.5 mm with 0-5 % retained on 25 mm, ~68 % of its mass above 9.5 mm (est.: interpolated); No. 67 passes 25 mm; No. 467 passes 50 mm [89]; 3/4-1 in rock for flatwork (est.: [2] keys its air content to such rock and sets no size); Homer caps sidewalk rock at 1.5 in and 1/3 slab depth (34 mm in a 100 mm walk) [90]; "1 in x No. 4" Caltrans primary [43] | [43][89][90], (est.) |
+| Coarse aggregate size (ASTM C33 size number) | No. 57: nominal 4.75-25 mm, top 37.5 mm | top size 25-50 mm | No. 57: 100 % passing 37.5 mm, 95-100 % passing 25 mm, 25-60 % passing 12.5 mm, 0-10 % passing 4.75 mm, 0-5 % passing 2.36 mm [89], ~68 % of its mass above 9.5 mm (est.: interpolated); No. 67 passes 25 mm; No. 467 passes 50 mm [89]; 3/4-1 in rock for flatwork (est.: [2] keys its air content to such rock and sets no size); Homer caps sidewalk rock at 1.5 in and 1/3 slab depth (34 mm in a 100 mm walk) [90]; "1 in x No. 4" Caltrans primary [43] | [43][89][90], (est.) |
 | Fine aggregate (sand) | < 4.75 mm | 0.075-4.75 mm | passes No. 4 sieve [43]; lower bound (est.: No. 200 sieve) | [43] |
 | Mortar cover over coarse aggregate (flatwork) | 5 mm (est.) | 3-10 mm (est.) | inferred: moderate scaling, which exposes aggregate, may involve loss of up to 3-10 mm [2]; C672 rating 1 (<= 3 mm) shows no coarse aggregate [23]; paper scaling ~3 mm [18] | (est.) |
 | Paste skin / laitance | 0.1-0.5 mm | 0.1-3 mm | cement skin ~0.1 mm [61]; crazing <= 3 mm deep [3]; delaminations 3-6 mm thick [11] | [3][11][61] |
@@ -155,13 +158,14 @@ it is a layout parameter applied to the `nowear` render too.
 | Scaling depth | 3-13 mm (pavement) | 3 to > 20 mm | rating 1: <= 3 mm; medium 5-10, severe 11-20, very severe > 20 mm; sidewalk criteria light 3-6, medium 6-10, high > 10 mm [88]; road PCI 6-13 mm [85] | [17][18][23][85][88] |
 | Pop-out diameter / depth | 5-50 mm (slabs); 25-100 mm (pavements) | 5-300 mm | slabs generally 5-50, up to 300 mm [16]; 6 mm to "a few inches" [14]; pavements 25-100 mm wide, 13-50 mm deep [17][57]: depth ~0.5 x diameter (est.) | [14][16][17][57] |
 | Spall (non-joint) | >= 25 mm deep, >= 150 mm | smaller occur | circular/oval, or elongated along joints | [16] |
-| Joint spall width (from joint face) | < 75 mm (low) | 75-150 / > 150 mm | measured within 0.3 m of the joint | [17] |
+| Joint seal damage (sawn joints) | L: < 10 % of joint length | M 10-50 %, H > 50 % | LTPP 5a, per transverse joint: extrusion, hardening, adhesive or cohesive failure, loss, incompressibles, weeds; undamaged counts L; 5b longitudinal has no severity [17]. PAVER (26), per section: M openings up to 3 mm between sealer and joint face, sealer hard but pliable, weeds; H >= 10 % beyond M or missing [85] p. 18 | [17][85] |
+| Joint spall width (from joint face) | < 75 mm (low) | 75-150 / > 150 mm | measured within 0.3 m of the joint (LTPP, highway [17]); PAVER, roads and parking lots: within 0.5 m, width < or > 102 mm, length < or > 0.6 m [85] p. 44 | [17][85] |
 | Blister | 5-100 mm dia | | skin ~3 mm thick over a void; troweled slabs | [16] |
 | Rebar cover at a visible face | 38-50 mm exposed | 19-50 mm | ACI 318: 38 mm (No. 5 and smaller) / 50 mm exposed to weather, 19 mm interior slabs and walls (No. 11 and smaller); "usually 50-68 mm" specified [18]; 76 mm only for faces cast against earth [28] | [18][28][60] |
-| Patch (partial depth) | >= 40 mm deep | | rectangular, vertical edges, 100 mm beyond unsound concrete | [16] |
+| Patch (partial depth) | >= 51 mm deep | >= 40 mm [16]; top 1/3 of slab | 76 mm beyond the unsound (sounded) concrete, min 254 x 102 mm, merged if < 610 mm apart [96]; PCA 100 mm [16]; rectangular, vertical edges [16] | [16][96] |
 
-LTPP [17] and the PCI manuals [57][85] are highway, road and airfield pavement manuals: their crack, spall, scaling
-and pop-out bands apply to sidewalks by analogy.
+LTPP [17] (highway) and the PCI manuals [57] (airfield) and [85] (roads and parking lots) are pavement manuals: their
+crack, spall, scaling and pop-out bands apply to sidewalks by analogy; [85] covers parking lots directly.
 
 **Recommended tile sizes (2048 px).** Pixel figures are arithmetic on the dimensions above.
 - **Sidewalk / plaza field: 3.048 m** (2 x 2 panels of 1.524 m) = 1.49 mm/px. Tooled groove 3-6 mm = 2-4 px (9.5 mm =
@@ -225,7 +229,8 @@ envelope check.
 The spall removes slab A concrete and shows slab A's fractured aggregate and mortar. The kerf, sealant and slab B
 edge are untouched; the joint looks wider from above only because slab A's arris is gone. If slab A's spall goes below
 the sealant top, slab B's sawn kerf face shows: a flat vertical face cut through aggregate. That is the one allowed
-view of a neighbour's side. A sawn kerf has sharp arrises (raveling chips them [6]).
+view of a neighbour's side. A sawn kerf has sharp arrises (raveling chips them [6]). A sealed joint has a reservoir
+widened to 6-10 mm [98] with the sealant top 3-6 mm below the surface [97], or filled flush [96].
 
 **A tooled sidewalk joint is not sealed.** It is an open groove 3-9.5 mm wide with 3-6 mm radius shoulders, >= 25 mm
 deep (ODOT's 5 ft dummy joint: a 6 mm V) [77][78][79]; sealant goes only in sawn, cold and expansion joints [78][80].
@@ -252,7 +257,8 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
 - **Mechanism:** surface w/cm sets paste colour. Hard troweling densifies the surface, lowers w/cm and leaves the ferrite
   phase dark, so burned areas are darker; early troweling or worked-in bleed water is lighter; higher w/cm is lighter
   [12][16]. Calcium chloride mottles dark; poly sheet in contact cures lighter, wrinkles leave dark streaks [8][16].
-  Slag cement is lighter, fly ash and silica fume darker; forms of different absorption or release agent give different
+  Slag cement is lighter, high-carbon fly ash and silica fume darker; Class C (high-lime) fly ash is tan or light [102]
+  and warms the grey slightly (est.); forms of different absorption or release agent give different
   shades [12]. Sand colour shifts concrete albedo as much as cement does [45]. On formed faces the form's absorption
   sets w/c through the outer ~20 mm [75][76], so form and board shade belongs to F0 and F1 together, not to the
   0.1 mm cement skin alone: a weathered board-formed wall keeps its board tone after the skin erodes (est.: it fades
@@ -266,7 +272,7 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
 - **Progression:** fixed at construction; some types fade with wear and age, trowel burns resist treatment [12].
 - **Signature per map:** albedo trowel burn -0.03 to -0.08 linear (est.), panel-to-panel luma CV 2-6 % (est.); roughness
   burnish 0.30-0.45 vs 0.50-0.60 around (est.); height chatter ripples <= 0.3 mm (est.); AO none.
-- **Severity scale:** none published. **Sources:** [8][9][12][16][45].
+- **Severity scale:** none published. **Sources:** [8][9][12][16][45][102].
 
 ### 4.2 Plastic shrinkage cracking
 - **Mechanism:** evaporation exceeds bleeding before set; capillary tension cracks the plastic surface [5].
@@ -283,7 +289,8 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
 ### 4.3 Drying-shrinkage, restraint and settlement cracking
 - **Mechanism:** concrete shrinks ~1.6 mm per 3 m on drying and ~0.7 mm per 3 m for a 22 degC night drop [16]; restraint
   (subgrade, re-entrant corners, embedments, footings) turns that into tension; also subgrade settlement and plastic
-  settlement over shallow bars [4][7][16][18].
+  settlement over shallow bars [4][7][16][18]. Parking lots: wheel loads at the free edges of isolation joints around
+  drop inlets and light-pole bases cause free-edge distress unless the edge is thickened 20 % or 50 mm [97].
 - **Acts on:** full depth of slab or wall. **Removes / adds:** nothing until the edges spall. **Reveals:** a dark line;
   when spalled, the same slab's interior (4.9).
 - **Never:** makes a closed cm-scale network; moves or widens a joint; wanders across a working joint (est.: a joint is a
@@ -314,7 +321,7 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
   efflorescence fringe; roughness up in the crack; AO strong.
 - **Severity scale:** LTPP longitudinal L < 3, M 3-13, H >= 13 mm; transverse L < 3, M 3-6, H >= 6 mm; M also by spalling
   < 75 mm or faulting up to 13 (longitudinal) / 6 mm (transverse), H by spalling >= 75 mm or larger faulting [17];
-  ACI 224R design guide 0.10-0.41 mm [50]. **Sources:** [4][6][7][16][17][18][50][53][68][71][72][83][84][85][88].
+  ACI 224R design guide 0.10-0.41 mm [50]. **Sources:** [4][6][7][16][17][18][50][53][68][71][72][83][84][85][88][97].
 
 ### 4.4 Crazing
 - **Mechanism:** shrinkage of the paste-rich skin (wet mix, overworking, cement dusted on, late curing, wet-dry cycles)
@@ -351,6 +358,9 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
 - **Mechanism:** freeze-thaw of a saturated surface, made worse by deicers; weak surfaces from worked-in bleed water,
   overfinishing, no air entrainment or poor curing [2][16]. Delamination: a 3-6 mm troweled layer sealed over bleed
   water or air breaks off under traffic [11][16].
+- **Joint shadowing (not scaling):** a dark damp band next to joints (water held in microcracks) that can progress to
+  material loss; from ponding in the saw cut, salts in joints, failed seals, poor air, w/cm > 0.40; strongest with
+  CaCl2 / MgCl2 [99].
 - **Acts on:** L0 -> L1 -> mortar between L2 particles. **Removes:** paste, then mortar. **Reveals:** sand speckle, then
   coarse aggregate with intact natural surfaces that stand out of the scaled surface [16]. Mortar flaking ("popoffs")
   strips the thin mortar over near-surface particles, flat particles first [14][16].
@@ -380,9 +390,10 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
   crevices around aggregate.
 - **Severity scale:** C672-style 0-5 [23]; light to very severe [18]; city sidewalk criteria by depth: light 3-6,
   medium 6-10, high > 10 mm [88]. The area bands disagree: airfield PCI low < 1 %, medium 1-10 %, high > 10 % of slab
-  area [57]; road PCI M < 15 %, H > 15 % of slab, 6-13 mm deep [85]. Both are per slab and apply by analogy; this
-  sheet uses [85] per panel. `scaled_cov` (section 9) is per tile: a distressed tile is 1-2 bad panels at 0.15-0.50
-  with the rest at 0.02-0.10 (est. from [85][86]). **Sources:** [2][11][14][16][17][18][20][23][57][85][86][87][88].
+  area [57]; road PCI M < 15 %, H > 15 % of slab, 6-13 mm deep [85]. Both are per slab; [85] covers parking lots
+  directly, [57] (airfield) is an analogy; this sheet uses [85] per panel. `scaled_cov` (section 9)
+  is per tile: a distressed tile is 1-2 bad panels at 0.15-0.50 with the rest at 0.02-0.10 (est. from [85][86]).
+  **Sources:** [2][11][14][16][17][18][20][23][57][85][86][87][88][99].
 
 ### 4.7 Dusting, abrasion and traffic wear
 - **Mechanism:** a weak skin powders under traffic [1][16]; traffic removes paste and texture faster than aggregate and
@@ -436,7 +447,8 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
   joints, misaligned dowels [6][10][16][17][19]. Saw raveling (kerf edges chipped when sawing too early [6]) is
   as-built: it belongs in `E` and the `nowear` render, so a new slab may already show it (est.: 1-5 mm chips along part
   of a joint).
-- **Acts on:** slab concrete within 0.3 m of the joint or crack face [17]. **Removes:** wedge-shaped arris pieces.
+- **Acts on:** slab concrete within 0.3 m (LTPP [17]) or 0.5 m (PAVER, parking lots [85]) of the joint or crack face.
+  **Removes:** wedge-shaped arris pieces.
   **Reveals:** fractured mortar and aggregate of the same slab; below the sealant top, the neighbour's sawn face.
 - **Never:** widens the kerf or sealant below; moves the joint line; takes material from the neighbouring slab just
   because one side spalled (est.: each side has its own damage).
@@ -456,7 +468,7 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
 - **Signature per map:** height ramp from the envelope down to 10-40 mm at the joint face (est.), sharp outer breakout
   edge; albedo fresh fracture lighter (mortar; grey limestone stone darker, section 7), later dirt-filled; roughness
   0.85-0.95 (est.); AO in the trough.
-- **Severity scale:** LTPP L/M/H [17]. **Sources:** [6][10][16][17][19].
+- **Severity scale:** LTPP L/M/H [17]. **Sources:** [6][10][16][17][19][85].
 
 ### 4.10 D-cracking (frost damage of coarse aggregate)
 - **Mechanism:** saturated frost-susceptible coarse aggregate dilates and fractures [20]; it starts at joints at the
@@ -565,18 +577,18 @@ aggregate finishes keep the etch at 0.2-0.5 x chip size [34]); very severe scali
 
 ### 4.16 Patch repairs
 - **Mechanism:** unsound concrete is sawn and chipped out and replaced [16].
-- **Acts on:** replaces a block >= 40 mm deep [16]. **Adds:** new material near the envelope.
+- **Acts on:** replaces a block >= 51 mm deep [96] (>= 40 mm [16]). **Adds:** new material near the envelope.
 - **Never:** irregular blob outlines; feathered edges (chipped edges must be perpendicular or undercut [39]); a patch at
   a joint that fills the joint (the joint must be restored [16]).
-- **Where:** spalls (patch 100 mm beyond unsound concrete [16]); tie holes plugged with mortar meant to match [38][74];
-  honeycomb cut out with a 13-19 mm deep saw cut outline [30]; drilled-out pop-outs [16].
+- **Where:** spalls (patch 76 mm beyond unsound concrete [96], 100 mm in [16]); tie holes plugged with mortar meant
+  to match [38][74]; honeycomb cut out with a 13-19 mm deep saw cut outline [30]; drilled-out pop-outs [16].
 - **Shape and scale:** rectangles with vertical edges, often aligned to joints [16]; tie plugs 22-25 mm discs.
 - **Signature per map:** albedo offset from the parent (est.: new cementitious patches read darker or more uniform; a
   repair is never as good as the original surface [27]); roughness from a different finish (est.); height flush
   +/- 1 mm with a hairline perimeter crack (est.); own patch mask. Old tie plugs: ring cracks, shade offset, or lost
   plugs showing the cone recess (est.).
 - **Severity scale:** LTPP patch L none measurable, M settlement up to 6 mm, H >= 6 mm [17].
-  **Sources:** [16][17][27][30][38][39][74].
+  **Sources:** [16][17][27][30][38][39][74][96].
 
 ### 4.17 As-built defects of formed surfaces
 - **Mechanism:** air trapped against the form leaves bug holes [25][30]; too little paste or vibration leaves honeycomb
@@ -726,8 +738,8 @@ in-service PCC streets measured 0.18-0.35, mean 0.26 solar [59].
 
 | Component / state | Albedo (linear luma; sRGB 0-255) | Roughness | Notes | Source |
 |---|---|---|---|---|
-| Grey concrete, new, dry | 0.30-0.40 (149-170) | trowel 0.45-0.60, float 0.75-0.85, broom 0.80-0.90 (est.) | central band; lab 0.19-0.52 solar by sand colour; grows ~0.08 in the first 6 weeks | [45][58], (est.) |
-| Grey concrete, in service / weathered, dry | 0.20-0.30 (124-149) | 0.80-0.92 (est.) | field streets 0.18-0.35 solar [59]; traffic dirt darkens [46] | [45][46][59] |
+| Grey concrete, new, dry | 0.30-0.40 (149-170) (est.) | trowel 0.45-0.60, float 0.75-0.85, broom 0.80-0.90 (est.) | central band, lab solar x ~0.9 (no source gives a visible value); lab 0.19-0.52 solar by sand colour; grows ~0.08 in the first 6 weeks | [45][58], (est.) |
+| Grey concrete, in service / weathered, dry | 0.20-0.30 (124-149) (est.) | 0.80-0.92 (est.) | field streets 0.18-0.35 solar [59] x ~0.9 (est.: derived, no visible value published); traffic dirt darkens [46] | [45][46][59], (est.) |
 | Heavily soiled (parking, tyre lanes) | 0.08-0.15 (80-108) | 0.60-0.85 | rubber, oil, soot (est.) | (est.) |
 | Wet (weathered grey) | 0.10-0.20 (89-124) | damp 0.40-0.60; film/puddle 0.02-0.10 (est.) | x0.40-0.80 of dry, typically ~0.5 | [45] |
 | White-cement concrete, new | 0.55-0.75 (196-225) | per finish | best white mixes up to 0.77 solar | [45] |
@@ -735,6 +747,7 @@ in-service PCC streets measured 0.18-0.35, mean 0.26 solar [59].
 | Exposed coarse aggregate (cut or abraded faces) | 0.13-0.55 (101-196), by rock | natural faces 0.60-0.80; traffic-polished tops 0.40-0.60 (est.) | rocks 0.17-0.55 (basalt dark, plagioclase/chert pale; no limestone measured); abraded concrete 0.13-0.55 | [45] |
 | Grey limestone aggregate, natural / weathered face | 0.19-0.42 (121-173) (est.) | natural faces 0.60-0.80; traffic-polished tops 0.40-0.60 (est.); limestone polishes faster than granite [21] | weathered face measured 0.19 [92]; quarry "light to medium grey weathered" [93] = N5-N7 (est.: GSA rock-colour chart); warm, linear B/R ~0.70-0.95 (est.) | [21][92][93], (est.) |
 | Grey limestone aggregate, fresh fracture (pop-out floor, spall, cut face) | 0.06-0.19 (69-121) (est.) | 0.85-0.95 (est.) | quarry "dark grey fresh surface" [93] = N3-N5 (est.); darker than the weathered face, the opposite of the dirt-film row below | [92][93], (est.) |
+| Midwest dolomite / light limestone aggregate, crushed face | 0.35-0.58 (160-200) | as the grey limestone rows (est.) | Ohio crushed-stone stockpiles (Silurian dolomite, Devonian limestone) 5Y-2.5Y 6.5-8/1-2, N 7-8 [100]; N Illinois Silurian dolomite 5Y 6-8/1 even wet [101]; Y from Munsell V; dolomite weathers buff, warmer but not clearly lighter (est.); the two grey limestone rows above rest on one dark Ontario stone [93] and one USGS sample [92] | [100][101], (est.) |
 | Fresh fracture (spall, pop-out, scaling scar) | aged value +0.03-0.08 (est.) | 0.85-0.95 (est.) | clean of the dirt film; not for grey limestone stone (row above) | (est.) |
 | Efflorescence / calcite crust | 0.50-0.80 (188-231) (est.) | 0.90-1.00 (est.) | white CaCO3 and salts; can whiten grey mixes [45] | [16][45] |
 | Rust stain on concrete | ~sRGB (140-170, 80-100, 45-60) (est.) | substrate | orange-brown | (est.) |
@@ -915,7 +928,8 @@ Material-specific only; general craft lives in `references/sd_craft.md`.
 - **Per-unit IDs and randoms.** Flood Fill on the panel mask, then Flood Fill to Random Grayscale for `panel_id`
   (per-panel shade, a few degrees of broom-direction jitter) and Flood Fill to Gradient for curl tilt. Aggregate
   particles get their own IDs from Tile Sampler or Shape Splatter (rounded blobs for river gravel, angular polygons
-  for crushed stone), 4.75-37.5 mm for No. 57 (4.75-25 mm for No. 67) [89], each with a top height `A_top` (3-10 mm
+  for crushed stone), 4.75-25 mm nominal for No. 57 (top 37.5 mm, <= 5 % above 25 mm, <= 10 % below
+  4.75 mm; 4.75-25 mm for No. 67) [89], each with a top height `A_top` (3-10 mm
   below `E`, est.), a size `D` and a colour from an aggregate palette, never a generic "damage colour". At a cut plane
   coarse aggregate covers ~35-45 % of the area (est.: Delesse, area fraction = volume fraction; Caltrans worked mixes
   hold 35-41 % coarse aggregate by volume [43]). The particle field is a layout output.
@@ -1053,7 +1067,7 @@ Search terms and what to measure (prefer raking light and a coin, ruler or crack
 82. Tennessee DOT. *Standard Specifications* (2006), §701.09 Cement Concrete Sidewalks, finishing, p. 3-4. https://www.tn.gov/content/dam/tn/tdot/construction/old_web_page/Const_2006_Spec700.pdf. Joints >= 1 in deep with 1/4 in radius; outside edges 1/2 in radius; edging and marking-tool marks removed.
 83. Sydnor, T. D., Gamstetter, D., Nichols, J., Bishop, B., Favorite, J., Blazer, C., Turpin, L. *Trees are not the root of sidewalk problems*, Journal of Arboriculture 26(1) (2000) 20-29. https://auf.isa-arbor.com/content/isa/26/1/20.full.pdf. Random survey of 1,134 Cincinnati sidewalk blocks: failed (broken, cracked or offset > 3/8 in) share by age and soil (p. 9, Table 2), trees not a significant cause (p. 4).
 84. Czarnecki, B., Poon, J. *Concrete Sidewalk Design Analysis and Optimization for Improved Life Cycle and Sustainability*, TAC conference paper (2017), City of Calgary. https://tac-atc.ca/wp-content/uploads/czarneckib-concrete_sidewalk_design_analysis_and_optimization_for_improved_life.pdf. Causes of uncontrolled sidewalk cracking, settlement over service trenches (citing Volk 2008), frost-heave longitudinal cracks (p. 3, 6); FEA vehicle loads on 100-150 mm walks (p. 5-6).
-85. US Army ERDC / PAVER. *Road Concrete Distress Manual* (ASTM D6433-based). https://transportation.erdc.dren.mil/triservice/downloads/PAVER/Road%20Concrete%20Distress%20Manual.pdf. Corner break legs <= half the slab (p. 10); linear cracking 2-3 pieces (p. 22); scaling M < 15 %, H > 15 % of slab, 6-13 mm (p. 38); shrinkage cracks (p. 40). Road pavement manual, used for sidewalks by analogy.
+85. US Army ERDC-CERL / PAVER (Shahin, M. Y.). *Concrete Surfaced Roads & Parking Lots PAVER Distress Identification Manual* (June 2009, ASTM D6433-based). https://transportation.erdc.dren.mil/triservice/downloads/PAVER/Road%20Concrete%20Distress%20Manual.pdf. Corner break legs <= half the slab (p. 10); linear cracking 2-3 pieces (p. 22); scaling M < 15 %, H > 15 % of slab, 6-13 mm (p. 38); shrinkage cracks (p. 40); joint seal damage (26) (p. 18); corner spall (p. 42); joint spall within 0.5 m (p. 44). Covers parking lots directly; used for sidewalks by analogy.
 86. MassDOT / UMass. *Construction and Materials Best Practices for Concrete Sidewalks: Phase II - Long-Term Performance and Hot-Weather Placement Effects*. https://rosap.ntl.bts.gov/view/dot/67377/dot_67377_DS1.pdf. Field sidewalk panels after one winter: scaled area by mix, curing and deicer (p. 23, 120-121, Tables 8.4-8.6), per-panel visual estimates (p. 109, Table 7.2); deicer-laden snow on panel edges and corners (p. 30-31, §2.5.4).
 87. MassDOT / UMass. *Construction & Materials Best Practice for Concrete Sidewalks*, Report 21-015 (2021). https://rosap.ntl.bts.gov/view/dot/59886/dot_59886_DS1.pdf. Highest near-surface chloride in panels splashed by road operations (p. 96).
 88. City of Saskatoon. *2015 Sidewalk Preservation Repair/Replacement Criteria*. https://www.saskatoon.ca/sites/default/files/documents/transportation-utilities/major-projects/2015_sidewalk_preservation_repair_or_replacement_criteria.pdf. Crack types and replacement thresholds (p. 1); scaling depth classes 3-6 / 6-10 / > 10 mm (p. 2).
@@ -1064,3 +1078,10 @@ Search terms and what to measure (prefer raking light and a coin, ruler or crack
 93. Ontario Geological Survey. *Mineral Deposit Inventory record MDI31C09NW00048* (Westport Quarry 2). https://www.geologyontario.mndm.gov.on.ca/mndmfiles/mdi/data/records/MDI31C09NW00048.html. Limestone crushed-stone quarry: "dark grey fresh surface", "light to medium grey weathered surface".
 94. Guo, N., Hao, Q.-Y., Jiang, R., Hu, M.-B., Jia, B. *Impact of holding umbrella on uni- and bi-directional pedestrian flow: experiments and modeling*, arXiv:1606.03434 (abstract). https://arxiv.org/abs/1606.03434. Bidirectional flow segregates into two opposite streams by right-walking preference (lab, ring corridor).
 95. Sasahara, F. / McTrans Center (Univ. of Florida). *Understanding pedestrian analysis on segments* (2025-04-15), summarising HCM Ch. 18 and Exhibit 24-9. https://mctrans.ce.ufl.edu/understanding-pedestrian-analysis-on-segments/. Shy distances: curb 1.5 ft, building 2 ft, window display 3 ft, fence or low wall 1.5 ft (planning allowances).
+96. CP Tech Center / FHWA. *Concrete Pavement Preservation Guide*, 3rd ed. (2022), ch. 5 Partial-Depth Repairs, ch. 10 Joint Resealing and Crack Sealing. https://www.intrans.iastate.edu/wp-content/uploads/2022/08/concrete_pvmt_preservation_guide_3rd_edition_web.pdf. Partial-depth patch 76 mm (3 in) beyond the sounded unsound area, >= 51 mm (2 in) deep within the top 1/3 of the slab, min 254 x 102 mm, merged if < 610 mm apart (p. 83); flush-filled hot-pour as an alternative to recessed (p. 226).
+97. ACI Committee 330. *ACI 330R-01 Guide for Design and Construction of Concrete Parking Lots* (full text as reproduced in a PDH course; superseded by 330R-08 and PRC-330-21). https://www.discountpdh.com/wp-content/themes/discountpdh/pdf-course/guide-design-construction-concrete-parking-lots.pdf. Isolation joints at light standards, drop inlets, buildings and islands, free edges thickened 20 % or 50 mm (§2.7.3, §4.7.2); sealant top 3-6 mm below the surface (§6.3, p. 330R-16).
+98. IGGA / Seal-No Seal Group. *Tech Brief: Filling Narrow Joints in Concrete Pavements* (March 2021). https://www.igga.net/_files/ugd/72aeb3_abc9a1dece34417193761a8527ca4d3b.pdf. Widened reservoir 1/4-3/8 in (6-10 mm) (p. 1); flush fill (p. 3).
+99. FHWA. *Chemical Deicers and Concrete Pavement*, Tech Brief FHWA-HIF-17-008 (2018). https://www.fhwa.dot.gov/pavement/pubs/hif17008.pdf. Joint "shadowing": darkening next to joints, then material loss; drivers (pp. 1-3).
+100. Stith, D. A. *Potential use of Ohio limestones and dolomites for architectural aggregate*, Ohio Div. Geol. Survey RI 73 (1969), Table E pp. 12-14. https://dam.assets.ohio.gov/image/upload/ohiodnr.gov/documents/geology/RI73_Stith_1969.pdf. Crushed-stone stockpile Munsell colours: Silurian dolomites mostly 5Y 7-8/1, 2.5Y 7-8/1-2, N 7-7.5/0; Devonian limestones 2.5Y 7.5/2 to N 5.5/0.
+101. Kolata, D. R., Graese, A. M. Illinois State Geological Survey Circular 528 (1983), p. 11. http://library.isgs.illinois.edu/Pubs/pdfs/circulars/c528.pdf. Northern Illinois Silurian dolomite, wet specimens 5Y 8/1 to 5Y 6/1.
+102. FHWA. *Fly Ash Facts for Highway Engineers*, ch. 1. https://www.fhwa.dot.gov/pavement/recycling/fach01.cfm. Fly ash "tan to dark gray": tan and light with high lime (Class C), dark grey to black from unburned carbon.
